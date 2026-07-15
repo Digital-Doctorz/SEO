@@ -85,11 +85,14 @@ export default function KeywordLandscape({ keywords, targetDomain, aiConfig, onS
       const res = await fetch("/api/analyze-keyword-deep", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keyword, targetDomain: targetDomain || "", ...(aiConfig?.apiKey ? { aiConfig } : {}) }),
+        body: JSON.stringify({ keyword, targetDomain: targetDomain || "", aiConfig }),
         signal: controller.signal
       });
       if (res.ok) {
         const data = await res.json();
+        if (data.isFallback) {
+          console.warn("Deep audit fallback — no AI result for:", keyword);
+        }
         setDeepAudits(prev => ({ ...prev, [keyword]: data }));
       }
     } catch (err) {

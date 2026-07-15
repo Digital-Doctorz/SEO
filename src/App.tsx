@@ -88,7 +88,7 @@ export default function App() {
         body: JSON.stringify({
           targetUrl: target,
           competitorUrl: competitor || undefined,
-          ...(aiConfig.apiKey ? { aiConfig } : {})
+          aiConfig
         })
       });
       
@@ -98,7 +98,17 @@ export default function App() {
       } catch {
         throw new Error(`Server returned ${response.status}: Expected JSON response`);
       }
+      if (data.needsApiKey) {
+        throw new Error("No API key configured. Open Settings and enter your Gemini or OpenRouter API key.");
+      }
+      if (data.errorMsg) throw new Error(data.errorMsg);
       if (data.error) throw new Error(data.error);
+
+      if (data.isFallback) {
+        setAnalysisResult(data);
+        setErrorMsg("AI engine unavailable — showing estimated data. Configure an API key in Settings for full AI-powered analysis.");
+        return;
+      }
       
       setAnalysisResult(data);
       setActiveTab("overview");

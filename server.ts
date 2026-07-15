@@ -135,7 +135,6 @@ async function callAI(
   const { apiKey, provider, apiEndpoint, apiModel, customFormat } = config;
 
   if (provider === "gemini") {
-    const { GoogleGenAI } = await import("@google/genai");
     const client = new GoogleGenAI({
       apiKey,
       httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
@@ -252,7 +251,6 @@ async function callAI(
     }
 
     if (format === "gemini") {
-      const { GoogleGenAI } = await import("@google/genai");
       const client = new GoogleGenAI({
         apiKey,
         ...(endpoint ? { baseUrl: endpoint } : {}),

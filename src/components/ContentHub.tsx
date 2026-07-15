@@ -519,13 +519,25 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
           content: blogPost.content,
           articleTitle: blogPost.title,
           targetDomain: targetDomain,
-          ...(aiConfig?.apiKey ? { aiConfig } : {})
+          aiConfig
         })
       });
-      if (!response.ok) {
-        throw new Error("Failed to generate meta snippets from server.");
+      let data;
+      const responseText = await response.text();
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        if (!response.ok) throw new Error(`Server returned ${response.status}: Expected JSON response`);
+        throw new Error("Server returned invalid JSON response for meta snippets.");
       }
-      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.errorMsg || data.error || `Server returned status ${response.status}`);
+      }
+      if (data.isFallback) {
+        setMetaSuggestions([]);
+        setMetaGenError("AI engine unavailable — configure an API key in Settings for full AI-powered meta snippets.");
+        return;
+      }
       if (data && Array.isArray(data.snippets)) {
         setMetaSuggestions(data.snippets);
       } else {
@@ -981,7 +993,7 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
         audience: audienceToUse,
         contentGoal: goalToUse,
         brandVoice: voiceToUse,
-        ...(aiConfig?.apiKey ? { aiConfig } : {})
+        aiConfig
       };
 
       const res = await fetch("/api/generate-social", {
@@ -1002,9 +1014,15 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
       }
 
       if (!res.ok) {
-        const errorMsg = data.error || `Server responded with error status ${res.status}`;
+        const errorMsg = data.errorMsg || data.error || `Server responded with error status ${res.status}`;
         const errorDetails = data.details ? ` (${data.details})` : "";
         throw new Error(`${errorMsg}${errorDetails}`);
+      }
+
+      if (data.isFallback) {
+        setSocialPost(data);
+        setGenerationError("AI engine unavailable — configured an API key in Settings for full AI-powered content.");
+        return;
       }
 
       console.log("[SEO Content Hub - Client] Successfully generated social content:", data);
@@ -1078,7 +1096,7 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
             audience: audienceToUse,
             tone: toneToUse,
             targetDomain,
-            ...(aiConfig?.apiKey ? { aiConfig } : {})
+            aiConfig
           };
 
           const res = await fetch("/api/generate-blog", {
@@ -1098,9 +1116,13 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
           }
 
           if (!res.ok) {
-            const errorMsg = data.error || `Server responded with error status ${res.status}`;
+            const errorMsg = data.errorMsg || data.error || `Server responded with error status ${res.status}`;
             const errorDetails = data.details ? ` (${data.details})` : "";
             throw new Error(`${errorMsg}${errorDetails}`);
+          }
+
+          if (data.isFallback) {
+            throw new Error("AI engine unavailable — configured an API key in Settings for full AI-powered content.");
           }
 
           // Validate returned content
