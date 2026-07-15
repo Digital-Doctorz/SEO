@@ -3665,5 +3665,5 @@ You MUST respond with a single valid JSON object containing exactly the followin
   return app;
 }
 
-const app = startServer();
+const app = await startServer();
 export default app;
