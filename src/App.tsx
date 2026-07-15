@@ -1,4 +1,4 @@
-import { useState, FormEvent, lazy, Suspense } from "react";
+import { useState, useEffect, FormEvent, lazy, Suspense } from "react";
 import { motion } from "motion/react";
 import { 
   Search, Globe, TrendingUp, Link, BarChart2, Calendar, 
@@ -34,24 +34,32 @@ export default function App() {
     openrouter: { model: "meta-llama/llama-3.3-70b-instruct:free", endpoint: "https://openrouter.ai/api/v1" },
     custom: { model: "gpt-4o-mini", endpoint: "" }
   };
-  const [aiConfig, setAiConfig] = useState<AiProviderConfig>(() => {
-    const storedProvider = typeof window !== "undefined" ? (localStorage.getItem("seo_api_provider") as AiProviderConfig["provider"]) || DEFAULT_PROVIDER : DEFAULT_PROVIDER;
+  const STATIC_DEFAULT_CONFIG: AiProviderConfig = {
+    apiKey: "",
+    provider: "gemini",
+    apiEndpoint: "",
+    apiModel: "gemini-2.5-flash",
+    customFormat: "openai",
+  };
+  const [aiConfig, setAiConfig] = useState<AiProviderConfig>(STATIC_DEFAULT_CONFIG);
+  const [aiConfigLoaded, setAiConfigLoaded] = useState(false);
+
+  useEffect(() => {
+    const storedProvider = (localStorage.getItem("seo_api_provider") as AiProviderConfig["provider"]) || DEFAULT_PROVIDER;
     const defaults = PROVIDER_DEFAULTS[storedProvider];
-    let storedKey = "";
-    if (typeof window !== "undefined") {
-      storedKey = localStorage.getItem(`seo_api_key_${storedProvider}`) || localStorage.getItem("seo_api_key") || "";
-      if (storedKey && !localStorage.getItem(`seo_api_key_${storedProvider}`)) {
-        localStorage.setItem(`seo_api_key_${storedProvider}`, storedKey);
-      }
+    let storedKey = localStorage.getItem(`seo_api_key_${storedProvider}`) || localStorage.getItem("seo_api_key") || "";
+    if (storedKey && !localStorage.getItem(`seo_api_key_${storedProvider}`)) {
+      localStorage.setItem(`seo_api_key_${storedProvider}`, storedKey);
     }
-    return {
+    setAiConfig({
       apiKey: storedKey,
       provider: storedProvider,
-      apiEndpoint: typeof window !== "undefined" ? (localStorage.getItem("seo_api_endpoint") || defaults.endpoint) : defaults.endpoint,
-      apiModel: typeof window !== "undefined" ? (localStorage.getItem("seo_api_model") || defaults.model) : defaults.model,
-      customFormat: (typeof window !== "undefined" ? (localStorage.getItem("seo_api_custom_format") as AiProviderConfig["customFormat"]) : null) || "openai",
-    };
-  });
+      apiEndpoint: localStorage.getItem("seo_api_endpoint") || defaults.endpoint,
+      apiModel: localStorage.getItem("seo_api_model") || defaults.model,
+      customFormat: (localStorage.getItem("seo_api_custom_format") as AiProviderConfig["customFormat"]) || "openai",
+    });
+    setAiConfigLoaded(true);
+  }, []);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
 
   const handleSaveAiConfig = (config: AiProviderConfig) => {
