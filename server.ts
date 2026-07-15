@@ -2041,7 +2041,7 @@ function getGeminiClient() {
   return geminiClient;
 }
 
-async function startServer() {
+function startServer() {
   const app = express();
   const PORT = parseInt(process.env.PORT || "3000", 10);
 
@@ -3642,28 +3642,39 @@ You MUST respond with a single valid JSON object containing exactly the followin
     }
   });
 
-  // Setup Vite Dev Server / Static Asset serving
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
+  // Static file serving (works for production builds)
+  const distPath = path.join(process.cwd(), 'dist');
+  app.use(express.static(distPath));
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
 
-  if (process.env.VERCEL !== "1") {
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server running on http://localhost:${PORT}`);
-    });
-  }
   return app;
 }
 
-const app = await startServer();
+const app = startServer();
+
+// Dev mode: start Vite HMR server asynchronously (background, non-blocking)
+if (process.env.NODE_ENV !== "production") {
+  (async () => {
+    try {
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    } catch (err) {
+      console.error("Failed to start Vite dev server:", err);
+    }
+  })();
+}
+
+// Listen locally (not on Vercel — Vercel provides its own listener)
+if (process.env.VERCEL !== "1") {
+  const PORT = parseInt(process.env.PORT || "3000", 10);
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
 export default app;
