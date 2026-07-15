@@ -1,0 +1,6 @@
+{
+  "name": "Local SEO by Digital Doctors",
+  "description": "An AI-powered Local SEO & Competitive Intelligence suite developed by Digital Doctors (+91-9555955595). Real-time local SEO auditing, competitor content gap maps, keyword rank tracking, and optimized local content generation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
