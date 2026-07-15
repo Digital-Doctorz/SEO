@@ -484,33 +484,10 @@ app.post("/api/generate-meta-snippets", async (req, res) => {
 const distPath = path.join(process.cwd(), 'dist');
 app.use(express.static(distPath));
 
-// SSR render function
-let ssrRender: (() => string) | null = null;
-let ssrLoadAttempted = false;
-
-async function ensureSSR(): Promise<boolean> {
-  if (ssrLoadAttempted) return ssrRender !== null;
-  ssrLoadAttempted = true;
-  const ssrEntry = path.resolve(process.cwd(), 'dist-ssr', 'entry-server.js');
-  if (!fs.existsSync(ssrEntry)) return false;
-  try {
-    const mod = await import(ssrEntry);
-    if (typeof mod.render === 'function') { ssrRender = mod.render; return true; }
-  } catch { /* fallback to static */ }
-  return false;
-}
-
-app.get('*', async (req, res) => {
+app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) return;
   try {
     const template = fs.readFileSync(path.join(distPath, 'index.html'), 'utf-8');
-    const ssrAvailable = await ensureSSR();
-    if (ssrAvailable && ssrRender) {
-      try {
-        const appHtml = ssrRender();
-        return res.send(template.replace('<!--ssr-outlet-->', appHtml));
-      } catch (err) { console.error('SSR render error:', err); }
-    }
     res.send(template.replace('<!--ssr-outlet-->', ''));
   } catch { res.status(500).send('Server error'); }
 });
