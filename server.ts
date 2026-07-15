@@ -1,7 +1,6 @@
 import express from "express";
 import path from "path";
 import dotenv from "dotenv";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
@@ -2091,6 +2090,11 @@ Before writing ANY content, you MUST suppress all default AI writing patterns. A
 After writing, verify: (1) No blacklisted words remain. (2) No two consecutive sentences have identical structure/length. (3) No trailing participial -ing clauses. (4) No sycophantic hedging. (5) Hook is concrete, not generic. (6) Claims are backed by specific data, not superlatives.
 `;
 
+  // Health check — always returns 200, even without API keys
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
   // API Route: Real-time Competitive & SEO Analysis
   app.post("/api/analyze", async (req, res) => {
     const { targetUrl, competitorUrl } = req.body;
@@ -3641,6 +3645,12 @@ You MUST respond with a single valid JSON object containing exactly the followin
     }
   });
 
+  // Global error handler — catches async route rejections
+  app.use((err: any, req: any, res: any, next: any) => {
+    console.error("Unhandled error:", err);
+    res.status(500).json({ error: err.message || "Internal server error" });
+  });
+
   // Static file serving (works for production builds)
   const distPath = path.join(process.cwd(), 'dist');
   app.use(express.static(distPath));
@@ -3651,12 +3661,22 @@ You MUST respond with a single valid JSON object containing exactly the followin
   return app;
 }
 
-const app = startServer();
+let app: any;
+try {
+  app = startServer();
+} catch (err: any) {
+  console.error("Fatal server startup error:", err);
+  app = express();
+  app.use((req: any, res: any) => {
+    res.status(500).json({ error: `Server startup failed: ${err.message}` });
+  });
+}
 
 // Dev mode: start Vite HMR server asynchronously (background, non-blocking)
 if (process.env.NODE_ENV !== "production") {
   (async () => {
     try {
+      const { createServer: createViteServer } = await import("vite");
       const vite = await createViteServer({
         server: { middlewareMode: true },
         appType: "spa",
