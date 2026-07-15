@@ -37,8 +37,12 @@ export default function App() {
   const [aiConfig, setAiConfig] = useState<AiProviderConfig>(() => {
     const storedProvider = (localStorage.getItem("seo_api_provider") as AiProviderConfig["provider"]) || DEFAULT_PROVIDER;
     const defaults = PROVIDER_DEFAULTS[storedProvider];
+    const storedKey = localStorage.getItem(`seo_api_key_${storedProvider}`) || localStorage.getItem("seo_api_key") || "";
+    if (storedKey && !localStorage.getItem(`seo_api_key_${storedProvider}`)) {
+      localStorage.setItem(`seo_api_key_${storedProvider}`, storedKey);
+    }
     return {
-      apiKey: localStorage.getItem("seo_api_key") || "",
+      apiKey: storedKey,
       provider: storedProvider,
       apiEndpoint: localStorage.getItem("seo_api_endpoint") || defaults.endpoint,
       apiModel: localStorage.getItem("seo_api_model") || defaults.model,
@@ -49,7 +53,7 @@ export default function App() {
 
   const handleSaveAiConfig = (config: AiProviderConfig) => {
     setAiConfig(config);
-    localStorage.setItem("seo_api_key", config.apiKey);
+    localStorage.setItem(`seo_api_key_${config.provider}`, config.apiKey);
     localStorage.setItem("seo_api_provider", config.provider);
     localStorage.setItem("seo_api_endpoint", config.apiEndpoint);
     localStorage.setItem("seo_api_model", config.apiModel);

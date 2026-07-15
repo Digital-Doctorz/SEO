@@ -2043,7 +2043,6 @@ function getGeminiClient() {
 
 function startServer() {
   const app = express();
-  const PORT = parseInt(process.env.PORT || "3000", 10);
 
   app.use(express.json({ limit: '10kb' }));
 

@@ -61,13 +61,17 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
   }, [currentConfig, open]);
 
   const handleProviderChange = (newProvider: "gemini" | "openrouter" | "custom") => {
+    localStorage.setItem(`seo_api_key_${provider}`, apiKey);
     setProvider(newProvider);
     const meta = PROVIDER_META[newProvider];
     setApiEndpoint(meta.defaultEndpoint);
     setApiModel(meta.defaultModel);
+    const savedKey = localStorage.getItem(`seo_api_key_${newProvider}`) || "";
+    setApiKey(savedKey);
   };
 
   const handleSave = () => {
+    localStorage.setItem(`seo_api_key_${provider}`, apiKey.trim());
     onSave({
       apiKey: apiKey.trim(),
       provider,
@@ -83,15 +87,15 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
   };
 
   const handleClear = () => {
-    const empty: AiProviderConfig = {
+    localStorage.setItem(`seo_api_key_${provider}`, "");
+    setApiKey("");
+    onSave({
       apiKey: "",
       provider,
       apiEndpoint: PROVIDER_META[provider].defaultEndpoint,
       apiModel: PROVIDER_META[provider].defaultModel,
       customFormat
-    };
-    setApiKey("");
-    onSave(empty);
+    });
     setSaved(true);
     setTimeout(() => {
       setSaved(false);
