@@ -3,10 +3,6 @@ import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
-
-const localRequire = createRequire(import.meta.url);
 
 dotenv.config();
 
@@ -2097,7 +2093,17 @@ After writing, verify: (1) No blacklisted words remain. (2) No two consecutive s
 
   // Health check — always returns 200, even without API keys
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", timestamp: new Date().toISOString() });
+    const diagnostics: Record<string, any> = {
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      node: process.version,
+      env: process.env.NODE_ENV || "not set",
+      cwd: process.cwd(),
+      distExists: fs.existsSync(path.join(process.cwd(), "dist")),
+      distIndexExists: fs.existsSync(path.join(process.cwd(), "dist", "index.html")),
+      ssrBundleExists: fs.existsSync(path.join(process.cwd(), "dist-ssr", "entry-server.js")),
+    };
+    res.json(diagnostics);
   });
 
   // API Route: Real-time Competitive & SEO Analysis
@@ -3667,45 +3673,47 @@ You MUST respond with a single valid JSON object containing exactly the followin
   async function ensureSSR(): Promise<boolean> {
     if (ssrLoadAttempted) return ssrRender !== null;
     ssrLoadAttempted = true;
+    const ssrEntry = path.resolve(process.cwd(), 'dist-ssr', 'entry-server.js');
+    if (!fs.existsSync(ssrEntry)) return false;
     try {
-      const ssrEntry = path.resolve(process.cwd(), 'dist-ssr', 'entry-server.js');
-      if (!fs.existsSync(ssrEntry)) return false;
-      // Try CJS require first
-      try {
-        const mod = localRequire(ssrEntry);
-        if (typeof mod.render === 'function') {
-          ssrRender = mod.render;
-          console.log('SSR render loaded (CJS)');
-          return true;
-        }
-      } catch {
-        // Fallback: ESM dynamic import
-        const mod = await import(pathToFileURL(ssrEntry).href);
-        if (typeof mod.render === 'function') {
-          ssrRender = mod.render;
-          console.log('SSR render loaded (ESM)');
-          return true;
-        }
+      const mod = await import(/* @vite-ignore */ ssrEntry);
+      if (typeof mod.render === 'function') {
+        ssrRender = mod.render;
+        return true;
       }
-    } catch (err) {
-      console.warn('SSR bundle not available, using CSR fallback');
+    } catch {
+      try {
+        const { createRequire } = await import('node:module');
+        const { pathToFileURL } = await import('node:url');
+        const req = createRequire(import.meta.url || process.cwd() + '/server.ts');
+        const mod = req(ssrEntry);
+        if (typeof mod.render === 'function') {
+          ssrRender = mod.render;
+          return true;
+        }
+      } catch {}
     }
     return false;
   }
 
   app.get('*', async (req, res) => {
     if (req.path.startsWith('/api/')) return;
-    const template = fs.readFileSync(path.join(distPath, 'index.html'), 'utf-8');
-    const ssrAvailable = await ensureSSR();
-    if (ssrAvailable && ssrRender) {
-      try {
-        const appHtml = ssrRender();
-        return res.send(template.replace('<!--ssr-outlet-->', appHtml));
-      } catch (err) {
-        console.error('SSR render error:', err);
+    try {
+      const template = fs.readFileSync(path.join(distPath, 'index.html'), 'utf-8');
+      const ssrAvailable = await ensureSSR();
+      if (ssrAvailable && ssrRender) {
+        try {
+          const appHtml = ssrRender();
+          return res.send(template.replace('<!--ssr-outlet-->', appHtml));
+        } catch (err) {
+          console.error('SSR render error:', err);
+        }
       }
+      res.send(template.replace('<!--ssr-outlet-->', ''));
+    } catch (err) {
+      console.error('Static file serve error:', err);
+      res.status(500).send('Server error');
     }
-    res.send(template.replace('<!--ssr-outlet-->', ''));
   });
 
   return app;
@@ -3717,6 +3725,9 @@ try {
 } catch (err: any) {
   console.error("Fatal server startup error:", err);
   app = express();
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "error", error: err.message, stack: err.stack?.split("\n").slice(0, 6).join("\n"), node: process.version, env: process.env.NODE_ENV });
+  });
   app.use((req: any, res: any) => {
     res.status(500).json({ error: `Server startup failed: ${err.message}` });
   });

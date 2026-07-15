@@ -1,6 +1,11 @@
 {
   "buildCommand": "npm run build",
   "installCommand": "npm install",
+  "functions": {
+    "api/index.ts": {
+      "includeFiles": "dist/**,dist-ssr/**"
+    }
+  },
   "rewrites": [
     { "source": "/(.*)", "destination": "/api" }
   ]
