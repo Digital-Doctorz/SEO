@@ -114,7 +114,7 @@ export default function App() {
 
       if (data.isFallback) {
         setAnalysisResult(data);
-        setErrorMsg("AI engine unavailable — showing estimated data. Configure an API key in Settings for full AI-powered analysis.");
+        setErrorMsg(data.errorMsg || data.fallbackReason || "AI engine unavailable. Check your API key in Settings.");
         return;
       }
       

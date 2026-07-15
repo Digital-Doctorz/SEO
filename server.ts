@@ -2378,7 +2378,7 @@ Return ONLY a single, valid JSON object (no markdown wrapping other than pure JS
       if (!ai) {
         console.log(`[SEO Content Hub - Server] No AI provider configured. Falling back to dynamic social fallback for platform "${sanitizedPlatform}"`);
         const fallback = generateDynamicFallbackSocial(sanitizedPlatform, primaryKey, sanitizedTopic, domainStr);
-        return res.json({ ...fallback, isFallback: true });
+        return res.json({ ...fallback, isFallback: true, errorMsg: "No AI provider configured or API key invalid. Go to Settings and enter a valid Gemini or OpenRouter API key." });
       }
     }
 
@@ -2521,7 +2521,7 @@ You MUST respond with a single, valid JSON object matching exactly this schema (
       const ai = getGeminiClient();
       if (!ai) {
         const fallback = await generateDeepKeywordFallback(cleanKw, domain);
-        return res.json(fallback);
+        return res.json({ ...fallback, errorMsg: "No AI provider configured. Go to Settings and enter a Gemini or OpenRouter API key." });
       }
     }
 
@@ -3307,7 +3307,7 @@ If you are ready to stop masking symptoms and start rebuilding your joint health
       if (!ai) {
         console.log(`[SEO Content Hub - Server] No AI provider configured. Falling back to dynamic mock article generation for: "${sanitizedTopic}"`);
         const fallback = generateDynamicFallbackArticle(sanitizedTopic, primaryKey, domainStr, targetWords, selectedTone, targetAudience);
-        return res.json(fallback);
+        return res.json({ ...fallback, errorMsg: "No AI provider configured. Go to Settings and enter a Gemini or OpenRouter API key." });
       }
     }
 

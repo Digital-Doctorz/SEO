@@ -535,7 +535,7 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
       }
       if (data.isFallback) {
         setMetaSuggestions([]);
-        setMetaGenError("AI engine unavailable — configure an API key in Settings for full AI-powered meta snippets.");
+        setMetaGenError(data.fallbackReason || data.errorMsg || "AI engine unavailable. Check your API key in Settings.");
         return;
       }
       if (data && Array.isArray(data.snippets)) {
@@ -1021,7 +1021,7 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
 
       if (data.isFallback) {
         setSocialPost(data);
-        setGenerationError("AI engine unavailable — configured an API key in Settings for full AI-powered content.");
+        setGenerationError(data.fallbackReason || data.errorMsg || "AI engine unavailable. Check your API key in Settings.");
         return;
       }
 
@@ -1122,7 +1122,7 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
           }
 
           if (data.isFallback) {
-            throw new Error("AI engine unavailable — configured an API key in Settings for full AI-powered content.");
+            throw new Error(data.fallbackReason || data.errorMsg || "AI engine unavailable. Check your API key in Settings.");
           }
 
           // Validate returned content
