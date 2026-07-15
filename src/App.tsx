@@ -35,18 +35,21 @@ export default function App() {
     custom: { model: "gpt-4o-mini", endpoint: "" }
   };
   const [aiConfig, setAiConfig] = useState<AiProviderConfig>(() => {
-    const storedProvider = (localStorage.getItem("seo_api_provider") as AiProviderConfig["provider"]) || DEFAULT_PROVIDER;
+    const storedProvider = typeof window !== "undefined" ? (localStorage.getItem("seo_api_provider") as AiProviderConfig["provider"]) || DEFAULT_PROVIDER : DEFAULT_PROVIDER;
     const defaults = PROVIDER_DEFAULTS[storedProvider];
-    const storedKey = localStorage.getItem(`seo_api_key_${storedProvider}`) || localStorage.getItem("seo_api_key") || "";
-    if (storedKey && !localStorage.getItem(`seo_api_key_${storedProvider}`)) {
-      localStorage.setItem(`seo_api_key_${storedProvider}`, storedKey);
+    let storedKey = "";
+    if (typeof window !== "undefined") {
+      storedKey = localStorage.getItem(`seo_api_key_${storedProvider}`) || localStorage.getItem("seo_api_key") || "";
+      if (storedKey && !localStorage.getItem(`seo_api_key_${storedProvider}`)) {
+        localStorage.setItem(`seo_api_key_${storedProvider}`, storedKey);
+      }
     }
     return {
       apiKey: storedKey,
       provider: storedProvider,
-      apiEndpoint: localStorage.getItem("seo_api_endpoint") || defaults.endpoint,
-      apiModel: localStorage.getItem("seo_api_model") || defaults.model,
-      customFormat: (localStorage.getItem("seo_api_custom_format") as AiProviderConfig["customFormat"]) || "openai",
+      apiEndpoint: typeof window !== "undefined" ? (localStorage.getItem("seo_api_endpoint") || defaults.endpoint) : defaults.endpoint,
+      apiModel: typeof window !== "undefined" ? (localStorage.getItem("seo_api_model") || defaults.model) : defaults.model,
+      customFormat: (typeof window !== "undefined" ? (localStorage.getItem("seo_api_custom_format") as AiProviderConfig["customFormat"]) : null) || "openai",
     };
   });
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);

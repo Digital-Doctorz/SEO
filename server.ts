@@ -1,7 +1,12 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
+
+const localRequire = createRequire(import.meta.url);
 
 dotenv.config();
 
@@ -3654,8 +3659,53 @@ You MUST respond with a single valid JSON object containing exactly the followin
   // Static file serving (works for production builds)
   const distPath = path.join(process.cwd(), 'dist');
   app.use(express.static(distPath));
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(distPath, 'index.html'));
+
+  // SSR render function — loaded lazily from SSR build output
+  let ssrRender: (() => string) | null = null;
+  let ssrLoadAttempted = false;
+
+  async function ensureSSR(): Promise<boolean> {
+    if (ssrLoadAttempted) return ssrRender !== null;
+    ssrLoadAttempted = true;
+    try {
+      const ssrEntry = path.resolve(process.cwd(), 'dist-ssr', 'entry-server.js');
+      if (!fs.existsSync(ssrEntry)) return false;
+      // Try CJS require first
+      try {
+        const mod = localRequire(ssrEntry);
+        if (typeof mod.render === 'function') {
+          ssrRender = mod.render;
+          console.log('SSR render loaded (CJS)');
+          return true;
+        }
+      } catch {
+        // Fallback: ESM dynamic import
+        const mod = await import(pathToFileURL(ssrEntry).href);
+        if (typeof mod.render === 'function') {
+          ssrRender = mod.render;
+          console.log('SSR render loaded (ESM)');
+          return true;
+        }
+      }
+    } catch (err) {
+      console.warn('SSR bundle not available, using CSR fallback');
+    }
+    return false;
+  }
+
+  app.get('*', async (req, res) => {
+    if (req.path.startsWith('/api/')) return;
+    const template = fs.readFileSync(path.join(distPath, 'index.html'), 'utf-8');
+    const ssrAvailable = await ensureSSR();
+    if (ssrAvailable && ssrRender) {
+      try {
+        const appHtml = ssrRender();
+        return res.send(template.replace('<!--ssr-outlet-->', appHtml));
+      } catch (err) {
+        console.error('SSR render error:', err);
+      }
+    }
+    res.send(template.replace('<!--ssr-outlet-->', ''));
   });
 
   return app;
