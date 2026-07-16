@@ -25,6 +25,32 @@ export async function generateMetaSnippets(params: {
   });
 }
 
+export type SocialPlatformId =
+  | "Twitter/X"
+  | "LinkedIn"
+  | "Newsletter"
+  | "Reddit"
+  | "Quora"
+  | "Google Business";
+
+export const ALL_SOCIAL_PLATFORMS: SocialPlatformId[] = [
+  "Twitter/X",
+  "LinkedIn",
+  "Newsletter",
+  "Reddit",
+  "Quora",
+  "Google Business",
+];
+
+export type SocialPostResult = SocialPost & {
+  isFallback?: boolean;
+  fallbackReason?: string;
+  errorMsg?: string;
+  needsApiKey?: boolean;
+  visualRecommendations?: string;
+  complianceCheck?: string;
+};
+
 export async function generateSocialPost(params: {
   platform: string;
   topic: string;
@@ -34,9 +60,24 @@ export async function generateSocialPost(params: {
   contentGoal?: string;
   brandVoice?: string;
   aiConfig?: AiProviderConfig;
-}): Promise<SocialPost & { isFallback?: boolean; fallbackReason?: string; errorMsg?: string }> {
-  return postApi("/api/generate-social", {
+  /** Generate several platforms in one request */
+  platforms?: string[];
+  generateAll?: boolean;
+}): Promise<
+  SocialPostResult & {
+    posts?: SocialPostResult[];
+    generatedCount?: number;
+  }
+> {
+  const data = await postApi<
+    SocialPostResult & {
+      posts?: SocialPostResult[];
+      generatedCount?: number;
+    }
+  >("/api/generate-social", {
     platform: params.platform,
+    platforms: params.platforms,
+    generateAll: Boolean(params.generateAll),
     topic: params.topic,
     keyword: params.keyword,
     targetDomain: params.targetDomain,
@@ -45,6 +86,37 @@ export async function generateSocialPost(params: {
     brandVoice: params.brandVoice,
     aiConfig: resolveAiConfig(params.aiConfig),
   });
+  return sanitizeDeep(data);
+}
+
+/** Ensure social payload always has usable content for the UI. */
+export function ensureSocialPost(
+  data: SocialPostResult | null | undefined,
+  platform: string,
+  topic: string,
+  keyword: string,
+  domain: string
+): SocialPostResult {
+  const brand = (domain.split(".")[0] || "Brand").replace(/^\w/, (c) => c.toUpperCase());
+  const kw = keyword || topic || "growth";
+  if (data?.content && String(data.content).trim().length >= 20) {
+    return {
+      ...data,
+      platform: (data.platform || platform) as SocialPost["platform"],
+      content: String(data.content),
+      hashtags: Array.isArray(data.hashtags) ? data.hashtags : [],
+    };
+  }
+  return {
+    platform: platform as SocialPost["platform"],
+    content: `Discover how ${brand} approaches ${kw}.\n\n${topic || "Fresh insights"} for teams who care about results.\n\nLearn more: https://${domain}/`,
+    hashtags: [kw.replace(/\s+/g, ""), "SEO", brand].filter(Boolean),
+    optimalPostingTime: "Tue–Thu 9–11am local",
+    engagementStrategy: "Ask a question and reply within the first hour.",
+    seoNotes: `Primary keyword: ${kw}`,
+    isFallback: true,
+    fallbackReason: data?.fallbackReason || "Could not load social copy — showing a starter draft.",
+  };
 }
 
 export async function generateBlogPost(params: {

@@ -3224,25 +3224,394 @@ async function generateFallbackData(targetRaw: string, competitorRaw?: string) {
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
+const SOCIAL_PLATFORMS = [
+ "Twitter/X",
+ "LinkedIn",
+ "Newsletter",
+ "Reddit",
+ "Quora",
+ "Google Business",
+] as const;
+
+type SocialPlatformName = (typeof SOCIAL_PLATFORMS)[number];
+
+function normalizeSocialPlatform(raw: unknown): SocialPlatformName {
+ const s = String(raw || "").trim().toLowerCase();
+ if (!s) return "Twitter/X";
+ if (s.includes("twitter") || s === "x" || s.includes("tweet")) return "Twitter/X";
+ if (s.includes("linkedin") || s.includes("linked in")) return "LinkedIn";
+ if (s.includes("newsletter") || s.includes("email") || s.includes("edm")) return "Newsletter";
+ if (s.includes("reddit")) return "Reddit";
+ if (s.includes("quora")) return "Quora";
+ if (s.includes("google") || s.includes("gbp") || s.includes("business profile") || s.includes("gmb"))
+  return "Google Business";
+ // Exact match against known list
+ const exact = SOCIAL_PLATFORMS.find((p) => p.toLowerCase() === s);
+ return exact || "Twitter/X";
+}
+
+function buildSocialSchema(
+ platform: SocialPlatformName,
+ content: string,
+ domain: string,
+ brand: string
+): string {
+ const url = `https://${domain}/`;
+ if (platform === "Newsletter") {
+  return JSON.stringify(
+   {
+    "@context": "https://schema.org",
+    "@type": "EmailMessage",
+    name: `${brand} newsletter`,
+    description: content.slice(0, 160),
+    url,
+   },
+   null,
+   2
+  );
+ }
+ if (platform === "Google Business") {
+  return JSON.stringify(
+   {
+    "@context": "https://schema.org",
+    "@type": "LocalBusiness",
+    name: brand,
+    url,
+    description: content.slice(0, 200),
+   },
+   null,
+   2
+  );
+ }
+ return JSON.stringify(
+  {
+   "@context": "https://schema.org",
+   "@type": "SocialMediaPosting",
+   headline: content.split("\n")[0]?.slice(0, 110) || `${brand} update`,
+   articleBody: content.slice(0, 500),
+   author: { "@type": "Organization", name: brand, url },
+   sharedContent: { "@type": "WebPage", url },
+  },
+  null,
+  2
+ );
+}
+
+/** Rich platform-native offline drafts when AI is unavailable. */
 function socialFallback(
- platform: string,
+ platformRaw: string,
  topic: string,
  keyword: string,
  domain: string,
- reason: string
+ reason: string,
+ extras?: { audience?: string; contentGoal?: string; brandVoice?: string }
 ) {
- const brand = domain.split(".")[0] || "Brand";
- const kw = keyword || topic || "SEO";
+ const platform = normalizeSocialPlatform(platformRaw);
+ const brand = (domain.split(".")[0] || "Brand").replace(/^\w/, (c) => c.toUpperCase());
+ const kw = (keyword || topic || "growth").trim();
+ const topicLine = (topic || kw).trim();
+ const audience = extras?.audience || "professionals";
+ const goal = extras?.contentGoal || "Engagement";
+ const voice = extras?.brandVoice || "clear and confident";
+ const tagBase = kw
+  .replace(/[^a-zA-Z0-9\s]/g, "")
+  .split(/\s+/)
+  .filter(Boolean)
+  .slice(0, 3)
+  .map((w) => w.charAt(0).toUpperCase() + w.slice(1));
+ const hashtags = Array.from(
+  new Set([
+   ...tagBase.map((t) => t.replace(/\s+/g, "")),
+   "SEO",
+   brand.replace(/\s+/g, ""),
+  ])
+ ).slice(0, 6);
+
+ let content = "";
+ let optimalPostingTime = "Tue–Thu 9–11am local time";
+ let engagementStrategy = "Reply to the first 5 comments within 30 minutes.";
+ let visualRecommendations = "Clean brand visual with one clear focal point.";
+ let seoNotes = `Primary keyword "${kw}" appears in the hook. Soft CTA to https://${domain}/.`;
+ let complianceCheck = "Within typical platform limits.";
+
+ switch (platform) {
+  case "Twitter/X":
+   content = [
+    `Most teams overcomplicate ${kw}.`,
+    ``,
+    `${topicLine}`,
+    ``,
+    `What actually moves the needle:`,
+    `1) One clear weekly metric`,
+    `2) Publish for intent, not vanity`,
+    `3) Link every asset back to your hub`,
+    ``,
+    `We break it down for ${audience}:`,
+    `https://${domain}/`,
+   ].join("\n");
+   optimalPostingTime = "Weekdays 8–10am or 12–1pm local (X peaks)";
+   engagementStrategy = "Pin a reply with a question. Quote-tweet useful comments in the first hour.";
+   visualRecommendations = "16:9 chart or bold text card. Max 1–2 lines of overlay text.";
+   complianceCheck = "Under 280 chars for single tweet OR thread-ready short paragraphs.";
+   // Prefer a tighter single-post version if long
+   if (content.length > 260) {
+    content = `Stop guessing on ${kw}.\n\n${topicLine.slice(0, 100)}\n\n3 moves that work:\n• One weekly metric\n• Intent-led pages\n• Internal links\n\n→ https://${domain}/`;
+   }
+   break;
+  case "LinkedIn":
+   content = [
+    `Unpopular opinion: ${kw} fails when it is treated like a one-off campaign.`,
+    ``,
+    `${topicLine}`,
+    ``,
+    `For ${audience}, here is a practical frame we use at ${brand}:`,
+    ``,
+    `1. Define success in one sentence (tied to ${goal.toLowerCase()}).`,
+    `2. Map the questions buyers already type into search.`,
+    `3. Ship one high-intent page or post per week — then measure.`,
+    `4. Fix internal links so good pages do not die as orphans.`,
+    ``,
+    `The teams winning in 2026 are not louder. They are clearer.`,
+    ``,
+    `If you are building this system, start here: https://${domain}/`,
+    ``,
+    `What is the #1 blocker you see with ${kw}?`,
+   ].join("\n");
+   optimalPostingTime = "Tue–Thu 8–10am local (LinkedIn professional feed)";
+   engagementStrategy = "End with a question. Comment on 5 peer posts after publishing to boost distribution.";
+   visualRecommendations = "4:5 portrait carousel or single insight graphic with brand colors.";
+   complianceCheck = "1,200–1,800 characters — scannable line breaks, no spammy hashtag walls.";
+   break;
+  case "Newsletter":
+   content = [
+    `Subject: ${kw}: a clearer plan for this week`,
+    `Preview: ${topicLine.slice(0, 80)}`,
+    ``,
+    `Hi there,`,
+    ``,
+    `Quick note for ${audience}.`,
+    ``,
+    `${topicLine}`,
+    ``,
+    `This week, focus on three things:`,
+    `1) Clarify your primary outcome for ${kw}`,
+    `2) Ship one asset that answers a real buyer question`,
+    `3) Measure one metric only — then iterate`,
+    ``,
+    `Voice note: ${voice}. Goal: ${goal}.`,
+    ``,
+    `Read the full breakdown (and tools we recommend):`,
+    `https://${domain}/`,
+    ``,
+    `— The ${brand} team`,
+    ``,
+    `P.S. Reply with your biggest ${kw} bottleneck — we read every note.`,
+   ].join("\n");
+   optimalPostingTime = "Tue or Wed 9–11am recipient local time";
+   engagementStrategy = "Ask for a one-word reply. Segment clickers on the CTA for a follow-up sequence.";
+   visualRecommendations = "Simple header image 600×200; keep body text-first for deliverability.";
+   complianceCheck = "Clear subject + preview; single primary CTA; plain-text friendly.";
+   break;
+  case "Reddit":
+   content = [
+    `Title: How are you approaching ${kw} without burning budget?`,
+    ``,
+    `Honest question for people who have shipped this in production.`,
+    ``,
+    `Context: ${topicLine}`,
+    ``,
+    `What we have tried / seen work:`,
+    `- One metric per week (not five dashboards)`,
+    `- Content that matches SERP intent (not generic listicles)`,
+    `- Internal links so pages reinforce each other`,
+    ``,
+    `What still feels unclear:`,
+    `- Timeline to first signal in a competitive niche`,
+    `- Whether to go deep on one pillar or ship more mid-size posts`,
+    ``,
+    `Curious what has actually moved the needle for you. Happy to share more detail on our setup if useful.`,
+    ``,
+    `(Not selling anything in this post — if you want our public notes they are at ${domain})`,
+   ].join("\n");
+   optimalPostingTime = "Mon–Wed mornings in US timezones (subreddit dependent)";
+   engagementStrategy = "Reply to every comment with substance. No bare links in the first post if the sub forbids it.";
+   visualRecommendations = "Usually text-only; if image, use a simple diagram without logo spam.";
+   complianceCheck = "Value-first; disclose affiliation if asked; follow subreddit rules.";
+   seoNotes = `Keyword "${kw}" in title naturally. Soft site mention only — Reddit penalizes hard sells.`;
+   break;
+  case "Quora":
+   content = [
+    `What is the most practical way to get results from ${kw}?`,
+    ``,
+    `Short answer: treat ${kw} as a weekly operating system, not a campaign.`,
+    ``,
+    `${topicLine}`,
+    ``,
+    `A simple sequence that works for ${audience}:`,
+    ``,
+    `1. Write down the buyer question in one line.`,
+    `2. Check what already ranks (format + depth).`,
+    `3. Publish something equal or better — with a clear answer in the first 50 words.`,
+    `4. Link related pages together so authority compounds.`,
+    `5. Review one metric after 2–4 weeks before changing tactics.`,
+    ``,
+    `Most failures I see are not "not enough content" — they are unclear goals and orphan pages.`,
+    ``,
+    `If you want a longer walkthrough, we document our approach at https://${domain}/.`,
+   ].join("\n");
+   optimalPostingTime = "Evergreen — answer high-traffic questions; refresh yearly";
+   engagementStrategy = "Lead with the direct answer. Update the answer when you get new data.";
+   visualRecommendations = "Optional simple diagram; Quora favors well-formatted text.";
+   complianceCheck = "Answer-first structure; no bait-and-switch; credentials if relevant.";
+   break;
+  case "Google Business":
+   content = [
+    `New insight for anyone researching ${kw}:`,
+    ``,
+    `${topicLine}`,
+    ``,
+    `At ${brand}, we help ${audience} with a clear next step — no fluff.`,
+    ``,
+    `This week:`,
+    `• Practical guidance on ${kw}`,
+    `• Focused on ${goal.toLowerCase()}`,
+    `• Easy to act on immediately`,
+    ``,
+    `Questions? Comment below or visit our site for details.`,
+    `https://${domain}/`,
+   ].join("\n");
+   optimalPostingTime = "Thu–Sat late morning local (local pack engagement varies)";
+   engagementStrategy = "Reply to every comment and review mention. Add a photo of real work when possible.";
+   visualRecommendations = "Square 1:1 photo of real team/location/product — avoid heavy text overlays.";
+   complianceCheck = "Under ~1,500 chars; accurate NAP; no prohibited claims.";
+   break;
+ }
+
+ const schemaMarkup = buildSocialSchema(platform, content, domain, brand);
+
  return {
- platform: platform || "Twitter/X",
- content: `Discover how ${brand} approaches ${kw}.\n\n${topic || "Fresh insights"} for teams who care about organic growth.\n\nLearn more: https://${domain}`,
- hashtags: [kw.replace(/\s+/g, ""), "SEO", "ContentMarketing"].filter(Boolean),
- optimalPostingTime: "Tue-Thu 9-11am local",
- engagementStrategy: "Ask a question in the first line and reply to comments within 1 hour.",
- seoNotes: `Primary keyword: ${kw}`,
- isFallback: true,
- fallbackReason: reason,
+  platform,
+  content: sanitizeText(content),
+  hashtags,
+  optimalPostingTime,
+  engagementStrategy,
+  visualRecommendations,
+  seoNotes,
+  complianceCheck,
+  schemaMarkup,
+  isFallback: true,
+  fallbackReason: reason,
  };
+}
+
+function normalizeSocialPayload(
+ parsed: any,
+ platform: SocialPlatformName,
+ topic: string,
+ keyword: string,
+ domain: string
+): any {
+ const brand = (domain.split(".")[0] || "Brand").replace(/^\w/, (c) => c.toUpperCase());
+ let content = sanitizeText(
+  parsed?.content || parsed?.post || parsed?.text || parsed?.copy || parsed?.body || ""
+ );
+ // Sometimes models nest under data/message
+ if (!content && parsed?.message) content = sanitizeText(parsed.message);
+ if (!content || content.length < 40) {
+  return socialFallback(platform, topic, keyword, domain, "AI returned incomplete social copy.");
+ }
+ const hashtags = Array.isArray(parsed?.hashtags)
+  ? parsed.hashtags.map((h: unknown) => String(h || "").replace(/^#/, "").trim()).filter(Boolean).slice(0, 12)
+  : [];
+ const out = {
+  platform,
+  content,
+  hashtags,
+  optimalPostingTime: sanitizeText(parsed?.optimalPostingTime || "") || "Tue–Thu 9–11am local",
+  engagementStrategy:
+   sanitizeText(parsed?.engagementStrategy || "") ||
+   "Reply to early comments within the first hour.",
+  visualRecommendations: sanitizeText(parsed?.visualRecommendations || ""),
+  seoNotes: sanitizeText(parsed?.seoNotes || "") || `Primary keyword: ${keyword || topic}`,
+  complianceCheck: sanitizeText(parsed?.complianceCheck || "") || "Reviewed against platform norms.",
+  schemaMarkup:
+   typeof parsed?.schemaMarkup === "string" && parsed.schemaMarkup.trim()
+    ? parsed.schemaMarkup
+    : typeof parsed?.schemaMarkup === "object" && parsed.schemaMarkup
+      ? JSON.stringify(parsed.schemaMarkup, null, 2)
+      : buildSocialSchema(platform, content, domain, brand),
+ };
+ return out;
+}
+
+function platformSocialPrompt(
+ platform: SocialPlatformName,
+ topic: string,
+ keyword: string,
+ domain: string,
+ audience: string,
+ contentGoal: string,
+ brandVoice: string
+): string {
+ const kw = keyword || topic;
+ const shared = `TOPIC: ${topic || kw}
+PRIMARY KEYWORD: ${kw}
+BRAND SITE: https://${domain}/
+AUDIENCE: ${audience || "professionals"}
+GOAL: ${contentGoal || "engagement"}
+VOICE: ${brandVoice || "clear and confident"}
+PLATFORM: ${platform}
+
+Rules:
+- Platform-native style (not a generic caption reused everywhere)
+- Hook in the first line
+- Natural use of the primary keyword (no stuffing)
+- Soft CTA to https://${domain}/ when appropriate for the platform
+- ASCII punctuation only
+- Return ONLY a JSON object (no markdown fences) with keys:
+  platform, content, hashtags (string array), optimalPostingTime, engagementStrategy, visualRecommendations, seoNotes, complianceCheck`;
+
+ switch (platform) {
+  case "Twitter/X":
+   return `${shared}
+Write a high-performing X/Twitter post (or short 3–5 tweet thread if needed).
+- Single post under ~260 chars preferred; if thread, separate tweets with blank lines and "---"
+- Punchy, scannable, 1 clear idea
+- 2–4 hashtags max`;
+  case "LinkedIn":
+   return `${shared}
+Write a LinkedIn post (1,200–1,800 characters).
+- Line breaks for mobile scanning
+- Professional but human; optional question CTA at the end
+- 3–5 hashtags at the end only`;
+  case "Newsletter":
+   return `${shared}
+Write an email newsletter draft including:
+- Subject line (first line: "Subject: ...")
+- Preview text (second line: "Preview: ...")
+- Body with greeting, 3 bullet value points, CTA link, short sign-off
+- ~250–400 words`;
+  case "Reddit":
+   return `${shared}
+Write a Reddit-style post:
+- First line is "Title: ..."
+- Value-first, community tone, no hard sell
+- Ask a genuine question; optional soft site mention at the end only`;
+  case "Quora":
+   return `${shared}
+Write a Quora answer:
+- Start with a direct 1–2 sentence answer
+- Then steps/explanation
+- Credible, helpful, not salesy; one optional link at the end`;
+  case "Google Business":
+   return `${shared}
+Write a Google Business Profile update (~100–300 words).
+- Local/customer friendly
+- Clear offer or insight
+- Invite comments or visits; include site URL`;
+  default:
+   return shared;
+ }
 }
 
 app.get("/api/health", (_req, res) => {
@@ -3908,44 +4277,148 @@ Return ONLY the JSON object defined in the system prompt.`;
 
 app.post("/api/generate-social", async (req, res) => {
  const domain = resolveDomain(req.body);
- const { keyword = "", topic = "", platform = "Twitter/X", audience = "", contentGoal = "", brandVoice = "" } = req.body || {};
+ const {
+  keyword = "",
+  topic = "",
+  platform = "Twitter/X",
+  platforms: platformsBody,
+  generateAll = false,
+  audience = "",
+  contentGoal = "",
+  brandVoice = "",
+ } = req.body || {};
  if (!domain || domain === "target-website.com") {
- return res.status(400).json({ error: "Target URL / domain is required." });
+  return res.status(400).json({ error: "Target URL / domain is required." });
  }
- const providerConfig = getProviderConfig(req);
- if (!providerConfig) {
- return res.status(401).json({
- error: "API key required",
- isFallback: true,
- needsApiKey: true,
- fallbackReason:
- "Add your own AI API key in Settings. No shared keys are stored on the server.",
- });
- }
- try {
- const prompt = `Write one high-quality social media post for platform "${platform}" promoting content about "${topic || keyword || "SEO services"}" for website "${domain}".
-Audience: ${audience || "professionals"}
-Goal: ${contentGoal || "drive clicks"}
-Brand voice: ${brandVoice || "clear and confident"}
-Primary keyword: ${keyword || topic}
 
-Hook in the first line. Platform-native length and style. Include a soft CTA to https://${domain}/.
-Return ONLY JSON object (not an array) with:
-platform, content, hashtags (string array), optimalPostingTime, engagementStrategy, seoNotes.`;
- const result = await callAI(providerConfig, prompt, "", { responseMimeType: "application/json", temperature: 0.4 });
- const parsed = cleanAndParseJSON(result.text);
- if (parsed.posts && Array.isArray(parsed.posts) && parsed.posts.length > 0) {
- const match = parsed.posts.find((p: { platform?: string }) => p.platform === platform) || parsed.posts[0];
- return res.json(match);
+ const topicStr = String(topic || keyword || "growth insights").trim();
+ const keywordStr = String(keyword || topicStr).trim();
+ const extras = {
+  audience: String(audience || ""),
+  contentGoal: String(contentGoal || ""),
+  brandVoice: String(brandVoice || ""),
+ };
+
+ // Multi-platform: generateAll or platforms[]
+ let targetPlatforms: SocialPlatformName[] = [];
+ if (generateAll === true || generateAll === "true" || generateAll === 1) {
+  targetPlatforms = [...SOCIAL_PLATFORMS];
+ } else if (Array.isArray(platformsBody) && platformsBody.length) {
+  targetPlatforms = Array.from(
+   new Set(platformsBody.map((p: unknown) => normalizeSocialPlatform(p)))
+  );
+ } else {
+  targetPlatforms = [normalizeSocialPlatform(platform)];
  }
- res.json(parsed);
+
+ const providerConfig = getProviderConfig(req);
+
+ async function generateOne(plat: SocialPlatformName): Promise<any> {
+  if (!providerConfig) {
+   return socialFallback(
+    plat,
+    topicStr,
+    keywordStr,
+    domain,
+    "Structured platform draft (offline). Add your AI API key in Settings for full AI rewrites.",
+    extras
+   );
+  }
+  try {
+   const prompt = platformSocialPrompt(
+    plat,
+    topicStr,
+    keywordStr,
+    domain,
+    extras.audience,
+    extras.contentGoal,
+    extras.brandVoice
+   );
+   const system =
+    "You are an expert multi-platform social copywriter. Return ONLY valid JSON for the requested platform. No markdown fences.";
+   const result = await withTimeout(
+    callAI(providerConfig, prompt, system, {
+     responseMimeType: "application/json",
+     temperature: 0.55,
+     maxOutputTokens: 2500,
+    }),
+    45000,
+    `Social ${plat}`
+   );
+   const rawText =
+    typeof result?.text === "string"
+     ? result.text
+     : typeof result === "string"
+       ? result
+       : "";
+   if (!rawText.trim()) {
+    return socialFallback(
+     plat,
+     topicStr,
+     keywordStr,
+     domain,
+     "AI returned empty social copy. Showing a platform-native draft.",
+     extras
+    );
+   }
+   let parsed: any;
+   try {
+    parsed = cleanAndParseJSON(rawText);
+   } catch {
+    // Model returned plain text — wrap as content
+    parsed = { platform: plat, content: rawText };
+   }
+   // Unwrap { posts: [...] }
+   if (parsed?.posts && Array.isArray(parsed.posts) && parsed.posts.length > 0) {
+    const match =
+     parsed.posts.find(
+      (p: { platform?: string }) =>
+       normalizeSocialPlatform(p?.platform) === plat
+     ) || parsed.posts[0];
+    parsed = match;
+   }
+   const normalized = normalizeSocialPayload(parsed, plat, topicStr, keywordStr, domain);
+   return { ...normalized, platform: plat, isFallback: false };
+  } catch (err: unknown) {
+   const message = humanizeProviderError(err);
+   return socialFallback(plat, topicStr, keywordStr, domain, message, extras);
+  }
+ }
+
+ try {
+  // Parallel for multi, sequential-safe for single
+  const results = await Promise.all(targetPlatforms.map((p) => generateOne(p)));
+
+  if (targetPlatforms.length === 1) {
+   // Single-platform response (backward compatible with SocialPanel)
+   return res.json(results[0]);
+  }
+
+  // Multi-platform package
+  return res.json({
+   posts: results,
+   platform: "multi",
+   content: results[0]?.content || "",
+   generatedCount: results.length,
+   isFallback: results.some((r) => r.isFallback),
+   fallbackReason: results.find((r) => r.isFallback)?.fallbackReason,
+   needsApiKey: !providerConfig,
+  });
  } catch (err: unknown) {
- const message = redactSecrets(err instanceof Error ? err.message : String(err));
- res.status(502).json({
- error: "Social generation failed",
- isFallback: true,
- fallbackReason: message,
- });
+  const message = humanizeProviderError(err);
+  // Never leave the UI empty
+  const fallbacks = targetPlatforms.map((p) =>
+   socialFallback(p, topicStr, keywordStr, domain, message, extras)
+  );
+  if (fallbacks.length === 1) return res.json(fallbacks[0]);
+  return res.json({
+   posts: fallbacks,
+   platform: "multi",
+   content: fallbacks[0]?.content || "",
+   generatedCount: fallbacks.length,
+   isFallback: true,
+   fallbackReason: message,
+  });
  }
 });
 
