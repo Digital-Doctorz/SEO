@@ -3,7 +3,7 @@
   "installCommand": "npm install",
   "functions": {
     "api/index.ts": {
-      "includeFiles": "{dist/**,api/**}"
+      "includeFiles": "dist/**"
     }
   },
   "rewrites": [
