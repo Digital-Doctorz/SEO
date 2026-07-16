@@ -602,24 +602,29 @@ function normalizeContentGaps(raw: unknown, fallbackKeywords: string[] = []): an
 function expandThinSectionBody(heading: string, body: string, kw: string, brand: string, domain: string): string {
  const clean = (body || "").trim();
  const words = clean.split(/\s+/).filter(Boolean).length;
- if (words >= 180) return clean;
+ if (words >= 200) return clean;
  const h = heading.replace(/^#+\s*/, "").trim() || kw;
- const base = clean || `**${h}** starts with a clear answer: effective **${kw}** is a weekly system, not a one-off project.`;
+ const lead =
+  clean ||
+  `**${h}** — short answer: treat **${kw}** as a weekly operating system with one primary metric, not a one-off campaign.`;
  return [
-  base,
+  lead,
   "",
-  `In practice, teams that treat **${kw}** as a repeatable operating rhythm outperform ad-hoc efforts by a wide margin. The difference is usually not more budget — it is clearer goals, tighter measurement, and pages that answer the searcher's question in the first 50 words.`,
+  `Most teams fail here for a boring reason: they confuse activity with progress. Publishing more pages, adding more tools, or rewriting the homepage every quarter rarely fixes weak **${kw}** outcomes. What works is narrower. Pick the buyer question behind the keyword, answer it in the first 50 words of the page, then prove the answer with steps, a comparison, and a clear next action.`,
   "",
-  `### How to apply this section`,
-  `1. Restate the reader's job-to-be-done for **${kw}** in one sentence.`,
-  `2. Ship one improvement this week (a stronger intro, a comparison table, or 3 internal links).`,
-  `3. Measure one outcome metric for 14 days before changing tactics.`,
+  `### A practical sequence`,
+  `1. Write the reader job in one sentence (what decision are they trying to make about **${kw}**?).`,
+  `2. Check the top results: what format wins (guide, comparison, checklist, service page)? Match the format, then go deeper.`,
+  `3. Ship one improvement this week — a stronger intro, a decision table, or 3 internal links from related pages.`,
+  `4. Measure one outcome for 14 days before changing tactics (rankings on 3 target queries, assisted conversions, or qualified leads — pick one).`,
   "",
-  `A worked example: a mid-market team focused on **${kw}** cut three thin posts and replaced them with one 2,000-word guide. Within 8 weeks, that single page outranked the old posts combined because it matched search depth and linked to related service pages on [${brand}](https://${domain}/).`,
+  `### Worked example`,
+  `A mid-market team focused on **${kw}** stopped publishing five thin posts a month. They replaced that volume with one 2,000-word guide, two supporting articles, and internal links from service pages. Within 8-12 weeks, the pillar page outranked the old posts combined because it matched search depth and made the next step obvious. You can copy the same pattern starting from [${brand}](https://${domain}/).`,
   "",
-  `Decision point: if you need results in under 30 days, prioritize fixing pages that already rank on page 2. If you are building authority for the next two quarters, invest in a pillar page plus supporting cluster content around **${kw}**.`,
+  `### Decision point`,
+  `If you need a signal in under 30 days, repair pages already on page 2 of Google for **${kw}** variations. If you are building authority for the next two quarters, invest in a pillar page plus a small cluster of supporting URLs and keep shipping on a weekly cadence.`,
   "",
-  `Next step from ${brand}: open your top landing page, check whether the first paragraph answers the query, and align the rest of the section to that promise.`,
+  `When you finish this section, open your highest-traffic related URL and ask: does the first paragraph answer the query? If not, rewrite that block before you create anything new.`,
  ].join("\n");
 }
 
@@ -1111,25 +1116,49 @@ function buildUniqueArticle(opts: {
        "",
       ]
     : [
-       `${h.replace(/\?.*$/, "").replace(/^#+\s*/, "")}: the short answer is that teams who follow a structured process with weekly measurement outperform those using ad-hoc approaches by 35-50% on key metrics. ${serviceLine}`,
+       `**Short answer:** teams that run **${kw}** as a weekly system with one primary metric typically outperform ad-hoc efforts by a wide margin on qualified traffic and conversion quality. ${serviceLine}`,
        "",
-       siteDesc && idx === 0 ? `${siteDesc}` : "",
+       siteDesc && idx === 0
+        ? `Context for this guide: ${siteDesc} Everything below is written for buyers evaluating options in **${niche}**, not generic advice that could sit on any site.`
+        : `This section is written for people evaluating **${kw}** inside **${niche}**. The goal is a decision you can act on this week, not a theory dump.`,
+       "",
+       `Start by restating the searcher's job. People typing queries around **${kw}** are rarely looking for definitions alone — they want a path: what to do first, what to ignore, and how long results take. Answer that path early, then expand with proof.`,
        "",
        "### Step-by-step checklist",
-       `1. Define your primary success metric for ${kw} in one sentence (e.g., "increase organic signups by 20% in 90 days").`,
-       `2. Audit your current content: which existing pages rank for ${kw} variations? What gaps exist?`,
-       `3. Map each H2 section to a specific user question and answer it in the first 50 words.`,
-       `4. Add one proof point per section: a benchmark, a mini case, or a comparison table.`,
-       `5. Link to 2-3 related ${brand} pages with descriptive anchors — not "click here".`,
+       `1. Define success for **${kw}** in one sentence (example: "increase organic signups 20% in 90 days").`,
+       `2. Audit what already ranks for **${kw}** and close variants — list gaps by intent, not by word count vanity.`,
+       `3. Map each H2 to one user question and answer it in the first 50 words of that section.`,
+       `4. Add one proof point per section: a range benchmark, a mini case, or a comparison table.`,
+       `5. Link 2-3 related ${brand} pages with descriptive anchors (never "click here").`,
        "",
-       idx === 1 ? ["### Decision matrix: which approach fits your situation", "", "| Scenario | Recommended approach | Expected timeline | Effort level |", "| --- | --- | --- | --- |", `| Solo marketer, limited budget | Focused ${kw} plan (3 pages/month) | 8-12 weeks to first gains | Low-medium |`, "| Small team (2-5 people) | Structured sprint model (weekly publish + measure) | 4-8 weeks to first gains | Medium |", "| Established brand, competitive niche | Full audit + pillar/cluster rebuild | 12-20 weeks to compound | High |", `| Already evaluating ${brand} | ${brand}-aligned rollout with existing assets | 3-6 weeks to first gains | Medium |`, ""].join("\n") : "",
+       idx === 1
+        ? [
+           "### Decision matrix: which approach fits",
+           "",
+           "| Scenario | Recommended approach | Timeline | Effort |",
+           "| --- | --- | --- | --- |",
+           `| Solo marketer | Focused ${kw} plan (2-3 strong pages/month) | 8-12 weeks | Low-medium |`,
+           "| Small team (2-5) | Weekly publish + measure sprint | 4-8 weeks | Medium |",
+           "| Competitive niche | Pillar + cluster rebuild | 12-20 weeks | High |",
+           `| Evaluating ${brand} | ${brand}-aligned rollout using existing assets | 3-6 weeks | Medium |`,
+           "",
+          ].join("\n")
+        : "",
+       idx === 2
+        ? [
+           "### What most guides miss",
+           "",
+           `Depth without internal links still underperforms. A strong **${kw}** page that no service or hub page points to gets crawled less and converts less. After you publish, schedule 30 minutes to add reciprocal links from your top 5 related URLs.`,
+           "",
+           relatedLine || `${brand} should treat educational pages and commercial pages as one system — not two separate libraries.`,
+           "",
+          ].join("\n")
+        : "",
        isBrand
-        ? `${brand} supports this process end-to-end: from audit and strategy through execution, measurement, and iteration. Explore [${brand} services](https://${domain}/services) and the main hub at [https://${domain}/](https://${domain}/).`
-        : `Keep related pages tightly connected. Example: link this guide from [${brand} home](https://${domain}/) and reference it in [about ${brand}](https://${domain}/about) to build topical authority.`,
+        ? `${brand} supports this end-to-end: audit, prioritization, execution, and measurement. Explore [${brand} services](https://${domain}/services) or start at [https://${domain}/](https://${domain}/).`
+        : `Connect this guide from [${brand} home](https://${domain}/) and related service pages so topical authority compounds.`,
        "",
-       relatedLine && idx === 2 ? relatedLine : "",
-       "",
-       `Pro tip ${n}: track one metric per week, not five. Overcomplicating measurement leads to analysis paralysis. Ship, measure, adjust, repeat.`,
+       `**Action for this week:** pick one metric for **${kw}**, ship one improvement, and review results in 14 days. Consistency beats a perfect plan that never ships.`,
       ];
    return [`## ${h}`, "", ...body.filter(Boolean)].join("\n");
   })
@@ -1537,6 +1566,7 @@ function normalizeBlogPayload(parsed: any, domain: string, kw: string, seed?: nu
  }
  faqSection = unique.faqSection?.length ? unique.faqSection : faqSection;
  }
+ content = polishBlogProse(content);
  content = improveReadability(content);
  content = ensureMediaInContent(content, kw, brand, domain);
  // Ensure Key Takeaways + FAQ headings exist for scannable structure
@@ -2081,78 +2111,232 @@ function scoreBlogArticle(content: string, kw: string): {
  const words = countContentWords(content);
  const h2 = (content.match(/^##\s+/gm) || []).length;
  const reasons: string[] = [];
- if (words < 1000) reasons.push(`thin_words:${words}`);
- if (h2 < 5) reasons.push(`few_h2:${h2}`);
+ if (words < 1400) reasons.push(`thin_words:${words}`);
+ if (h2 < 6) reasons.push(`few_h2:${h2}`);
  if (!/key takeaways/i.test(content)) reasons.push("missing_takeaways");
  if (!/frequently asked|##\s+faq/i.test(content)) reasons.push("missing_faq");
+ if (!/common mistakes|pitfalls|what to avoid/i.test(content)) reasons.push("missing_mistakes");
+ if (!/\|.+\|/.test(content)) reasons.push("missing_table");
  if (kw && !content.slice(0, 900).toLowerCase().includes(kw.toLowerCase().slice(0, 40))) {
   reasons.push("keyword_not_early");
  }
- // Accept if solid length + structure even if one soft check fails
- const ok = words >= 1200 && h2 >= 5 && reasons.filter((r) => r.startsWith("thin") || r.startsWith("few")).length === 0;
+ // Strong article: length + structure; soft checks may warn but still publish AI work
+ const hardFail = words < 1400 || h2 < 6;
+ const ok = !hardFail && reasons.length <= 2;
  return { words, h2, ok, reasons };
 }
 
-function buildSeoBlogSystemPrompt(masterTone: "Conversational" | "Professional" | "Academic"): string {
+/** Strip banned AI clichés and flatten broken whitespace (master prompt ban list). */
+function polishBlogProse(markdown: string): string {
+ let t = String(markdown || "");
+ const bans: Array<[RegExp, string]> = [
+  [/\b[Ii]t is important to note that\b/g, ""],
+  [/\b[Ii]t is worth mentioning that\b/g, ""],
+  [/\b[Ii]n today's (?:digital|fast-paced|competitive) (?:landscape|world)\b,?\s*/gi, ""],
+  [/\b[Ii]n order to\b/g, "to"],
+  [/\b[Ll]everage\b/g, "use"],
+  [/\b[Gg]ame-?changer\b/gi, "useful approach"],
+  [/\b[Rr]evolutionary\b/gi, "meaningful"],
+  [/\b[Cc]utting-edge\b/gi, "modern"],
+  [/\b[Bb]est-in-class\b/gi, "strong"],
+  [/\b[Ss]ynergy\b/gi, "coordination"],
+  [/\b[Pp]aradigm shift\b/gi, "major change"],
+  [/\b[Mm]ove the needle\b/gi, "improve results"],
+  [/\b[Ii]t goes without saying that\b/gi, ""],
+  [/\b[Ss]tudies show that\b/gi, "Industry benchmarks suggest that"],
+  [/\b[Uu]tilize\b/g, "use"],
+  [/\b[Cc]ommence\b/g, "start"],
+  [/\b[Ff]acilitate\b/g, "help"],
+ ];
+ for (const [re, rep] of bans) t = t.replace(re, rep);
+ // Collapse triple+ blank lines; clean double spaces left by deletions
+ t = t.replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+ return t;
+}
+
+/** Parse a full markdown article into the app blog payload shape. */
+function parseMarkdownArticle(
+ mdRaw: string,
+ kw: string,
+ domain: string,
+ brand: string,
+ topicHint?: string
+): any {
+ let md = polishBlogProse(
+  String(mdRaw || "")
+   .replace(/^```(?:markdown|md)?\s*/i, "")
+   .replace(/\s*```$/i, "")
+   .trim()
+ );
+ if (!md) return null;
+
+ // Ensure H1
+ let title = "";
+ const h1 = md.match(/^#\s+(.+)$/m);
+ if (h1) {
+  title = sanitizeText(h1[1]);
+ } else {
+  title = sanitizeText(topicHint || `${kw}: a practical guide`) || kw;
+  md = `# ${title}\n\n${md}`;
+ }
+
+ const outline = (md.match(/^##\s+(.+)$/gm) || [])
+  .map((l) => l.replace(/^##\s+/, "").trim())
+  .filter(Boolean)
+  .slice(0, 14);
+
+ // Intro: text after H1 until first ##
+ const introMatch = md.match(/^#\s+.+\n+([\s\S]*?)(?=\n##\s+)/);
+ const intro = sanitizeText(introMatch?.[1] || "").slice(0, 1200);
+
+ // Key takeaways bullets
+ const takeaways: string[] = [];
+ const tk = md.match(/##\s+Key Takeaways\s*\n+([\s\S]*?)(?=\n##\s+)/i);
+ if (tk) {
+  for (const line of tk[1].split("\n")) {
+   const m = line.match(/^\s*[-*]\s+(.+)/);
+   if (m) takeaways.push(sanitizeText(m[1]));
+  }
+ }
+
+ // FAQ pairs
+ const faqSection: Array<{ question: string; answer: string }> = [];
+ const faqBlock = md.match(
+  /##\s+(?:Frequently Asked Questions|FAQ)\s*\n+([\s\S]*?)(?=\n##\s+(?!#)|$)/i
+ );
+ if (faqBlock) {
+  const parts = faqBlock[1].split(/\n###\s+/).filter(Boolean);
+  for (const part of parts) {
+   const lines = part.trim().split("\n");
+   const q = sanitizeText(lines[0].replace(/^#+\s*/, ""));
+   const a = sanitizeText(lines.slice(1).join(" ").trim());
+   if (q && a) faqSection.push({ question: q, answer: a });
+  }
+ }
+
+ // Conclusion
+ const conc = md.match(/##\s+Conclusion\s*\n+([\s\S]*?)$/i);
+ const conclusion = sanitizeText(conc?.[1] || "").slice(0, 1500);
+
+ const metaDescription = sanitizeText(
+  (intro || `${title}. Practical steps and examples for ${kw} from ${brand}.`)
+   .replace(/\*\*/g, "")
+   .slice(0, 155)
+ );
+
+ const slugSuggestion =
+  title
+   .toLowerCase()
+   .replace(/[^a-z0-9]+/g, "-")
+   .replace(/(^-|-$)/g, "")
+   .slice(0, 70) || "article";
+
+ // Build sections for panels that expect them
+ const sections: Array<{ heading: string; body: string }> = [];
+ const secRe = /^##\s+(.+)$/gm;
+ const heads: Array<{ title: string; index: number }> = [];
+ let sm: RegExpExecArray | null;
+ while ((sm = secRe.exec(md)) !== null) {
+  heads.push({ title: sm[1].trim(), index: sm.index });
+ }
+ for (let i = 0; i < heads.length; i++) {
+  const start = heads[i].index;
+  const end = i + 1 < heads.length ? heads[i + 1].index : md.length;
+  const chunk = md.slice(start, end);
+  const body = chunk.replace(/^##\s+.+\n*/, "").trim();
+  const h = heads[i].title;
+  if (/key takeaways|frequently asked|conclusion/i.test(h)) continue;
+  sections.push({ heading: h, body: sanitizeText(body).slice(0, 8000) });
+ }
+
+ return {
+  title,
+  metaDescription,
+  slugSuggestion,
+  outline,
+  intro,
+  keyTakeaways: takeaways.slice(0, 8),
+  sections,
+  faqSection: faqSection.slice(0, 8),
+  conclusion,
+  content: md,
+  keywordStrategy: {
+   primary: kw,
+   secondary: [],
+   longTail: [],
+   intent: "informational",
+   targetPrimaryCount: "auto",
+  },
+ };
+}
+
+/**
+ * Writer system prompt — markdown-first (models write better long-form without JSON wrapping).
+ * Embeds master tone + craft rules; output is pure markdown.
+ */
+function buildSeoBlogWriterSystemPrompt(masterTone: "Conversational" | "Professional" | "Academic"): string {
  const masterBlock = loadSeoBlogMasterPrompt();
+ const toneCraft =
+  masterTone === "Conversational"
+   ? `TONE=Conversational: warm, direct, "you/your", contractions OK, Flesch 60-70, sentences 12-18 words, paragraphs 2-4 sentences. Pattern: Explain → Show → Apply.`
+   : masterTone === "Academic"
+     ? `TONE=Academic: rigorous, third person preferred, no contractions, Flesch 40-55, sentences 18-25 words. Include Background after intro and Limitations near end. Pattern: Context → Analysis → Synthesis.`
+     : `TONE=Professional: authoritative consultant voice, Flesch 50-60, sentences 15-22 words, paragraphs 3-5. Pattern: Claim → Evidence → Implication.`;
 
- return `You are a senior SEO strategist and content writer. Articles must rank on Google AND get cited by AI systems.
+ return `You are a senior SEO content writer and strategist. Your articles rank on Google and get cited by ChatGPT, Perplexity, and AI Overviews.
 
-ACTIVE TONE: ${masterTone} — apply every TONE rule from the master block.
+${toneCraft}
 
-PIPELINE (internal): RESEARCH analysis context → OUTLINE → WRITE full prose → FAQ → takeaways → self-audit.
-Ground every claim in the TARGET crawl + SEO analysis + competitor brief from the user message.
-Never invent fake study DOIs or exact survey percentages; use plausible industry ranges.
-Never write generic filler interchangeable across brands.
+WRITE LIKE A HUMAN EDITOR, NOT A TEMPLATE:
+- Specific > generic. Every paragraph must earn its place with a fact, example, trade-off, or step.
+- Open each H2 with a direct answer in the first 40-60 words (snippet/AI-citation ready).
+- Use concrete numbers as ranges ("4-8 weeks", "1,800-2,400 words") — never fake DOIs or exact survey % from invented studies.
+- Include 2 mini case scenarios grounded in the brand's niche from the research brief.
+- Include 1 decision framework or comparison table the reader can apply today.
+- Name real tools/processes when relevant (GA4, Search Console, etc.) — not "use analytics tools".
+- Say when NOT to use an approach. Nuance beats cheerleading.
+- Vary sentence openings. No three sections starting the same way.
+- Prose is default (60-80%). Bullets only for steps, checklists, or 4+ parallel items.
 
-QUALITY BAR (non-negotiable):
-- Minimum ~2000 words of real prose (not bullet soup)
-- Primary keyword density 1.0-1.5% natural
-- Each H2: open with direct answer in 40-60 words, then ≥200 words prose with example/number
-- Structure: H1 → Intro+Quick Answer → Key Takeaways → 6-8 H2s → Mistakes → FAQ → Conclusion+CTA
-- Media: 2-3 [IMAGE: ... Alt Text: "..."] + 1 [CHART:bar title="..." labels="a,b,c" values="1,2,3"] + ≥1 markdown table
-- 3+ internal links to brand domain; 2+ reputable external links
-- Prose 60-80%; bullets only for steps/checklists/4+ parallel items
-- ASCII only
+BANNED: "in today's digital landscape", "it is important to note", "leverage" as verb, "game-changer", "revolutionary", "cutting-edge", "synergy", "paradigm shift", "move the needle", "studies show" without naming a source type, keyword stuffing.
+
+STRUCTURE (mandatory order in the markdown):
+1. # Title (primary keyword near front, ~50-70 chars, benefit-led)
+2. Intro 150-250 words: hook → primary keyword in first 100 words → **Quick answer:** 2-3 sentences → who this is for
+3. ## Key Takeaways (4-6 complete sentence bullets)
+4. 6-8 ## H2 sections (each ≥220 words of flowing prose; use ### sparingly)
+5. One section must cover common mistakes / pitfalls with fixes
+6. At least one markdown comparison table
+7. 2-3 lines: [IMAGE: descriptive scene. Alt Text: "short alt"]
+8. Exactly one: [CHART:bar title="..." labels="a,b,c" values="10,20,30"]
+9. ## Frequently Asked Questions with ### Question then 2-4 sentence answers (4-6 Qs)
+10. ## Conclusion (100-200 words) + specific CTA with 2-3 internal links to the brand domain
+
+WORD COUNT: aim for 2000-2500 words of real prose.
+ASCII punctuation only.
+Ground EVERYTHING in the site crawl + research brief — never a brand-agnostic SEO essay.
 
 ${masterBlock}
 
-CRITICAL OUTPUT RULE:
-Return ONLY valid JSON (no markdown fences, no schemaMarkup).
-The "content" field is REQUIRED and must be the COMPLETE publishable markdown article
-from "# Title" through conclusion (full prose, all H2s, takeaways, FAQ). The server uses "content" first.
+OUTPUT FORMAT (critical):
+Return ONLY the full article as Markdown.
+No JSON. No preamble. No "Here is the article". No closing commentary.
+Start with # Title and end after the Conclusion section.`;
+}
 
-{
-  "title": "H1 with primary keyword near front",
-  "metaDescription": "150-160 chars, benefit-led, includes keyword",
-  "slugSuggestion": "kebab-case",
-  "outline": ["H2 titles in order"],
-  "intro": "150-250 words; Quick Answer first; keyword in first 100 words",
-  "keyTakeaways": ["4-6 complete sentences"],
-  "sections": [{ "heading": "H2", "body": "≥200 words markdown prose" }],
-  "faqSection": [{ "question": "...", "answer": "2-4 sentences" }],
-  "conclusion": "100-200 words + CTA",
-  "content": "REQUIRED full markdown article # Title ... through Conclusion",
-  "keywordStrategy": {
-    "primary": "string",
-    "secondary": ["..."],
-    "longTail": ["..."],
-    "intent": "informational|commercial|transactional|navigational",
-    "targetPrimaryCount": "X-Y"
-  },
-  "qualityAudit": {
-    "wordCount": 0,
-    "primaryDensityPct": 0,
-    "tone": "${masterTone}",
-    "checksPassed": true
-  }
-}`;
+/** Legacy JSON system prompt (repair / section fallback only). */
+function buildSeoBlogSystemPrompt(masterTone: "Conversational" | "Professional" | "Academic"): string {
+ return `${buildSeoBlogWriterSystemPrompt(masterTone)}
+
+ALTERNATE OUTPUT (only if the user asks for JSON): return a JSON object with required "content" (full markdown) plus title, metaDescription, outline, keyTakeaways, faqSection. Prefer pure markdown when asked to write the article.`;
 }
 
 /** Compact research brief system prompt (phase 1). */
 function buildBlogResearchSystemPrompt(): string {
- return `You are an SEO content strategist. Analyze the site + keyword + competitors and return a tight research brief as JSON only.
-No article body yet. Focus on ranking intent, outline, angles, gaps, and proof points the writer must use.
+ return `You are an elite SEO content strategist preparing a brief a senior writer will execute.
+Return tight JSON only. No article body.
+Focus on: search intent, outline that beats competitors, unique angle for THIS brand, proof points, worked examples, PAA questions, secondary/long-tail keywords.
+Be specific to the niche and site context — never generic "SEO tips" outlines.
 ASCII only. No markdown fences.`;
 }
 
@@ -4112,7 +4296,6 @@ app.post("/api/generate-blog", async (req, res) => {
  const secondary = secondaryMerged.join(", ");
  const targetWords = Math.max(2000, Math.min(2800, Number(wordCount) || 2000));
  const masterTone = mapMasterTone(String(tone || "Professional"));
- const systemPrompt = buildSeoBlogSystemPrompt(masterTone);
  const prevOutline = Array.isArray(previousOutline)
   ? previousOutline.map(String).slice(0, 12)
   : [];
@@ -4248,52 +4431,69 @@ Stay on-niche for ${brandName} / ${siteContext.niche || topicResolved}. No artic
   };
  }
 
- // PHASE 2: AI write full article using master prompt + research
+ // PHASE 2: Markdown-first full article (better quality than JSON-wrapped thin sections)
+ const writerSystem = buildSeoBlogWriterSystemPrompt(masterTone);
+ const titlePick =
+  Array.isArray(researchBrief?.titleOptions) && researchBrief.titleOptions[0]
+   ? String(researchBrief.titleOptions[0])
+   : strategy.titlePrefix(kw);
+ const outlinePick = Array.isArray(researchBrief?.outline)
+  ? researchBrief.outline.slice(0, 8).map((h: unknown, i: number) => `${i + 1}. ${h}`).join("\n")
+  : strategy.heads(kw, brandName).map((h: string, i: number) => `${i + 1}. ${h}`).join("\n");
+
  const modeBlock = isEnhance
   ? `MODE: FULL REDRAFT + ENHANCE
 Previous title: ${String(previousTitle || "").slice(0, 120)}
 Previous outline: ${prevOutline.join(" | ") || "(none)"}
 Previous excerpt (upgrade far beyond; do not copy):
 """${prevClip}"""
-Fully rewrite with deeper research, better prose, same primary keyword "${kw}" and brand ${brandName}.`
-  : `MODE: NEW ARTICLE — research-backed, analysis-grounded, master-prompt compliant.`;
+Rewrite as a premium original article. Same primary keyword "${kw}" and brand ${brandName}.`
+  : `MODE: NEW premium article — research-backed, niche-specific, master-prompt compliant.`;
 
- const writePrompt = `${isEnhance ? "FULLY REWRITE AND ENHANCE" : "WRITE"} a complete SEO blog article as JSON.
+ const writePrompt = `${isEnhance ? "Rewrite" : "Write"} the COMPLETE publishable blog post in MARKDOWN only.
 
 ${modeBlock}
 
-## Master prompt inputs
-TOPIC=${topicResolved}
-KEYWORD=${kw}
-WORDCOUNT=${targetWords} (hit ~2000+ real prose words)
-AUDIENCE=${resolvedAudience}
-TONE=${masterTone}
-BRAND=${brandName}
-TARGET_URL=https://${domain}/
+INPUTS
+TOPIC: ${topicResolved}
+PRIMARY KEYWORD: ${kw} (must appear in H1 and first 100 words; density ~1.0-1.5%)
+WORD COUNT TARGET: ${targetWords} (minimum 2000 real prose words)
+AUDIENCE: ${resolvedAudience}
+TONE: ${masterTone}
+BRAND: ${brandName}
+SITE: https://${domain}/
+Suggested H1: ${titlePick}
+Suggested H2 outline (adapt if needed for better flow):
+${outlinePick}
 
-## PHASE-1 RESEARCH BRIEF (use every useful field)
+RESEARCH BRIEF (use proof points, examples, gaps, PAA):
 ${JSON.stringify(researchBrief)}
 
 ${analysisBlock}
 
-## Writing contract
-1. REQUIRED field "content" = complete markdown article from "# Title" through conclusion (~${targetWords} words).
-2. Also fill title, metaDescription, slugSuggestion, outline, intro, keyTakeaways, sections (6-8 with long prose bodies), faqSection (4-6), conclusion, keywordStrategy, qualityAudit.
-3. Primary keyword in H1 + first 100 words; density ~1.0-1.5%.
-4. Quick Answer in intro; Key Takeaways; Common Mistakes; FAQ; media placeholders + table + chart.
-5. 3+ internal links to https://${domain}/... ; 2+ external authority links.
-6. Concrete examples for ${brandName} niche — not generic SEO fluff.
-7. ASCII only. No schemaMarkup. No markdown fences around JSON.
+CRAFT REQUIREMENTS (master SEO blog guidelines)
+- Sound like a skilled human editor who researched this brand — not a generic SEO bot.
+- **Quick answer:** block in the intro (2-3 sentences).
+- ## Key Takeaways with 4-6 complete sentences as bullets.
+- 6-8 H2 sections; each opens with a direct answer, then deep prose (≥220 words/section).
+- One "Common mistakes" / pitfalls section with fixes.
+- One markdown comparison table + 2-3 [IMAGE:...] + 1 [CHART:bar ...].
+- ## Frequently Asked Questions with ### questions (4-6) and solid answers.
+- ## Conclusion with specific next step + links to https://${domain}/ , /services, /contact or real paths from crawl.
+- Weave secondary keywords naturally: ${(researchBrief?.secondaryKeywords || secondaryMerged).slice(0, 5).join(", ") || secondary}.
+- Include 2+ external links to reputable sources (.gov, .edu, official docs, major industry pubs).
+- Include the unique angle: ${researchBrief?.uniqueAngle || `how ${brandName} approaches ${kw} in practice`}.
+- ZERO banned clichés. ZERO brand-agnostic filler.
 
-Return ONLY the JSON object.`;
+OUTPUT: Markdown only. Start with # Title. No JSON. No preamble.`;
 
  const writeResult = await withTimeout(
-  callAI(providerConfig, writePrompt, systemPrompt, {
-   responseMimeType: "application/json",
-   temperature: isEnhance ? 0.7 : 0.62,
+  callAI(providerConfig, writePrompt, writerSystem, {
+   // Markdown output — do NOT force JSON (truncates long articles on free models)
+   temperature: isEnhance ? 0.72 : 0.68,
    maxOutputTokens: 8192,
   }),
-  95000,
+  100000,
   "Blog write"
  );
 
@@ -4302,86 +4502,117 @@ Return ONLY the JSON object.`;
   throw new Error("AI returned empty blog response");
  }
 
- let parsed: any;
- try {
-  parsed = cleanAndParseJSON(rawText);
- } catch {
-  const md = rawText.replace(/^```(?:markdown|md)?\n?/i, "").replace(/\n?```$/i, "").trim();
-  parsed = {
-   title: strategy.titlePrefix(kw),
-   content: md.startsWith("#") ? md : `# ${strategy.titlePrefix(kw)}\n\n${md}`,
-   metaDescription: `${topicResolved}. Practical guide for ${resolvedAudience}.`.slice(0, 155),
-  };
+ let parsed: any = null;
+ // Prefer pure markdown path
+ if (!rawText.trim().startsWith("{")) {
+  parsed = parseMarkdownArticle(rawText, kw, domain, brandName, topicResolved);
+ } else {
+  // Model returned JSON despite instructions — support both shapes
+  try {
+   const asJson = cleanAndParseJSON(rawText);
+   if (asJson?.content && countContentWords(String(asJson.content)) >= 400) {
+    parsed = asJson;
+    parsed.content = polishBlogProse(String(asJson.content));
+   } else if (asJson?.sections || asJson?.intro) {
+    parsed = asJson;
+   } else {
+    parsed = parseMarkdownArticle(rawText, kw, domain, brandName, topicResolved);
+   }
+  } catch {
+   parsed = parseMarkdownArticle(rawText, kw, domain, brandName, topicResolved);
+  }
+ }
+
+ if (!parsed) {
+  throw new Error("Could not parse AI article output");
  }
 
  if ((!parsed.outline || !parsed.outline.length) && researchBrief?.outline) {
   parsed.outline = researchBrief.outline;
  }
  if (!parsed.title || String(parsed.title).length < 12) {
-  const opt = Array.isArray(researchBrief?.titleOptions) ? researchBrief.titleOptions[0] : null;
-  parsed.title = sanitizeText(opt) || strategy.titlePrefix(kw);
+  parsed.title = sanitizeText(titlePick) || strategy.titlePrefix(kw);
  }
- if (!parsed.keywordStrategy && researchBrief) {
+ if (!parsed.keywordStrategy) {
   parsed.keywordStrategy = {
-   primary: researchBrief.primaryKeyword || kw,
-   secondary: researchBrief.secondaryKeywords || secondaryMerged.slice(0, 4),
-   longTail: researchBrief.longTail || [],
-   intent: researchBrief.searchIntent || "informational",
+   primary: researchBrief?.primaryKeyword || kw,
+   secondary: researchBrief?.secondaryKeywords || secondaryMerged.slice(0, 4),
+   longTail: researchBrief?.longTail || [],
+   intent: researchBrief?.searchIntent || "informational",
    targetPrimaryCount: `${densityLow}-${densityHigh}`,
   };
+ } else {
+  parsed.keywordStrategy.primary = parsed.keywordStrategy.primary || kw;
+  parsed.keywordStrategy.targetPrimaryCount =
+   parsed.keywordStrategy.targetPrimaryCount || `${densityLow}-${densityHigh}`;
  }
- if (!parsed.content && typeof rawText === "string" && rawText.includes("## ") && !rawText.trim().startsWith("{")) {
-  parsed.content = rawText;
+
+ // Ensure content is polished markdown
+ if (parsed.content) {
+  parsed.content = polishBlogProse(String(parsed.content));
  }
 
  parsed.strategyId = strategy.id;
  parsed.variationSeed = seed;
 
  let normalized = normalizeBlogPayload(parsed, domain, kw, seed);
+ // Final prose polish after assembly/media inject
+ if (normalized.content) {
+  normalized.content = polishBlogProse(String(normalized.content));
+  normalized.content = improveReadability(normalized.content);
+ }
  let quality = scoreBlogArticle(String(normalized.content || ""), kw);
 
- // PHASE 3: one AI repair pass if thin
- if (!quality.ok && quality.words < 1200) {
+ // PHASE 3: markdown expansion rewrite if thin or missing structure
+ if (!quality.ok || quality.words < 1600) {
   try {
-   const repairPrompt = `The previous draft failed quality checks: ${quality.reasons.join(", ")} (${quality.words} words, ${quality.h2} H2s).
-Rewrite a COMPLETE stronger article as JSON with REQUIRED full "content" markdown (~${targetWords} words).
+   const repairPrompt = `Your previous draft failed quality checks: ${quality.reasons.join(", ")} (${quality.words} words, ${quality.h2} H2s).
 
-TOPIC=${topicResolved}
-KEYWORD=${kw}
-TONE=${masterTone}
-BRAND=${brandName}
-TARGET=https://${domain}/
-RESEARCH=${JSON.stringify(researchBrief).slice(0, 2500)}
-SITE=${JSON.stringify(siteContext).slice(0, 800)}
+Rewrite a COMPLETE, excellent SEO blog post in MARKDOWN only (~${targetWords} words).
+Do not summarize. Do not shorten. Expand with real prose, examples, and decision frameworks.
 
-Rules: 6-8 H2s, Key Takeaways, FAQ, mistakes section, table, [IMAGE]x2, [CHART:bar ...], prose-first, keyword early.
-Return ONLY JSON with title, metaDescription, content (full markdown), faqSection, keyTakeaways, outline.`;
+TOPIC: ${topicResolved}
+KEYWORD: ${kw}
+TONE: ${masterTone}
+BRAND: ${brandName}
+SITE: https://${domain}/
+RESEARCH: ${JSON.stringify(researchBrief).slice(0, 2800)}
+SITE CONTEXT: ${JSON.stringify(siteContext).slice(0, 900)}
+
+Must include: Quick answer intro, Key Takeaways, 6-8 deep H2s, mistakes section, table, 2 images, 1 chart, FAQ, conclusion with CTAs.
+Primary keyword early and natural density 1.0-1.5%.
+Markdown only. Start with # Title.`;
    const repairResult = await withTimeout(
-    callAI(providerConfig, repairPrompt, systemPrompt, {
-     responseMimeType: "application/json",
-     temperature: 0.55,
+    callAI(providerConfig, repairPrompt, writerSystem, {
+     temperature: 0.6,
      maxOutputTokens: 8192,
     }),
-    90000,
+    100000,
     "Blog repair"
    );
    const repairText = extractAiText(repairResult);
    if (repairText.trim()) {
-    let repairParsed: any;
-    try {
-     repairParsed = cleanAndParseJSON(repairText);
-    } catch {
-     repairParsed = {
-      title: parsed.title,
-      content: repairText.replace(/^```[\w]*\n?/i, "").replace(/\n?```$/i, ""),
-     };
-    }
-    if (!repairParsed.title) repairParsed.title = parsed.title;
-    const repaired = normalizeBlogPayload(repairParsed, domain, kw, seed + 3);
-    const q2 = scoreBlogArticle(String(repaired.content || ""), kw);
-    if (q2.words > quality.words) {
-     normalized = repaired;
-     quality = q2;
+    let repairParsed =
+     parseMarkdownArticle(repairText, kw, domain, brandName, topicResolved) ||
+     (() => {
+      try {
+       return cleanAndParseJSON(repairText);
+      } catch {
+       return null;
+      }
+     })();
+    if (repairParsed) {
+     if (!repairParsed.title) repairParsed.title = parsed.title;
+     if (repairParsed.content) repairParsed.content = polishBlogProse(String(repairParsed.content));
+     const repaired = normalizeBlogPayload(repairParsed, domain, kw, seed + 3);
+     if (repaired.content) {
+      repaired.content = polishBlogProse(improveReadability(String(repaired.content)));
+     }
+     const q2 = scoreBlogArticle(String(repaired.content || ""), kw);
+     if (q2.words > quality.words || (q2.ok && !quality.ok)) {
+      normalized = repaired;
+      quality = q2;
+     }
     }
    }
   } catch (repairErr) {
@@ -4389,7 +4620,7 @@ Return ONLY JSON with title, metaDescription, content (full markdown), faqSectio
   }
  }
 
- if (!normalized.content || countContentWords(normalized.content) < 500) {
+ if (!normalized.content || countContentWords(normalized.content) < 600) {
   const unique = buildUniqueArticle({
    domain,
    kw,
