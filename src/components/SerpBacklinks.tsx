@@ -25,7 +25,12 @@ interface SerpBacklinksProps {
   targetRating?: number;
   competitorDomain?: string;
   competitorRating?: number;
-  discoveredCompetitors?: any[];
+  discoveredCompetitors?: Array<{
+    domain: string;
+    nicheSimilarity?: number;
+    estimatedMonthlyTraffic?: number;
+    nicheFocus?: string;
+  }>;
 }
 
 export default function SerpBacklinks({ 

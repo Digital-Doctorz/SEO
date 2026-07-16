@@ -10,11 +10,22 @@ import {
 import { AnalysisResult, AiProviderConfig } from "./types";
 import SettingsModal from "./components/SettingsModal";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { postApi } from "./lib/api";
 const DashboardOverview = lazy(() => import("./components/DashboardOverview"));
 const KeywordLandscape = lazy(() => import("./components/KeywordLandscape"));
 const ContentGapAnalysis = lazy(() => import("./components/ContentGapAnalysis"));
 const SerpBacklinks = lazy(() => import("./components/SerpBacklinks"));
 const ContentHub = lazy(() => import("./components/ContentHub"));
+
+type AppTab = "overview" | "keywords" | "gaps" | "serp" | "hub";
+
+const NAV_ITEMS: Array<{ id: AppTab; label: string; icon: typeof BarChart2 }> = [
+  { id: "overview", label: "Overview", icon: BarChart2 },
+  { id: "keywords", label: "Keyword Map", icon: Globe },
+  { id: "gaps", label: "Content Gaps", icon: Zap },
+  { id: "serp", label: "SERP & Links", icon: Search },
+  { id: "hub", label: "AI Content Hub", icon: Sparkles },
+];
 
 export default function App() {
   // Domain Inputs
@@ -22,7 +33,7 @@ export default function App() {
   const [competitorUrl, setCompetitorUrl] = useState("");
   
   // App States
-  const [activeTab, setActiveTab] = useState<"overview" | "keywords" | "gaps" | "serp" | "hub">("overview");
+  const [activeTab, setActiveTab] = useState<AppTab>("overview");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
@@ -91,36 +102,33 @@ export default function App() {
     setAnalysisResult(null);
 
     try {
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          targetUrl: target,
-          competitorUrl: competitor || undefined,
-          aiConfig
-        })
+      const data = await postApi<AnalysisResult & {
+        isFallback?: boolean;
+        needsApiKey?: boolean;
+        error?: string;
+        errorMsg?: string;
+        fallbackReason?: string;
+      }>("/api/analyze", {
+        targetUrl: target,
+        competitorUrl: competitor || undefined,
+        aiConfig,
       });
-      
-      let data;
-      try {
-        data = await response.json();
-      } catch {
-        throw new Error(`Server returned ${response.status}: Expected JSON response`);
-      }
-      // If fallback data, always display it (even with errors)
+
+      // Fallback data is still useful — show it with a notice
       if (data.isFallback) {
         setAnalysisResult(data);
-        const fallbackMsg = data.needsApiKey
-          ? "No API key configured. Open Settings to enter your key or see pre-compiled fallback analysis."
-          : data.errorMsg || data.fallbackReason || "";
-        setErrorMsg(fallbackMsg);
+        setErrorMsg(
+          data.needsApiKey
+            ? "No API key configured. Open Settings to enter your key or review pre-compiled fallback analysis."
+            : data.errorMsg || data.fallbackReason || ""
+        );
         setActiveTab("overview");
         return;
       }
 
       if (data.error) throw new Error(data.error);
       if (data.errorMsg) throw new Error(data.errorMsg);
-      
+
       setAnalysisResult(data);
       setActiveTab("overview");
     } catch (err: unknown) {
@@ -348,65 +356,20 @@ export default function App() {
 
             {/* Nav Menu Links */}
             <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-              <button
-                onClick={() => { setActiveTab("overview"); setMobileMenuOpen(false); }}
-                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
-                  activeTab === "overview"
-                    ? "bg-blue-50 text-blue-700"
-                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
-                }`}
-              >
-                <BarChart2 className="h-4 w-4" />
-                <span>Overview</span>
-              </button>
-
-              <button
-                onClick={() => { setActiveTab("keywords"); setMobileMenuOpen(false); }}
-                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
-                  activeTab === "keywords"
-                    ? "bg-blue-50 text-blue-700"
-                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
-                }`}
-              >
-                <Globe className="h-4 w-4" />
-                <span>Keyword Map</span>
-              </button>
-
-              <button
-                onClick={() => { setActiveTab("gaps"); setMobileMenuOpen(false); }}
-                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
-                  activeTab === "gaps"
-                    ? "bg-blue-50 text-blue-700"
-                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
-                }`}
-              >
-                <Zap className="h-4 w-4" />
-                <span>Content Gaps</span>
-              </button>
-
-              <button
-                onClick={() => { setActiveTab("serp"); setMobileMenuOpen(false); }}
-                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
-                  activeTab === "serp"
-                    ? "bg-blue-50 text-blue-700"
-                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
-                }`}
-              >
-                <Search className="h-4 w-4" />
-                <span>SERP & Links</span>
-              </button>
-
-              <button
-                onClick={() => { setActiveTab("hub"); setMobileMenuOpen(false); }}
-                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
-                  activeTab === "hub"
-                    ? "bg-blue-50 text-blue-700"
-                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
-                }`}
-              >
-                <Sparkles className="h-4 w-4 text-blue-600" />
-                <span>AI Content Hub</span>
-              </button>
+              {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  onClick={() => { setActiveTab(id); setMobileMenuOpen(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+                    activeTab === id
+                      ? "bg-blue-50 text-blue-700"
+                      : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+                  }`}
+                >
+                  <Icon className={`h-4 w-4 ${id === "hub" ? "text-blue-600" : ""}`} />
+                  <span>{label}</span>
+                </button>
+              ))}
             </nav>
 
             {/* Sidebar Footer Asset Box */}

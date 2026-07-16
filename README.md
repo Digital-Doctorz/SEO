@@ -2,19 +2,42 @@
 <img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
 </div>
 
-# Run and deploy your AI Studio app
+# Local SEO — Competitive Intelligence Platform
 
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/b0170e7e-92f7-4bf3-b6d2-71bbcfa58607
+AI-powered SEO analysis, content gap mapping, and blog generation.
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
+**Prerequisites:** Node.js 20+
 
+1. Install dependencies: `npm install`
+2. (Optional) Put a Gemini key in Settings UI after launch, or set secrets in `.env.local`
+3. Start dev server (API + Vite HMR on one port):
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+```bash
+npm run dev
+```
+
+Open http://localhost:3000
+
+4. Production local:
+
+```bash
+npm run build
+npm start
+```
+
+## Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Express API + Vite middleware (port 3000) |
+| `npm run build` | Client production build → `dist/` |
+| `npm start` | Serve `dist/` + API (port 3000) |
+| `npm run lint` | TypeScript check |
+
+## API keys
+
+Keys are entered in **Settings** (gear icon) and stored in browser `localStorage`. They are sent with each `/api/*` request as `aiConfig` — never committed to the repo.
+
+Supported providers: Gemini, OpenRouter, Custom (OpenAI/Anthropic/Gemini-compatible).
