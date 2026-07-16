@@ -36,8 +36,16 @@ npm start
 | `npm start` | Serve `dist/` + API (port 3000) |
 | `npm run lint` | TypeScript check |
 
-## API keys
+## API keys (bring your own)
 
-Keys are entered in **Settings** (gear icon) and stored in browser `localStorage`. They are sent with each `/api/*` request as `aiConfig` — never committed to the repo.
+**Required for live AI.** There is no shared server key.
 
-Supported providers: Gemini, OpenRouter, Custom (OpenAI/Anthropic/Gemini-compatible).
+1. Open **Settings** (gear icon) in the app  
+2. Paste **your** Gemini, OpenRouter, or custom provider key  
+3. Keys stay in **your browser only** (`localStorage`) and are sent per-request as `aiConfig`
+
+- Never commit keys to git  
+- Server does **not** read `GEMINI_API_KEY` / env secrets for AI  
+- Without a key: demo/fallback dashboard data only; blog & social generation require a key  
+
+Supported providers: Gemini, OpenRouter, Custom (OpenAI / Anthropic / Gemini-compatible).

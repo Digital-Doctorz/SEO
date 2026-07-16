@@ -137,8 +137,8 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
               <div className="bg-blue-50/60 rounded-xl p-4 border border-blue-100 flex items-start gap-3">
                 <Shield className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
                 <div className="text-xs text-slate-600 leading-relaxed">
-                  <strong className="text-slate-800 block mb-1">Your key stays private</strong>
-                  Your API key is stored in your browser's localStorage and sent directly to the AI provider from our server. It is never logged, stored on disk, or shared with third parties.
+                  <strong className="text-slate-800 block mb-1">Bring your own key (required)</strong>
+                  Every user must use their own API key. It is saved only in <em>your</em> browser (localStorage) and sent with each analysis request to call the AI provider. We never store keys on the server, in the database, or in env files — and we never share a platform-wide key.
                 </div>
               </div>
 

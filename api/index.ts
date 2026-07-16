@@ -182,17 +182,82 @@ async function callAI(
   throw new Error(`Unknown provider: ${provider}`);
 }
 
+/**
+ * BYOK only — every user supplies their own key via request body (from browser Settings).
+ * NEVER fall back to process.env / GEMINI_API_KEY / shared server secrets.
+ * Keys are never written to disk, logs, or shared storage on the server.
+ */
 function getProviderConfig(req: { body?: { aiConfig?: Partial<ProviderConfig> } }): ProviderConfig | null {
   const cfg = req.body?.aiConfig;
-  if (!cfg || !cfg.apiKey) return null;
+  const rawKey = typeof cfg?.apiKey === "string" ? cfg.apiKey.trim() : "";
+  if (!rawKey) return null;
+  // Reject obvious placeholders so a fake "key" never hits a provider
+  const lower = rawKey.toLowerCase();
+  if (
+    lower.includes("your") ||
+    lower.includes("placeholder") ||
+    lower === "my_gemini_api_key" ||
+    lower === "xxx" ||
+    rawKey.length < 8
+  ) {
+    return null;
+  }
   return {
-    apiKey: cfg.apiKey,
-    provider: cfg.provider || "gemini",
-    apiEndpoint: cfg.apiEndpoint || "",
-    apiModel: cfg.apiModel || "",
-    customFormat: cfg.customFormat || "openai",
+    apiKey: rawKey,
+    provider: cfg?.provider || "gemini",
+    apiEndpoint: (cfg?.apiEndpoint || "").trim(),
+    apiModel: (cfg?.apiModel || "").trim(),
+    customFormat: cfg?.customFormat || "openai",
   };
 }
+
+/** Strip secrets from error strings before logging or returning to clients. */
+function redactSecrets(message: string): string {
+  return message
+    .replace(/Bearer\s+[A-Za-z0-9._\-]+/gi, "Bearer [REDACTED]")
+    .replace(/AIza[0-9A-Za-z_\-]{10,}/g, "[REDACTED_KEY]")
+    .replace(/sk-or-v1-[A-Za-z0-9_\-]{10,}/g, "[REDACTED_KEY]")
+    .replace(/sk-[A-Za-z0-9]{20,}/g, "[REDACTED_KEY]")
+    .replace(/x-api-key["']?\s*[:=]\s*["']?[^"'\s,}]+/gi, "x-api-key:[REDACTED]");
+}
+
+const SEO_BLOG_SYSTEM_PROMPT = `You are an elite SEO content strategist and editorial writer.
+Write for humans first; structure for search engines and AI answer engines (GEO).
+
+MANDATORY ARTICLE STANDARDS:
+1. Information gain: add net-new value (counter-narrative, specific examples, decision frameworks, practical checklists). Avoid generic consensus fluff.
+2. Primary keyword in title (near start), first 100 words, one H2, and naturally 0.8–2% density. Never keyword-stuff.
+3. Intro 40–120 words: hook (pain/stat/question) → primary keyword → what the reader will learn.
+4. After intro: "## Key Takeaways" with 5–7 bullets OR a 50–100 word **TL;DR**.
+5. Body uses QAE: each H2 as a clear question or intent phrase → answer in first 40–60 words → evidence (examples, steps, mini-tables).
+6. Paragraphs 40–80 words; use lists, H3s, and short tables every 2–3 sections. Scannable F-pattern; bold key phrases sparingly.
+7. Include at least one comparison or decision table in markdown.
+8. Include a step-by-step "## How to..." section when intent is how-to/commercial.
+9. FAQ: 4–6 natural-language questions with concise answers (People Also Ask style).
+10. Conclusion: summary + clear CTA linking to the brand domain (services/about/contact style paths).
+11. E-E-A-T tone: specific, authoritative, cite plausible reputable sources inline as markdown links (e.g. industry standards, .gov/.edu/major pubs). Do not invent fake study DOIs.
+12. GEO/AEO: self-contained answer blocks; definition under first H2; entity-rich language; no walls of text.
+13. Meta title ≤60 chars; meta description 140–155 chars with primary keyword and a benefit.
+14. Internal links: 3–6 markdown links to https://{domain}/... paths with descriptive anchors (not "click here").
+15. External links: 2–4 high-authority sources.
+16. Output language matches the topic; reading level roughly grade 8–10 unless technical audience is specified.
+
+FORBIDDEN:
+- Keyword stuffing or repeating the keyword in every sentence
+- Thin filler, vague claims, "in today's digital world" clichés
+- Fabricated personal medical/legal advice presented as clinical fact for YMYL without disclaimers
+- Inventing exact survey percentages from non-existent studies
+
+Return ONLY valid JSON (no markdown fences) with:
+{
+  "title": string,
+  "metaDescription": string,
+  "slugSuggestion": string (kebab-case),
+  "outline": string[] (H2 titles in order),
+  "content": string (full markdown article including Key Takeaways, body, FAQ section, conclusion),
+  "schemaMarkup": string (JSON-LD as a stringified object — Article + FAQPage graph preferred),
+  "faqSection": [{ "question": string, "answer": string }]
+}`;
 
 
 async function fetchPageSummary(targetDomain: string): Promise<{ niche: string; description: string; services: string[]; keywords: string[] }> {
@@ -621,7 +686,13 @@ app.post("/api/analyze", async (req, res) => {
   const providerConfig = getProviderConfig(req);
   if (!providerConfig) {
     const data = await generateFallbackData(domain, competitorUrl);
-    return res.json({ ...data, isFallback: true, needsApiKey: true });
+    return res.json({
+      ...data,
+      isFallback: true,
+      needsApiKey: true,
+      fallbackReason:
+        "Demo data only. Open Settings and add your own AI API key for live analysis. No shared keys are stored on this server.",
+    });
   }
   try {
     const prompt = `Perform a comprehensive Content Strategy & Competitive Intelligence SEO analysis for "${domain}". ${competitorUrl ? `Compare with competitor "${cleanDomain(competitorUrl)}".` : ""} Use googleSearch to find real web data. Return structured JSON with: target, competitor, discoveredCompetitors, targetAnalysis, keywords, contentGaps, serpFeatures, backlinkSources, backlinkOpportunities, rankingBlueprint, autonomousBlog.`;
@@ -632,7 +703,7 @@ app.post("/api/analyze", async (req, res) => {
     });
     res.json(cleanAndParseJSON(result.text));
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = redactSecrets(err instanceof Error ? err.message : String(err));
     console.error("Analyze error:", message);
     const data = await generateFallbackData(domain, competitorUrl);
     res.json({ ...data, isFallback: true, errorMsg: message });
@@ -648,33 +719,70 @@ app.post("/api/generate-blog", async (req, res) => {
   const kw = (keyword || topic || "quality services") as string;
   const providerConfig = getProviderConfig(req);
   if (!providerConfig) {
-    const blog = getAutonomousBlog(domain, kw);
-    return res.json({ ...blog, isFallback: true, fallbackReason: "No API key configured. Using pre-compiled template." });
+    // No shared server key — user must supply their own in Settings
+    return res.status(401).json({
+      error: "API key required",
+      isFallback: true,
+      needsApiKey: true,
+      fallbackReason:
+        "Add your own AI API key in Settings (gear icon). Each user provides their own key — no shared keys are stored on the server.",
+    });
   }
   try {
-    const secondary = Array.isArray(secondaryKeywords) ? secondaryKeywords.join(", ") : String(secondaryKeywords || "");
-    const prompt = `Write a comprehensive, SEO-optimized blog article of about ${wordCount} words.
-Primary keyword: "${kw}"
-Topic: "${topic || kw}"
-Secondary keywords: ${secondary || "none"}
-Target website: "${domain}"
-Audience: ${audience || "professionals researching solutions"}
-Tone: ${tone || "Authoritative & Educational"}
+    const secondary = Array.isArray(secondaryKeywords)
+      ? secondaryKeywords.filter(Boolean).join(", ")
+      : String(secondaryKeywords || "");
+    const targetWords = Math.max(800, Math.min(4000, Number(wordCount) || 2000));
+    const brand = domain.split(".")[0] || "the brand";
+    const userPrompt = `Write a high-ranking, high-information-gain SEO article for publication on https://${domain}/.
 
-Return ONLY JSON with fields:
-title, metaDescription, slugSuggestion, outline (string array), content (full markdown article), schemaMarkup (JSON-LD string), faqSection (array of {question, answer}).
-Include H2 sections, an FAQ block, and natural internal-link style anchors.`;
-    const result = await callAI(providerConfig, prompt, "", { responseMimeType: "application/json", temperature: 0.3 });
+BRIEF
+- Primary keyword: "${kw}"
+- Working title / topic: "${topic || kw}"
+- Secondary / LSI keywords: ${secondary || "derive 4–6 relevant secondary terms"}
+- Target length: ~${targetWords} words (quality over padding; cover intent fully)
+- Audience: ${audience || "decision-makers researching solutions"}
+- Tone: ${tone || "Authoritative, clear, educational"}
+- Brand: ${brand} (${domain})
+- CTA: guide readers to book/learn more via natural links to https://${domain}/ and relevant service paths
+
+STRUCTURE (markdown in "content")
+1. H1-equivalent title as first line "# …"
+2. Intro with hook + primary keyword in first 100 words
+3. ## Key Takeaways (5–7 bullets)
+4. 5–8 H2 sections using QAE (question/intent heading → direct answer → evidence)
+5. At least one markdown comparison/decision table
+6. One practical how-to or checklist section
+7. ## Frequently Asked Questions (4–6 Q&As)
+8. ## Conclusion with summary + brand CTA
+
+SCHEMA
+- schemaMarkup must be a STRING containing valid JSON-LD
+- Prefer @graph with Article (or BlogPosting) + FAQPage
+- Include headline, description, author Organization name "${brand}", datePublished (ISO), mainEntityOfPage
+
+Return ONLY the JSON object specified in the system instructions.`;
+
+    const result = await callAI(providerConfig, userPrompt, SEO_BLOG_SYSTEM_PROMPT, {
+      responseMimeType: "application/json",
+      temperature: 0.35,
+    });
     const parsed = cleanAndParseJSON(result.text);
     if (parsed.schemaMarkup && typeof parsed.schemaMarkup === "object") {
       parsed.schemaMarkup = JSON.stringify(parsed.schemaMarkup, null, 2);
     }
+    if (!parsed.faqSection && Array.isArray(parsed.faq)) {
+      parsed.faqSection = parsed.faq;
+    }
     res.json(parsed);
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = redactSecrets(err instanceof Error ? err.message : String(err));
     console.error("Blog error:", message);
-    const blog = getAutonomousBlog(domain, kw);
-    res.json({ ...blog, isFallback: true, fallbackReason: message });
+    return res.status(502).json({
+      error: "Blog generation failed",
+      isFallback: true,
+      fallbackReason: message,
+    });
   }
 });
 
@@ -686,7 +794,13 @@ app.post("/api/generate-social", async (req, res) => {
   }
   const providerConfig = getProviderConfig(req);
   if (!providerConfig) {
-    return res.json(socialFallback(platform, topic, keyword, domain, "No API key configured."));
+    return res.status(401).json({
+      error: "API key required",
+      isFallback: true,
+      needsApiKey: true,
+      fallbackReason:
+        "Add your own AI API key in Settings. No shared keys are stored on the server.",
+    });
   }
   try {
     const prompt = `Write one high-quality social media post for platform "${platform}" promoting content about "${topic || keyword || "SEO services"}" for website "${domain}".
@@ -695,6 +809,7 @@ Goal: ${contentGoal || "drive clicks"}
 Brand voice: ${brandVoice || "clear and confident"}
 Primary keyword: ${keyword || topic}
 
+Hook in the first line. Platform-native length and style. Include a soft CTA to https://${domain}/.
 Return ONLY JSON object (not an array) with:
 platform, content, hashtags (string array), optimalPostingTime, engagementStrategy, seoNotes.`;
     const result = await callAI(providerConfig, prompt, "", { responseMimeType: "application/json", temperature: 0.4 });
@@ -705,8 +820,12 @@ platform, content, hashtags (string array), optimalPostingTime, engagementStrate
     }
     res.json(parsed);
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.json(socialFallback(platform, topic, keyword, domain, message));
+    const message = redactSecrets(err instanceof Error ? err.message : String(err));
+    res.status(502).json({
+      error: "Social generation failed",
+      isFallback: true,
+      fallbackReason: message,
+    });
   }
 });
 
@@ -718,8 +837,14 @@ app.post("/api/analyze-keyword-deep", async (req, res) => {
   }
   const providerConfig = getProviderConfig(req);
   if (!providerConfig) {
+    // Demo-only synthetic SERP audit — never uses a server-owned key
     const data = await generateDeepKeywordFallback(keyword, domain);
-    return res.json(data);
+    return res.json({
+      ...data,
+      isFallback: true,
+      needsApiKey: true,
+      fallbackReason: "Demo data only. Add your API key in Settings for live SERP-grounded analysis.",
+    });
   }
   try {
     const prompt = `Perform a deep keyword analysis for "${keyword}" in the context of "${domain}". Use googleSearch for real data. Return JSON with: keyword, topResults, averageContentLength, commonSubtopics, featuredSnippet, peopleAlsoAsk, relatedSearches, contentTypeAnalysis, freshnessRequirements.`;
@@ -730,7 +855,7 @@ app.post("/api/analyze-keyword-deep", async (req, res) => {
     });
     res.json(cleanAndParseJSON(result.text));
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = redactSecrets(err instanceof Error ? err.message : String(err));
     const data = await generateDeepKeywordFallback(keyword, domain);
     res.json({ ...data, isFallback: true, errorMsg: message });
   }
@@ -744,24 +869,31 @@ app.post("/api/generate-meta-snippets", async (req, res) => {
   }
   const providerConfig = getProviderConfig(req);
   if (!providerConfig) {
-    return res.json({ isFallback: true, fallbackReason: "No API key configured.", snippets: [] });
+    return res.status(401).json({
+      error: "API key required",
+      isFallback: true,
+      needsApiKey: true,
+      snippets: [],
+      fallbackReason:
+        "Add your own AI API key in Settings. No shared keys are stored on the server.",
+    });
   }
   try {
     const excerpt = typeof content === "string" ? content.slice(0, 1500) : "";
-    const prompt = `Generate 5 SEO meta title and description variants for a page on "${domain}".
+    const prompt = `Generate 5 high-CTR SEO meta title and description variants for a page on "${domain}".
 Primary keyword: "${keyword}"
 Article title: "${articleTitle}"
 Content excerpt: """${excerpt}"""
 
-Return ONLY JSON: { "snippets": [ { "type": "default|question|benefit|how-to|list", "title": "...", "description": "..." } ] }
-Titles max 60 chars, descriptions max 155 chars.`;
+Rules: titles max 60 chars with keyword near start; descriptions 140–155 chars with benefit + soft CTA; no clickbait.
+Return ONLY JSON: { "snippets": [ { "type": "default|question|benefit|how-to|list", "title": "...", "description": "..." } ] }`;
     const result = await callAI(providerConfig, prompt, "", { responseMimeType: "application/json", temperature: 0.3 });
     const parsed = cleanAndParseJSON(result.text);
     if (Array.isArray(parsed)) return res.json({ snippets: parsed });
     res.json(parsed);
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.json({ isFallback: true, fallbackReason: message, snippets: [] });
+    const message = redactSecrets(err instanceof Error ? err.message : String(err));
+    res.status(502).json({ isFallback: true, fallbackReason: message, snippets: [] });
   }
 });
 

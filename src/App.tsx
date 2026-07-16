@@ -216,7 +216,7 @@ export default function App() {
                   Competitive Intelligence & <span className="text-blue-600">Content Strategy</span>
                 </h2>
                 <p className="text-slate-500 text-base max-w-2xl mx-auto">
-                  Audit any website's search engine authority, discover high-converting long-tail keywords, map content gaps, and write SEO-First blog articles instantly.
+                  Audit any website's search engine authority, discover high-converting long-tail keywords, map content gaps, and write SEO-first blog articles. Open Settings and add <strong>your own</strong> AI API key — no shared keys; every user brings their own.
                 </p>
               </div>
 

@@ -41,13 +41,21 @@ export async function postApi<T = unknown>(
   const data = (await parseJsonResponse(response)) as T & {
     error?: string;
     errorMsg?: string;
+    fallbackReason?: string;
+    needsApiKey?: boolean;
     details?: string;
   };
 
   if (!response.ok) {
     const msg =
-      data?.errorMsg || data?.error || `Server responded with status ${response.status}`;
-    throw new ApiError(msg, response.status, data?.details);
+      data?.fallbackReason ||
+      data?.errorMsg ||
+      data?.error ||
+      `Server responded with status ${response.status}`;
+    throw new ApiError(msg, response.status, {
+      details: data?.details,
+      needsApiKey: data?.needsApiKey,
+    });
   }
 
   return data as T;

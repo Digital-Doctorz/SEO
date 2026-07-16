@@ -134,15 +134,19 @@ export async function callAI(
   throw new Error(`Unknown provider: ${provider}`);
 }
 
+/** BYOK only — never read process.env for AI keys. */
 export function getProviderConfig(req: { body?: { aiConfig?: Partial<ProviderConfig> } }): ProviderConfig | null {
   const cfg = req.body?.aiConfig;
-  if (!cfg || !cfg.apiKey) return null;
+  const rawKey = typeof cfg?.apiKey === "string" ? cfg.apiKey.trim() : "";
+  if (!rawKey || rawKey.length < 8) return null;
+  const lower = rawKey.toLowerCase();
+  if (lower.includes("placeholder") || lower === "my_gemini_api_key") return null;
   return {
-    apiKey: cfg.apiKey,
-    provider: cfg.provider || "gemini",
-    apiEndpoint: cfg.apiEndpoint || "",
-    apiModel: cfg.apiModel || "",
-    customFormat: cfg.customFormat || "openai",
+    apiKey: rawKey,
+    provider: cfg?.provider || "gemini",
+    apiEndpoint: (cfg?.apiEndpoint || "").trim(),
+    apiModel: (cfg?.apiModel || "").trim(),
+    customFormat: cfg?.customFormat || "openai",
   };
 }
 
