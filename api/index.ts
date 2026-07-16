@@ -87,19 +87,25 @@ interface DataForSeoBundle {
   rawSerpItems: DfSerpItem[];
   rawBacklinkItems: DfBacklinkItem[];
   rawKeywordData: DfKeywordData[];
+  estimatedCost?: { amount: number; currency: string };
 }
 
-function dfseoAuthHeaders(): Record<string, string> {
-  const login = process.env.DATAFORSEO_LOGIN ?? "";
-  const password = process.env.DATAFORSEO_PASSWORD ?? "";
+interface DfsCredentials {
+  login: string;
+  password: string;
+}
+
+function dfseoAuthHeaders(credentials?: DfsCredentials): Record<string, string> {
+  const login = credentials?.login || (process.env.DATAFORSEO_LOGIN ?? "");
+  const password = credentials?.password || (process.env.DATAFORSEO_PASSWORD ?? "");
   const token = Buffer.from(`${login}:${password}`).toString("base64");
   return { Authorization: `Basic ${token}`, "Content-Type": "application/json" };
 }
 
-async function dfseoPost<T>(endpoint: string, body: unknown[]): Promise<T> {
+async function dfseoPost<T>(endpoint: string, body: unknown[], credentials?: DfsCredentials): Promise<T> {
   const res = await fetch(`${DFSEO_BASE}${endpoint}`, {
     method: "POST",
-    headers: dfseoAuthHeaders(),
+    headers: dfseoAuthHeaders(credentials),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -113,38 +119,40 @@ async function dfseoPost<T>(endpoint: string, body: unknown[]): Promise<T> {
   return json.tasks?.[0]?.result?.[0] as T;
 }
 
-async function fetchSerp(keyword: string, locationCode = 2840): Promise<DfSerpItem[]> {
+async function fetchSerp(keyword: string, locationCode = 2840, languageCode = "en", credentials?: DfsCredentials): Promise<DfSerpItem[]> {
   const result = await dfseoPost<{ items?: DfSerpItem[]; search_dataframe?: DfSerpItem[] }>(
     "/serp/google/organic/live/advanced",
-    [{ keyword, location_code: locationCode, language_code: "en", device: "desktop", os: "windows", depth: 10 }]
+    [{ keyword, location_code: locationCode, language_code: languageCode, device: "desktop", os: "windows", depth: 10 }],
+    credentials
   );
   return result.items ?? result.search_dataframe ?? [];
 }
 
-async function fetchKeywordVolumes(keywords: string[], locationCode = 2840): Promise<DfKeywordData[]> {
+async function fetchKeywordVolumes(keywords: string[], locationCode = 2840, languageCode = "en", credentials?: DfsCredentials): Promise<DfKeywordData[]> {
   if (!keywords.length) return [];
-  const tasks = keywords.map((kw) => ({ keyword: kw, location_code: locationCode, language_code: "en" }));
+  const tasks = keywords.map((kw) => ({ keyword: kw, location_code: locationCode, language_code: languageCode }));
   const result = await dfseoPost<{ keywords?: DfKeywordData[] }>(
     "/keywords_data/google/keywords/search_volume",
-    tasks
+    tasks,
+    credentials
   );
   return result.keywords ?? [];
 }
 
-async function fetchDomainOverview(domain: string): Promise<DfDomainBacklinksResult> {
+async function fetchDomainOverview(domain: string, locationCode = 2840, languageCode = "en", credentials?: DfsCredentials): Promise<DfDomainBacklinksResult> {
   return dfseoPost<DfDomainBacklinksResult>("/backlinks/domain/overview", [
-    { target: domain, location_code: 2840, language_code: "en" },
-  ]);
+    { target: domain, location_code: locationCode, language_code: languageCode },
+  ], credentials);
 }
 
-async function fetchBacklinks(domain: string, limit = 100): Promise<DfBacklinkItem[]> {
+async function fetchBacklinks(domain: string, limit = 100, locationCode = 2840, languageCode = "en", credentials?: DfsCredentials): Promise<DfBacklinkItem[]> {
   const result = await dfseoPost<{ backlinks?: DfBacklinkItem[] }>("/backlinks/domain/backlinks", [
-    { target: domain, limit, location_code: 2840, language_code: "en" },
-  ]);
+    { target: domain, limit, location_code: locationCode, language_code: languageCode },
+  ], credentials);
   return result.backlinks ?? [];
 }
 
-async function fetchPageSpeed(url: string): Promise<
+async function fetchPageSpeed(url: string, credentials?: DfsCredentials): Promise<
   | {
       categories?: Record<string, { score?: number }>;
       audits?: Record<string, { numericValue?: number }>;
@@ -153,20 +161,24 @@ async function fetchPageSpeed(url: string): Promise<
 > {
   const result = await dfseoPost<{ lighthouse_result?: { categories?: Record<string, { score?: number }>; audits?: Record<string, { numericValue?: number }> } }>(
     "/page_speed/google/lighthouse/summary",
-    [{ target: url, settings: { device: "desktop", locale: "en" } }]
+    [{ target: url, settings: { device: "desktop", locale: "en" } }],
+    credentials
   );
   return result.lighthouse_result;
 }
 
-async function fetchFullBundle(domain: string, seedKeywords: string[]): Promise<DataForSeoBundle> {
+async function fetchFullBundle(domain: string, seedKeywords: string[], options?: { credentials?: DfsCredentials; locationCode?: number; languageCode?: string }): Promise<DataForSeoBundle> {
+  const creds = options?.credentials;
+  const loc = options?.locationCode ?? 2840;
+  const lang = options?.languageCode ?? "en";
   const primaryKeyword =
     seedKeywords[0] ?? domain.replace(/\.(com|in|org|net|co\.in)$/i, "").replace(/-/g, " ");
   const [serpItems, domainOverview, backlinks, pageSpeedResult, ...keywordResults] = await Promise.all([
-    fetchSerp(primaryKeyword).catch(() => [] as DfSerpItem[]),
-    fetchDomainOverview(domain).catch(() => ({} as DfDomainBacklinksResult)),
-    fetchBacklinks(domain, 200).catch(() => [] as DfBacklinkItem[]),
-    fetchPageSpeed(`https://${domain}`).catch(() => undefined),
-    ...seedKeywords.slice(0, 10).map((kw) => fetchKeywordVolumes([kw]).catch(() => [] as DfKeywordData[])),
+    fetchSerp(primaryKeyword, loc, lang, creds).catch(() => [] as DfSerpItem[]),
+    fetchDomainOverview(domain, loc, lang, creds).catch(() => ({} as DfDomainBacklinksResult)),
+    fetchBacklinks(domain, 200, loc, lang, creds).catch(() => [] as DfBacklinkItem[]),
+    fetchPageSpeed(`https://${domain}`, creds).catch(() => undefined),
+    ...seedKeywords.slice(0, 10).map((kw) => fetchKeywordVolumes([kw], loc, lang, creds).catch(() => [] as DfKeywordData[])),
   ]);
   const allKeywordData: DfKeywordData[] = keywordResults.flat().filter(Boolean);
   const organic = (serpItems || [])
@@ -225,6 +237,10 @@ async function fetchFullBundle(domain: string, seedKeywords: string[]): Promise<
     rawSerpItems: serpItems || [],
     rawBacklinkItems: backlinks || [],
     rawKeywordData: allKeywordData,
+    estimatedCost: {
+      amount: Math.round((0.002 + allKeywordData.length * 0.0006 + 0.005 + 0.005 + 0.01) * 10000) / 10000,
+      currency: "USD",
+    },
   };
 }
 
@@ -635,7 +651,7 @@ function improveReadability(markdown: string): string {
 const ARTICLE_STRATEGIES = [
  {
  id: "howto",
- titlePrefix: (kw: string) => `How to Master ${kw} in 7 Clear Steps`,
+ titlePrefix: (kw: string) => `How to Win With ${kw} in 7 Steps (Without the Fluff)`,
  style: "step-by-step how-to with numbered actions",
  heads: (kw: string, brand: string) => [
  `What is ${kw}? (plain answer)`,
@@ -650,7 +666,7 @@ const ARTICLE_STRATEGIES = [
  },
  {
  id: "compare",
- titlePrefix: (kw: string) => `${kw}: Best Options Compared (What Actually Works)`,
+ titlePrefix: (kw: string) => `${kw}: Best Options Compared (What Actually Works in 2026)`,
  style: "comparison-first decision guide",
  heads: (kw: string, brand: string) => [
  `Quick answer: which ${kw} path fits you`,
@@ -665,7 +681,7 @@ const ARTICLE_STRATEGIES = [
  },
  {
  id: "myths",
- titlePrefix: (kw: string) => `${kw} Myths vs Facts: What to Stop Doing Today`,
+ titlePrefix: (kw: string) => `${kw} Myths Costing You Clicks (And What to Do Instead)`,
  style: "myth-busting expert brief",
  heads: (kw: string, brand: string) => [
  `The biggest myth about ${kw}`,
@@ -680,7 +696,7 @@ const ARTICLE_STRATEGIES = [
  },
  {
  id: "playbook",
- titlePrefix: (kw: string) => `The ${kw} Playbook: From First Audit to Steady Wins`,
+ titlePrefix: (kw: string) => `The ${kw} Playbook: First Audit to Steady Wins`,
  style: "tactical playbook with weekly sprints",
  heads: (kw: string, brand: string) => [
  `Start here: define success for ${kw}`,
@@ -695,7 +711,7 @@ const ARTICLE_STRATEGIES = [
  },
  {
  id: "faqhub",
- titlePrefix: (kw: string) => `${kw} Explained: Answers Searchers Actually Want`,
+ titlePrefix: (kw: string) => `${kw} Explained: Real Answers Searchers Click in 2026`,
  style: "PAA-led answer hub for featured snippets",
  heads: (kw: string, brand: string) => [
  `What is ${kw}?`,
@@ -710,7 +726,7 @@ const ARTICLE_STRATEGIES = [
  },
  {
  id: "case",
- titlePrefix: (kw: string) => `From Stuck to Shipping: A ${kw} Case-Style Walkthrough`,
+ titlePrefix: (kw: string) => `From Stuck to Results: A ${kw} Walkthrough You Can Copy`,
  style: "narrative case walkthrough with lessons",
  heads: (kw: string, brand: string) => [
  `The starting problem with ${kw}`,
@@ -1234,26 +1250,34 @@ READABILITY (CRITICAL - Flesch Reading Ease must score 65-85):
 - Short paragraphs (2-4 sentences). Lists after key points.
 - Grade level target: 7-9.
 
-MANDATORY STANDARDS:
-1. Fresh structure every time: new title angle, new H2 order, new examples. Never generic template prose.
-2. Primary keyword near start of title, in intro, and in one H2. Natural density ~1%.
-3. Intro 40-90 words: hook -> keyword -> what reader learns.
-4. Exactly 5 key takeaways (short bullets).
-5. QAE body: each section answers first (40-60 words), then steps.
-6. One markdown comparison table in one section body.
-7. 4 FAQ Q&As (People Also Ask style).
-8. Conclusion with CTA link to the brand domain.
-9. 3-5 internal markdown links to https://{domain}/... paths with descriptive anchors.
-10. 2-3 external links to reputable sources (.gov, .edu, major pubs, standards docs).
-11. ASCII punctuation only. No emojis. No fancy dashes.
+TITLE RULES (CRITICAL - click-through optimized long-tail):
+- Title MUST lead with a high-intent long-tail keyword phrase tied to the brand/niche.
+- 50-70 characters. Curiosity + clear benefit. Specific, not vague.
+- Preferred patterns: "How to [result] with [keyword] (Without [pain])", "[Number] Proven Ways to [result]", "The Complete [keyword] Guide for [audience] (2026)", "Why [audience] Switch to [keyword] (And How to Start)".
+- Catchy and clickable, but NOT misleading clickbait or fake urgency.
+- Never use only a brand name or a single generic word as the title.
 
-FORBIDDEN: keyword stuffing, "in today's digital world", "leverage synergies", fake study stats, incomplete JSON, identical boilerplates.
+MANDATORY STANDARDS:
+1. Content MUST stay relevant to the target website niche, services, and audience provided in the prompt.
+2. Fresh structure every run: new title, H2 order, examples. No generic boilerplate.
+3. Primary long-tail keyword near start of title, in intro first 100 words, and in one H2. Density ~0.8-1.5%.
+4. Intro 40-90 words: hook -> keyword -> what reader learns.
+5. Exactly 5 key takeaways (short bullets).
+6. QAE body: each section answers first (40-60 words), then steps.
+7. One markdown comparison table in one section body.
+8. 4 FAQ Q&As (People Also Ask style).
+9. Conclusion with CTA link to the brand domain.
+10. 3-5 internal markdown links to https://{domain}/... paths with descriptive anchors.
+11. 2-3 external links to reputable sources.
+12. ASCII punctuation only. No emojis. No fancy dashes.
+
+FORBIDDEN: keyword stuffing, "in today's digital world", "leverage synergies", fake study stats, incomplete JSON, identical boilerplates, off-niche content.
 
 Return ONLY valid compact JSON (no markdown fences, no schemaMarkup field):
 {
- "title": string,
- "metaDescription": string (140-155 chars),
- "slugSuggestion": string (kebab-case),
+ "title": string (long-tail, click-optimized, SEO title),
+ "metaDescription": string (140-155 chars, keyword + benefit + soft CTA),
+ "slugSuggestion": string (kebab-case from primary long-tail),
  "outline": string[] (H2 titles),
  "intro": string (markdown paragraphs, no H1),
  "keyTakeaways": string[] (5 short bullets without leading dashes),
@@ -1262,28 +1286,713 @@ Return ONLY valid compact JSON (no markdown fences, no schemaMarkup field):
  "conclusion": string (markdown with CTA link)
 }`;
 
+// ============================================================
+// Live site crawl — understand the real business behind the URL
+// ============================================================
+interface SiteProfile {
+ niche: string;
+ description: string;
+ services: string[];
+ keywords: string[];
+ brand: string;
+ pageTitles: string[];
+ headings: string[];
+ scrapedPages: number;
+ rawSnippet: string;
+ source: "live-crawl" | "heuristic" | "known-brand";
+}
 
-async function fetchPageSummary(targetDomain: string): Promise<{ niche: string; description: string; services: string[]; keywords: string[] }> {
+const STOP_WORDS = new Set(
+ "a an the and or but if in on at to for of as is are was were be been being by with from that this these those it its we our you your they their them he she his her not no can will just into about over under again further then once here there when where why how all each few more most other some such only own same so than too very".split(
+ " "
+ )
+);
+
+async function fetchHtmlWithTimeout(url: string, ms = 4500): Promise<string | null> {
+ try {
+ const controller = new AbortController();
+ const timer = setTimeout(() => controller.abort(), ms);
+ const res = await fetch(url, {
+ signal: controller.signal,
+ headers: {
+ "User-Agent":
+ "Mozilla/5.0 (compatible; ApexSEOBot/1.0; +https://seo-nine-phi.vercel.app)",
+ Accept: "text/html,application/xhtml+xml",
+ },
+ redirect: "follow",
+ });
+ clearTimeout(timer);
+ if (!res.ok) return null;
+ const ctype = res.headers.get("content-type") || "";
+ if (!ctype.includes("text/html") && !ctype.includes("application/xhtml")) {
+ // still try reading small sites without content-type
+ }
+ const text = await res.text();
+ return text.slice(0, 250000);
+ } catch {
+ return null;
+ }
+}
+
+function stripTags(html: string): string {
+ return html
+ .replace(/<script[\s\S]*?<\/script>/gi, " ")
+ .replace(/<style[\s\S]*?<\/style>/gi, " ")
+ .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+ .replace(/<!--[\s\S]*?-->/g, " ")
+ .replace(/<[^>]+>/g, " ")
+ .replace(/&nbsp;/gi, " ")
+ .replace(/&amp;/gi, "&")
+ .replace(/&quot;/gi, '"')
+ .replace(/&#39;/g, "'")
+ .replace(/\s+/g, " ")
+ .trim();
+}
+
+function extractBetween(html: string, re: RegExp): string[] {
+ const out: string[] = [];
+ let m: RegExpExecArray | null;
+ const r = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
+ while ((m = r.exec(html)) !== null) {
+ const v = stripTags(m[1] || "").trim();
+ if (v && v.length > 1 && v.length < 200) out.push(v);
+ }
+ return out;
+}
+
+function parsePageHtml(html: string): {
+ title: string;
+ description: string;
+ h1s: string[];
+ h2s: string[];
+ bodyText: string;
+ pathHints: string[];
+} {
+ const title =
+ (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "").replace(/\s+/g, " ").trim() ||
+ extractBetween(html, /<h1[^>]*>([\s\S]*?)<\/h1>/i)[0] ||
+ "";
+ const description =
+ html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i)?.[1] ||
+ html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["']/i)?.[1] ||
+ html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i)?.[1] ||
+ "";
+ const h1s = extractBetween(html, /<h1[^>]*>([\s\S]*?)<\/h1>/gi).slice(0, 8);
+ const h2s = extractBetween(html, /<h2[^>]*>([\s\S]*?)<\/h2>/gi).slice(0, 20);
+ const pathHints = Array.from(
+ new Set(
+ (html.match(/href=["'](\/[^"'#?]{1,80})["']/gi) || [])
+ .map((h) => h.replace(/href=["']/i, "").replace(/["']$/, ""))
+ .filter((p) => !p.match(/\.(css|js|png|jpg|jpeg|gif|svg|webp|pdf|zip)$/i))
+ .slice(0, 40)
+ )
+ );
+ const bodyText = stripTags(html).slice(0, 12000);
+ return { title: stripTags(title), description: stripTags(description), h1s, h2s, bodyText, pathHints };
+}
+
+function tokenizePhrases(text: string): string[] {
+ const words = text
+ .toLowerCase()
+ .replace(/[^a-z0-9\s-]/g, " ")
+ .split(/\s+/)
+ .filter((w) => w.length > 2 && !STOP_WORDS.has(w) && !/^\d+$/.test(w));
+ const phrases: string[] = [];
+ for (let i = 0; i < words.length - 1; i++) {
+ phrases.push(`${words[i]} ${words[i + 1]}`);
+ if (i < words.length - 2) phrases.push(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
+ }
+ return phrases;
+}
+
+function topPhrases(corpus: string, limit = 20): string[] {
+ const counts = new Map<string, number>();
+ for (const p of tokenizePhrases(corpus)) {
+ if (p.length < 6 || p.length > 48) continue;
+ counts.set(p, (counts.get(p) || 0) + 1);
+ }
+ return [...counts.entries()]
+ .sort((a, b) => b[1] - a[1])
+ .map(([p]) => p)
+ .filter((p, i, arr) => arr.findIndex((x) => x.includes(p) && x !== p) === -1 || p.split(" ").length >= 2)
+ .slice(0, limit);
+}
+
+function longTailFromSeed(seed: string, brand: string, niche: string): string[] {
+ const s = seed.toLowerCase().trim();
+ if (!s) return [];
+ return [
+ s,
+ `best ${s} for ${brand} customers`,
+ `how to choose ${s}`,
+ `${s} cost and pricing guide`,
+ `${s} vs alternatives`,
+ `${s} near me`,
+ `complete ${s} checklist 2026`,
+ `${niche.split("&")[0].trim().toLowerCase()} ${s}`,
+ ];
+}
+
+function heuristicSiteProfile(targetDomain: string): SiteProfile {
  const clean = cleanDomain(targetDomain);
- const brandName = clean.split(".")[0];
+ const brandName = clean.split(".")[0] || "brand";
  const formattedBrand = brandName.charAt(0).toUpperCase() + brandName.slice(1);
  const isOptm = clean.includes("optm") || clean.includes("optmhealthcare");
  const isNaturoveda = clean.includes("naturoveda");
  if (isOptm) {
- return { niche: "Phytomedicine & Natural Joint Pain Relief", description: `OPTM Healthcare specializes in natural pain treatment, treating osteoarthritis, knee pain, spondylitis, back pain, sports injuries, and other musculoskeletal joint disorders without surgery or side effects using clinically-tested phyto-therapeutics and acupressure.`, services: ["Osteoarthritis Natural Treatment", "Knee Pain Non-Surgical Therapy", "Spondylitis Pain Relief", "Spine Care Rehabilitation", "Phytomedicine Joint Therapy"], keywords: ["osteoarthritis natural treatment", "knee pain relief without surgery", "spondylitis natural remedy", "optm healthcare joint pain", "phytomedicine knee pain", "non surgical joint care"] };
- } else if (isNaturoveda) {
- return { niche: "Ayurveda, Unani & Natural Therapeutics", description: `Naturoveda Health Clinic specializes in natural and holistic treatment for chronic joint disorders, acidity, diabetes, skin conditions, and hair loss, integrating the scientific principles of Ayurveda, Unani, and therapeutic Yoga.`, services: ["Holistic Joint Pain Therapy", "Ayurvedic Consultation", "Unani Medical Therapeutics", "Chronic Disease Management", "Therapeutic Yoga & Detoxification"], keywords: ["naturoveda clinic joint pain", "ayurvedic treatment knee pain", "holistic chronic disease remedy", "natural acidity treatment", "unani medicine consultation", "yoga for pain relief"] };
+ return {
+ niche: "Phytomedicine & Natural Joint Pain Relief",
+ description: `OPTM Healthcare specializes in natural pain treatment for osteoarthritis, knee pain, spondylitis, and musculoskeletal disorders without surgery.`,
+ services: [
+ "Osteoarthritis Natural Treatment",
+ "Knee Pain Non-Surgical Therapy",
+ "Spondylitis Pain Relief",
+ "Spine Care Rehabilitation",
+ "Phytomedicine Joint Therapy",
+ ],
+ keywords: [
+ "osteoarthritis natural treatment without surgery",
+ "knee pain relief phytomedicine",
+ "non surgical joint pain treatment",
+ "spondylitis natural remedy options",
+ "best clinic for knee osteoarthritis",
+ "muscle degeneration joint pain therapy",
+ "phytotherapy for chronic joint pain",
+ "how to avoid knee replacement surgery",
+ "natural treatment for back and spine pain",
+ "optm healthcare joint restoration",
+ "holistic osteoarthritis care plan",
+ "evidence based plant therapy for joints",
+ "chronic musculoskeletal pain management",
+ "acupressure and phytomedicine protocol",
+ "long term joint mobility recovery plan",
+ ],
+ brand: "OPTM",
+ pageTitles: [],
+ headings: [],
+ scrapedPages: 0,
+ rawSnippet: "",
+ source: "known-brand",
+ };
  }
- const isAyurvedic = clean.includes("ayurved") || clean.includes("ayush") || clean.includes("cure") || clean.includes("vedic") || clean.includes("herbal") || clean.includes("nature");
- const isHealth = clean.includes("clinic") || clean.includes("health") || clean.includes("hosp") || clean.includes("care") || clean.includes("dent") || clean.includes("pain") || clean.includes("therap");
- const isFinance = clean.includes("invest") || clean.includes("wealth") || clean.includes("cap") || clean.includes("fund") || clean.includes("bank") || clean.includes("fin");
- const isFashion = clean.includes("style") || clean.includes("wear") || clean.includes("cloth") || clean.includes("couture") || clean.includes("label") || clean.includes("brand") || clean.includes("linen");
- const isTech = clean.includes("tech") || clean.includes("dev") || clean.includes("soft") || clean.includes("cloud") || clean.includes("app") || clean.includes("data") || clean.includes("code");
- if (isAyurvedic || isHealth) return { niche: "holistic health & wellness", description: `A premium wellness practice offering ancient therapeutics, organic herbal remedies, and specialized pain management plans tailored to restore constitutional balance.`, services: ["Constitutional Consultation", "Herbal Therapy", "Chronic Pain Management", "Detoxification Programs", "Therapeutic Yoga & Breathing"], keywords: ["natural treatment", "holistic clinic", "ayurvedic massage", "herbal remedies", "pain relief therapy", "wellness plan"] };
- if (isFinance) return { niche: "personal finance & wealth management", description: `A private wealth advisory helping individuals build, protect, and distribute long-term generational wealth through automated tax optimization and secure portfolios.`, services: ["High-Yield Yield Optimization", "Asset Allocation Advisory", "Retirement Tax Shield", "Generational Wealth Planning", "Automated Compound Portfolios"], keywords: ["investment strategy", "compound interest calculator", "wealth management advisor", "tax shelter plans", "passive cash flow"] };
- if (isFashion) return { niche: "sustainable fashion & luxury apparel", description: `An eco-friendly apparel label sourcing certified closed-loop natural linens and organic fibers to craft timeless, highly breathable capsule wardrobes.`, services: ["Capsule Wardrobe Curation", "Premium Organic Tailoring", "Custom Linen Sizing", "Eco Sourcing Consultation", "Timeless Style Fitting"], keywords: ["organic linen clothing", "capsule wardrobe curation", "sustainable fashion brand", "breathable summer wear", "tailored eco garments"] };
- if (isTech) return { niche: "cloud computing & enterprise software", description: `A next-generation DevOps automation suite empowering developer teams to provision, scale, and secure enterprise microservices with zero configuration drift.`, services: ["Continuous Delivery Integration", "Elastic Server Autoscale", "Microservice Dependency Scan", "Low-Latency API Gateway", "Database Performance Tuning"], keywords: ["devops automation tool", "microservice scaling", "low latency api", "cloud server autoscale", "zero-config deployment"] };
- return { niche: "B2B performance marketing & operations", description: `A modern strategic consultancy optimizing operational workflows, customer acquisition funnels, and enterprise scaling frameworks to unlock fast, compounding ROI.`, services: ["Customer Acquisition Tuning", "Operational Workflow Audit", "High-ROI Growth Advisory", "Revenue Pipeline Automation", "Brand Positioning Audit"], keywords: ["business growth strategy", "conversion funnel optimization", "B2B sales automation", "operational efficiency", "brand consulting"] };
+ if (isNaturoveda) {
+ return {
+ niche: "Ayurveda, Unani & Natural Therapeutics",
+ description: `Naturoveda Health Clinic offers holistic treatment for chronic joint disorders, acidity, diabetes, skin, and hair using Ayurveda and Unani principles.`,
+ services: [
+ "Holistic Joint Pain Therapy",
+ "Ayurvedic Consultation",
+ "Unani Medical Therapeutics",
+ "Chronic Disease Management",
+ "Therapeutic Yoga & Detoxification",
+ ],
+ keywords: [
+ "ayurvedic treatment for knee pain",
+ "naturoveda clinic joint therapy",
+ "holistic chronic disease remedy",
+ "unani medicine consultation near me",
+ "natural acidity treatment ayurveda",
+ "yoga for joint pain relief",
+ "ayurvedic hair and skin care clinic",
+ "best ayurvedic clinic for arthritis",
+ "natural diabetes management plan",
+ "holistic pain management without steroids",
+ "ayurveda vs allopathy for joint pain",
+ "chronic joint disorder natural care",
+ "detoxification program for inflammation",
+ "unani therapeutics for acidity",
+ "integrative ayurveda consultation cost",
+ ],
+ brand: "Naturoveda",
+ pageTitles: [],
+ headings: [],
+ scrapedPages: 0,
+ rawSnippet: "",
+ source: "known-brand",
+ };
+ }
+
+ // Domain-token heuristics only as last-resort fallback
+ const isPay = /stripe|paypal|pay|checkout|billing|invoice/.test(clean);
+ const isNotes = /notion|obsidian|note|docs|wiki/.test(clean);
+ const isAyurvedic = /ayurved|ayush|vedic|herbal|nature/.test(clean);
+ const isHealth = /clinic|health|hosp|care|dent|pain|therap|medical|wellness/.test(clean);
+ const isFinance = /invest|wealth|fund|bank|fin|capital|loan|credit/.test(clean);
+ const isFashion = /style|wear|cloth|couture|linen|apparel|fashion/.test(clean);
+ const isTech = /tech|dev|soft|cloud|app|data|code|api|saas|ai/.test(clean);
+
+ if (isPay) {
+ return {
+ niche: "Online payments & fintech infrastructure",
+ description: `${formattedBrand} enables businesses to accept and manage online payments, checkout, and money movement at scale.`,
+ services: ["Payment Gateway", "Checkout APIs", "Subscriptions Billing", "Fraud Prevention", "Multi-currency Payouts"],
+ keywords: [
+ "online payment gateway integration",
+ "best payment api for startups",
+ "subscription billing software comparison",
+ "how to accept card payments online",
+ "stripe alternative payment processor",
+ "checkout conversion optimization tips",
+ "recurring payments setup guide",
+ "payment gateway fees explained",
+ "pci compliant payment integration",
+ "multi currency payment processing",
+ "fraud detection for online checkout",
+ "marketplace payments split payouts",
+ "saas billing and invoicing tools",
+ "how to reduce failed payment rates",
+ "embedded payments for platforms",
+ ],
+ brand: formattedBrand,
+ pageTitles: [],
+ headings: [],
+ scrapedPages: 0,
+ rawSnippet: "",
+ source: "heuristic",
+ };
+ }
+ if (isNotes) {
+ return {
+ niche: "Knowledge management & productivity workspaces",
+ description: `${formattedBrand} helps teams capture, organize, and share knowledge in structured digital workspaces.`,
+ services: ["Workspace Templates", "Knowledge Base", "Team Wikis", "Task Databases", "Collaboration Docs"],
+ keywords: [
+ "best knowledge management software",
+ "team wiki vs shared drives",
+ "notion alternative for companies",
+ "how to build a company knowledge base",
+ "productivity workspace templates",
+ "second brain note taking system",
+ "collaborative documentation tools",
+ "project database template free",
+ "knowledge base seo structure",
+ "internal wiki best practices",
+ "how to organize team notes",
+ "documentation software for startups",
+ "workspace automation workflows",
+ "personal knowledge management tools",
+ "meeting notes template system",
+ ],
+ brand: formattedBrand,
+ pageTitles: [],
+ headings: [],
+ scrapedPages: 0,
+ rawSnippet: "",
+ source: "heuristic",
+ };
+ }
+ if (isAyurvedic || isHealth) {
+ return {
+ niche: "holistic health & wellness",
+ description: `${formattedBrand} offers wellness care, therapies, and patient-focused treatment programs.`,
+ services: ["Consultation", "Therapy Programs", "Pain Management", "Wellness Plans", "Follow-up Care"],
+ keywords: [
+ "best natural treatment near me",
+ "holistic clinic consultation cost",
+ "chronic pain management without surgery",
+ "wellness program for joint health",
+ "how to choose a holistic clinic",
+ "natural therapy vs medication",
+ "patient care plan for chronic pain",
+ "integrative medicine clinic benefits",
+ "non invasive treatment options",
+ "wellness detox program guide",
+ "specialist consultation appointment tips",
+ "evidence based natural remedies",
+ "rehab and recovery care plan",
+ "preventive health checkup packages",
+ "long term pain relief strategies",
+ ],
+ brand: formattedBrand,
+ pageTitles: [],
+ headings: [],
+ scrapedPages: 0,
+ rawSnippet: "",
+ source: "heuristic",
+ };
+ }
+ if (isFinance) {
+ return {
+ niche: "personal finance & wealth management",
+ description: `${formattedBrand} helps individuals and businesses grow, protect, and manage wealth.`,
+ services: ["Wealth Advisory", "Portfolio Planning", "Tax Strategy", "Retirement Planning", "Investment Accounts"],
+ keywords: [
+ "best wealth management advisor",
+ "how to build long term portfolio",
+ "tax efficient investment strategies",
+ "retirement planning checklist 2026",
+ "passive income portfolio ideas",
+ "risk tolerance investment guide",
+ "financial planning for freelancers",
+ "how to rebalance investment portfolio",
+ "wealth advisor fees explained",
+ "beginner guide to compound growth",
+ "high yield savings vs investments",
+ "estate planning basics for families",
+ "goal based financial planning steps",
+ "diversified portfolio allocation",
+ "when to hire a financial advisor",
+ ],
+ brand: formattedBrand,
+ pageTitles: [],
+ headings: [],
+ scrapedPages: 0,
+ rawSnippet: "",
+ source: "heuristic",
+ };
+ }
+ if (isFashion) {
+ return {
+ niche: "sustainable fashion & apparel",
+ description: `${formattedBrand} designs and sells apparel with a focus on quality materials and style.`,
+ services: ["Apparel Collections", "Custom Fit", "Sustainable Fabrics", "Seasonal Drops", "Style Consultation"],
+ keywords: [
+ "sustainable clothing brands worth buying",
+ "organic linen clothing guide",
+ "how to build a capsule wardrobe",
+ "best breathable summer wear",
+ "ethical fashion brands comparison",
+ "slow fashion vs fast fashion",
+ "how to care for linen garments",
+ "minimalist wardrobe essentials",
+ "eco friendly fabric types explained",
+ "tailored clothing fit checklist",
+ "where to buy organic cotton apparel",
+ "timeless style outfit formulas",
+ "sustainable fashion certification guide",
+ "capsule wardrobe for work",
+ "durable clothing that lasts years",
+ ],
+ brand: formattedBrand,
+ pageTitles: [],
+ headings: [],
+ scrapedPages: 0,
+ rawSnippet: "",
+ source: "heuristic",
+ };
+ }
+ if (isTech) {
+ return {
+ niche: "software, cloud & developer tools",
+ description: `${formattedBrand} provides software products and tools for modern product and engineering teams.`,
+ services: ["Platform Product", "APIs", "Integrations", "Automation", "Developer Tools"],
+ keywords: [
+ "best developer tools for startups",
+ "how to choose a saas platform",
+ "api integration best practices",
+ "cloud automation tools comparison",
+ "software for engineering productivity",
+ "how to evaluate b2b software vendors",
+ "saas onboarding checklist",
+ "low latency api architecture tips",
+ "devops automation for small teams",
+ "product analytics tools comparison",
+ "secure api authentication methods",
+ "workflow automation use cases",
+ "enterprise software buying guide",
+ "how to reduce saas churn",
+ "technical documentation best practices",
+ ],
+ brand: formattedBrand,
+ pageTitles: [],
+ headings: [],
+ scrapedPages: 0,
+ rawSnippet: "",
+ source: "heuristic",
+ };
+ }
+ return {
+ niche: `${formattedBrand} products & services`,
+ description: `${formattedBrand} operates ${clean}, offering products and services for its target customers.`,
+ services: ["Core Product", "Customer Support", "Solutions", "Resources", "Consulting"],
+ keywords: [
+ `${brandName} alternatives comparison`,
+ `best ${brandName} features explained`,
+ `how to get started with ${brandName}`,
+ `${brandName} pricing and plans guide`,
+ `${brandName} vs competitors 2026`,
+ `why teams choose ${brandName}`,
+ `${brandName} use cases for business`,
+ `complete ${brandName} setup checklist`,
+ `${brandName} customer success tips`,
+ `is ${brandName} worth it review`,
+ `${brandName} integration guide`,
+ `top ${brandName} benefits for teams`,
+ `how ${brandName} improves results`,
+ `${brandName} onboarding best practices`,
+ `${brandName} long tail keyword strategy`,
+ ],
+ brand: formattedBrand,
+ pageTitles: [],
+ headings: [],
+ scrapedPages: 0,
+ rawSnippet: "",
+ source: "heuristic",
+ };
+}
+
+async function crawlTargetSite(targetDomain: string): Promise<SiteProfile> {
+ const clean = cleanDomain(targetDomain);
+ const brand = (clean.split(".")[0] || "brand").replace(/^\w/, (c) => c.toUpperCase());
+ const baseUrls = [
+ `https://${clean}/`,
+ `https://www.${clean}/`,
+ `https://${clean}/about`,
+ `https://${clean}/about-us`,
+ `https://${clean}/services`,
+ `https://${clean}/products`,
+ `https://${clean}/solutions`,
+ `https://${clean}/pricing`,
+ `https://www.${clean}/about`,
+ `https://www.${clean}/services`,
+ `https://www.${clean}/products`,
+ ];
+
+ const fetched: Array<{ url: string; html: string }> = [];
+ // Parallel homepage first
+ for (const home of [`https://${clean}/`, `https://www.${clean}/`]) {
+ const html = await fetchHtmlWithTimeout(home, 5000);
+ if (html && html.length > 400) {
+ fetched.push({ url: home, html });
+ break;
+ }
+ }
+
+ // Discover more paths from homepage
+ const discovered: string[] = [];
+ if (fetched[0]) {
+ const parsedHome = parsePageHtml(fetched[0].html);
+ for (const p of parsedHome.pathHints) {
+ const low = p.toLowerCase();
+ if (
+ /about|service|product|solution|pricing|feature|blog|care|treatment|shop|platform|docs|api|contact|industr|use-case|customer/.test(
+ low
+ )
+ ) {
+ discovered.push(`https://${clean}${p.startsWith("/") ? p : `/${p}`}`);
+ }
+ }
+ }
+
+ const extraPaths = Array.from(
+ new Set([...baseUrls.slice(2), ...discovered])
+ ).slice(0, 8);
+
+ const extras = await Promise.all(
+ extraPaths.map(async (url) => {
+ const html = await fetchHtmlWithTimeout(url, 3500);
+ return html && html.length > 300 ? { url, html } : null;
+ })
+ );
+ for (const e of extras) if (e) fetched.push(e);
+
+ if (fetched.length === 0) {
+ const fb = heuristicSiteProfile(clean);
+ return fb;
+ }
+
+ const pageTitles: string[] = [];
+ const headings: string[] = [];
+ const services: string[] = [];
+ let descriptions: string[] = [];
+ let corpus = "";
+
+ for (const page of fetched) {
+ const p = parsePageHtml(page.html);
+ if (p.title) pageTitles.push(p.title);
+ headings.push(...p.h1s, ...p.h2s);
+ if (p.description) descriptions.push(p.description);
+ // service-like headings
+ for (const h of [...p.h1s, ...p.h2s]) {
+ if (h.split(/\s+/).length <= 8 && !/cookie|privacy|login|sign/i.test(h)) {
+ services.push(h);
+ }
+ }
+ corpus += ` ${p.title} ${p.description} ${p.h1s.join(" ")} ${p.h2s.join(" ")} ${p.bodyText.slice(0, 2500)}`;
+ }
+
+ const phrases = topPhrases(corpus, 25);
+ const brandLower = brand.toLowerCase();
+ const keywordSeeds = [
+ ...phrases.filter((p) => !p.includes(brandLower) || p.split(" ").length >= 3),
+ ...headings.map((h) => h.toLowerCase()).filter((h) => h.split(/\s+/).length >= 2 && h.split(/\s+/).length <= 6),
+ ];
+
+ // Build long-tail keyword set (prefer 3-6 word commercial/informational phrases)
+ const longTails: string[] = [];
+ for (const seed of keywordSeeds) {
+ for (const lt of longTailFromSeed(seed, brand, phrases[0] || brand)) {
+ if (!longTails.includes(lt) && lt.split(/\s+/).length >= 2) longTails.push(lt);
+ if (longTails.length >= 18) break;
+ }
+ if (longTails.length >= 18) break;
+ }
+
+ // Ensure at least 15 keywords
+ if (longTails.length < 15) {
+ const fb = heuristicSiteProfile(clean);
+ for (const k of fb.keywords) {
+ if (!longTails.includes(k)) longTails.push(k);
+ if (longTails.length >= 15) break;
+ }
+ }
+
+ const uniqueServices = Array.from(new Set(services.map((s) => s.trim()).filter(Boolean))).slice(0, 8);
+ const nicheFromHead =
+ headings[0] ||
+ pageTitles[0]?.split(/[|\-–—]/)[0]?.trim() ||
+ `${brand} products & services`;
+ const description =
+ descriptions.sort((a, b) => b.length - a.length)[0] ||
+ `${brand} (${clean}) — ${nicheFromHead}. ${corpus.slice(0, 220)}`;
+
+ return {
+ niche: nicheFromHead.slice(0, 120),
+ description: description.slice(0, 500),
+ services: uniqueServices.length
+ ? uniqueServices
+ : heuristicSiteProfile(clean).services,
+ keywords: longTails.slice(0, 15),
+ brand,
+ pageTitles: pageTitles.slice(0, 12),
+ headings: headings.slice(0, 30),
+ scrapedPages: fetched.length,
+ rawSnippet: corpus.slice(0, 1500),
+ source: "live-crawl",
+ };
+}
+
+async function fetchPageSummary(targetDomain: string): Promise<SiteProfile> {
+ const clean = cleanDomain(targetDomain);
+ // Prefer live crawl; known brands still enrich if crawl is thin
+ try {
+ const live = await withTimeout(crawlTargetSite(clean), 12000, "Site crawl");
+ if (live.scrapedPages > 0 && live.keywords.length >= 8) {
+ // Merge known-brand extras if applicable
+ const known = heuristicSiteProfile(clean);
+ if (known.source === "known-brand") {
+ const mergedKw = Array.from(new Set([...known.keywords, ...live.keywords])).slice(0, 15);
+ return {
+ ...live,
+ niche: known.niche || live.niche,
+ description: known.description || live.description,
+ services: known.services.length ? known.services : live.services,
+ keywords: mergedKw,
+ brand: known.brand || live.brand,
+ source: "live-crawl",
+ };
+ }
+ return live;
+ }
+ // Weak crawl — blend with heuristics
+ const fb = heuristicSiteProfile(clean);
+ return {
+ ...fb,
+ keywords: Array.from(new Set([...live.keywords, ...fb.keywords])).slice(0, 15),
+ description: live.description || fb.description,
+ services: live.services.length ? live.services : fb.services,
+ pageTitles: live.pageTitles,
+ headings: live.headings,
+ scrapedPages: live.scrapedPages,
+ rawSnippet: live.rawSnippet,
+ source: live.scrapedPages > 0 ? "live-crawl" : fb.source,
+ };
+ } catch {
+ return heuristicSiteProfile(clean);
+ }
+}
+
+function buildIndustryCompetitors(
+ target: string,
+ brand: string,
+ niche: string,
+ keywords: string[]
+): any[] {
+ const kw1 = keywords[0] || "services";
+ const kw2 = keywords[1] || "solutions";
+ const nicheSlug = niche
+ .toLowerCase()
+ .replace(/[^a-z0-9]+/g, "-")
+ .replace(/(^-|-$)/g, "")
+ .slice(0, 24);
+
+ // Real-world style industry peers by niche signals + niche-specific synthetic peers
+ const nicheLower = niche.toLowerCase();
+ const curated: Array<{ domain: string; focus: string; sim: number }> = [];
+ if (/pay|fintech|billing|checkout|stripe|payment/.test(nicheLower + target)) {
+ curated.push(
+ { domain: "paypal.com", focus: "Consumer & merchant checkout", sim: 92 },
+ { domain: "square.com", focus: "SMB payments & POS", sim: 88 },
+ { domain: "adyen.com", focus: "Enterprise global acquiring", sim: 90 },
+ { domain: "braintreepayments.com", focus: "Developer payment APIs", sim: 86 },
+ { domain: "checkout.com", focus: "Modern acquiring platform", sim: 84 }
+ );
+ } else if (/joint|pain|health|clinic|ayur|phytomed|wellness|medical/.test(nicheLower + target)) {
+ curated.push(
+ { domain: "mayoclinic.org", focus: "Authoritative medical education", sim: 78 },
+ { domain: "webmd.com", focus: "Consumer health content hub", sim: 76 },
+ { domain: "healthline.com", focus: "Evidence-led health content", sim: 80 },
+ { domain: "arthritis.org", focus: "Condition-specific patient advocacy", sim: 82 },
+ { domain: "spine-health.com", focus: "Spine & MSK specialty content", sim: 74 }
+ );
+ } else if (/fashion|apparel|linen|clothing|wardrobe/.test(nicheLower + target)) {
+ curated.push(
+ { domain: "everlane.com", focus: "Transparent sustainable apparel", sim: 85 },
+ { domain: "patagonia.com", focus: "Outdoor ethical fashion", sim: 80 },
+ { domain: "uniqlo.com", focus: "Basics & functional wear", sim: 72 },
+ { domain: "reformation.com", focus: "Sustainable contemporary fashion", sim: 78 }
+ );
+ } else if (/wealth|finance|invest|bank/.test(nicheLower + target)) {
+ curated.push(
+ { domain: "fidelity.com", focus: "Full-service investing", sim: 80 },
+ { domain: "vanguard.com", focus: "Low-cost portfolio investing", sim: 82 },
+ { domain: "nerdwallet.com", focus: "Personal finance education", sim: 75 },
+ { domain: "betterment.com", focus: "Digital wealth management", sim: 84 }
+ );
+ } else if (/saas|software|cloud|api|dev|tech/.test(nicheLower + target)) {
+ curated.push(
+ { domain: "atlassian.com", focus: "Team software suite", sim: 70 },
+ { domain: "notion.so", focus: "Workspace productivity", sim: 72 },
+ { domain: "hubspot.com", focus: "Growth platform & content", sim: 74 },
+ { domain: "zendesk.com", focus: "Customer service software", sim: 68 }
+ );
+ }
+
+ const synthetic = [
+ { domain: `${nicheSlug || brand.toLowerCase()}-leaders.com`, focus: "Category content leader", sim: 91 },
+ { domain: `get${brand.toLowerCase()}alt.com`, focus: "Direct product alternative", sim: 94 },
+ { domain: `best-${nicheSlug || "tools"}.io`, focus: "Comparison & review hub", sim: 77 },
+ { domain: `${brand.toLowerCase()}-reviews.net`, focus: "Review aggregation portal", sim: 70 },
+ { domain: `pro-${nicheSlug || "solutions"}.com`, focus: "Prosumer specialist", sim: 85 },
+ { domain: `local-${nicheSlug || brand.toLowerCase()}.co`, focus: "Local/regional specialist", sim: 83 },
+ { domain: `open${brand.toLowerCase()}.dev`, focus: "Developer-first challenger", sim: 79 },
+ { domain: `smart-${nicheSlug || "ops"}.app`, focus: "AI-native disruptor", sim: 87 },
+ { domain: `elite-${nicheSlug || "consult"}.com`, focus: "Premium services player", sim: 81 },
+ { domain: `the${brand.toLowerCase()}guide.org`, focus: "Educational authority site", sim: 73 },
+ { domain: `next-${nicheSlug || "gen"}-hq.com`, focus: "Next-gen product suite", sim: 86 },
+ { domain: `compare-${nicheSlug || "options"}.com`, focus: "Buyer intent comparison engine", sim: 75 },
+ ];
+
+ const merged = [...curated, ...synthetic].slice(0, 15);
+ return merged.map((c, index) => ({
+ domain: c.domain,
+ nicheSimilarity: c.sim,
+ nicheFocus: c.focus,
+ estimatedMonthlyTraffic: Math.round(8000 + index * 2200 + brand.length * 400),
+ popularBlogUrl: `https://${c.domain}/blog`,
+ latestArticleTitle: `${kw1}: What ${c.focus} Teams Changed in 2026`,
+ latestArticleUrl: `https://${c.domain}/blog/${kw1.replace(/\s+/g, "-").slice(0, 40)}`,
+ analyzedTakeaway: `${c.domain} competes in ${niche} with focus on ${c.focus.toLowerCase()}. Opportunity: outrank them on long-tail queries like "${kw1}" and "${kw2}" with deeper FAQs and comparison pages.`,
+ targetKeywords: [
+ kw1,
+ kw2,
+ keywords[2] || `best ${kw1}`,
+ keywords[3] || `${kw1} pricing`,
+ ].filter(Boolean),
+ seoStrategy: "Topical clusters, comparison pages, and FAQ schema around commercial long-tails.",
+ aiRankStrategy: "Answer-first H2s, entity-rich definitions, and cited sources for AI Overviews.",
+ schemaRecommendation: "Article + FAQPage + Organization JSON-LD on service and blog templates.",
+ }));
 }
 
 // ============================================================
@@ -1449,81 +2158,97 @@ async function generateFallbackData(targetRaw: string, competitorRaw?: string) {
  const brandName = target.split(".")[0];
  const services = targetPageInfo.services;
  const nicheKeywords = targetPageInfo.keywords;
- const targetMetrics = { domain: target, domainRating: Math.min(85, 30 + (targetSeed * 3) % 55), backlinksCount: 1500 + (targetSeed * 423) % 25000, referringDomains: 250 + (targetSeed * 89) % 4500, organicTraffic: 12000 + (targetSeed * 3120) % 350000, organicKeywords: 1800 + (targetSeed * 450) % 25000, publishingFrequency: targetSeed % 2 === 0 ? "3-5 articles / week" : "1-2 articles / week", topPages: targetPageInfo.services.map((s, i) => ({
- url: `https://${target}/${s.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+ const topServices = (services || []).slice(0, 6);
+ const targetMetrics = {
+ domain: target,
+ domainRating: Math.min(85, 30 + (targetSeed * 3) % 55),
+ backlinksCount: 1500 + (targetSeed * 423) % 25000,
+ referringDomains: 250 + (targetSeed * 89) % 4500,
+ organicTraffic: 12000 + (targetSeed * 3120) % 350000,
+ organicKeywords: 1800 + (targetSeed * 450) % 25000,
+ publishingFrequency: targetSeed % 2 === 0 ? "3-5 articles / week" : "1-2 articles / week",
+ topPages: (topServices.length ? topServices : nicheKeywords.slice(0, 5)).map((s: string, i: number) => ({
+ url: `https://${target}/${String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 48)}`,
  title: s,
  estTraffic: Math.round((12000 + (targetSeed * 3120) % 350000) * (0.15 - i * 0.015)),
  keywordsCount: Math.max(10, (1800 + (targetSeed * 450) % 25000) - i * 500),
- })) };
+ })),
+ };
  const competitorDomainToUse = competitor || `${target.split(".")[0]}-alternative.com`;
  const compSeedToUse = competitorDomainToUse.length;
  const compServices = compPageInfo ? compPageInfo.services : ["Standard Consultation", "Basic Services", "Advanced Support"];
- const compTopPages = compPageInfo ? compPageInfo.services.map((s, i) => ({
+ const compTopPages = compPageInfo
+ ? compPageInfo.services.slice(0, 5).map((s: string, i: number) => ({
  url: `https://${cleanDomain(competitorDomainToUse)}/${s.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
  title: s,
  estTraffic: Math.round(25000 * (0.15 - i * 0.015)),
  keywordsCount: Math.max(10, 3500 - i * 500),
- })) : [];
- const competitorMetrics = { domain: competitorDomainToUse, domainRating: Math.min(92, 35 + (compSeedToUse * 4) % 55), backlinksCount: 3000 + (compSeedToUse * 650) % 45000, referringDomains: 450 + (compSeedToUse * 120) % 8500, organicTraffic: 25000 + (compSeedToUse * 5430) % 650000, organicKeywords: 3500 + (compSeedToUse * 850) % 45000, publishingFrequency: compSeedToUse % 2 === 0 ? "4-6 articles / week" : "2-3 articles / week", topPages: compTopPages };
- const baseCompDomains = [
- { prefix: "direct-comp-", suffix: ".com", sim: 96, focus: `Direct primary challenger` }, { prefix: "local-", suffix: "-expert.com", sim: 85, focus: `Localized specialty provider` },
- { prefix: "global-scale-", suffix: ".com", sim: 78, focus: `Enterprise scale leader` }, { prefix: "smart-", suffix: "-hub.org", sim: 70, focus: `Information aggregator` },
- { prefix: "apex-", suffix: "-pro.com", sim: 92, focus: `High-authority challenger` }, { prefix: "the-", suffix: "-expert.com", sim: 88, focus: `Thought-leader` },
- { prefix: "metro-", suffix: "-specialist.co", sim: 82, focus: `Local clinic group` }, { prefix: "innovate-", suffix: ".io", sim: 90, focus: `Digital-first disrupter` },
- { prefix: "prime-", suffix: "-health.net", sim: 84, focus: `Consumer resource portal` }, { prefix: "tech-", suffix: "-labs.org", sim: 75, focus: `R&D entity` },
- { prefix: "eco-", suffix: "-alliance.com", sim: 65, focus: `Advocacy body` }, { prefix: "proactive-", suffix: "-group.com", sim: 81, focus: `Performance-focused group` },
- { prefix: "nextgen-", suffix: ".co", sim: 87, focus: `AI-native platform` }, { prefix: "elite-", suffix: "-consulting.com", sim: 76, focus: `Premium concierge service` },
- { prefix: "universal-", suffix: "-solutions.net", sim: 73, focus: `Generalist provider` }
- ];
- const discoveredCompetitors = baseCompDomains.map((c, index) => {
- const kw1 = nicheKeywords[0] || "services";
- const compDomain = `${c.prefix}${target.split(".")[0]}${c.suffix}`;
- return {
- domain: compDomain,
- nicheSimilarity: c.sim,
- nicheFocus: c.focus,
- estimatedMonthlyTraffic: Math.round((targetMetrics.organicTraffic || 50000) * (0.3 + index * 0.05)),
- popularBlogUrl: `https://${compDomain}/blog`,
- latestArticleTitle: `Top ${kw1} Strategies for 2026 - ${c.focus}`,
- latestArticleUrl: `https://${compDomain}/blog/${kw1.replace(/\s+/g, "-")}-strategies-2026`,
- analyzedTakeaway: `${compDomain} focuses on ${c.focus.toLowerCase()} with strong organic visibility. Key strategy: topical authority clusters targeting long-tail commercial intent keywords.`,
- targetKeywords: [`${kw1} solutions`, `best ${nicheKeywords[1] || "benefits"} in 2026`, `affordable ${nicheKeywords[2] || "near me"}`, `${nicheKeywords[3] || "cost"} analysis`],
- seoStrategy: "Content-led SEO with topical authority, FAQ schema, and internal linking hubs.",
- aiRankStrategy: "Optimize for AI Overviews by structuring content with clear definitions, comparison tables, and authoritative citations.",
- schemaRecommendation: "Implement FAQPage, HowTo, and Article JSON-LD schemas for rich snippet eligibility."
+ }))
+ : [];
+ const competitorMetrics = {
+ domain: competitorDomainToUse,
+ domainRating: Math.min(92, 35 + (compSeedToUse * 4) % 55),
+ backlinksCount: 3000 + (compSeedToUse * 650) % 45000,
+ referringDomains: 450 + (compSeedToUse * 120) % 8500,
+ organicTraffic: 25000 + (compSeedToUse * 5430) % 650000,
+ organicKeywords: 3500 + (compSeedToUse * 850) % 45000,
+ publishingFrequency: compSeedToUse % 2 === 0 ? "4-6 articles / week" : "2-3 articles / week",
+ topPages: compTopPages,
  };
- });
- const keywordList = nicheKeywords.slice(0, 8).map((kw, i) => ({
+
+ // Top 15 competitive set grounded in real niche (not random prefixes)
+ const brandLabel = targetPageInfo.brand || brandName.charAt(0).toUpperCase() + brandName.slice(1);
+ const discoveredCompetitors = buildIndustryCompetitors(
+ target,
+ brandLabel,
+ targetPageInfo.niche,
+ nicheKeywords
+ );
+
+ // Top 15 long-tail keywords derived from live site crawl / niche profile
+ const keywordPool = nicheKeywords.slice(0, 15);
+ while (keywordPool.length < 15) {
+ keywordPool.push(`${brandLabel.toLowerCase()} ${["guide", "pricing", "alternatives", "setup", "review"][keywordPool.length % 5]}`);
+ }
+ const keywordList = keywordPool.map((kw, i) => ({
  keyword: kw,
- volume: 1200 - i * 120,
- difficulty: Math.min(85, 30 + i * 6),
- cpc: parseFloat((1.5 + i * 0.4).toFixed(2)),
- intent: i < 3 ? "Commercial" as const : i < 6 ? "Informational" as const : "Transactional" as const,
- type: (kw.length < 15 ? "Short-tail" : "Long-tail") as "Short-tail" | "Long-tail",
- competition: (i < 3 ? "High" : i < 6 ? "Medium" : "Low") as "Low" | "Medium" | "High",
- trend: (i < 3 ? "rising" : "stable") as "rising" | "stable" | "declining",
- serpRankings: [{ rank: 1, title: `${kw} - ${target.split(".")[0]}`, url: `https://${target}` }],
- relatedKeywords: nicheKeywords.filter((_, j) => j !== i).slice(0, 4),
+ volume: Math.max(80, 2400 - i * 130 + (kw.length % 7) * 20),
+ difficulty: Math.min(85, 22 + i * 4),
+ cpc: parseFloat((1.1 + i * 0.22).toFixed(2)),
+ intent: (i < 5 ? "Commercial" : i < 11 ? "Informational" : "Transactional") as "Commercial" | "Informational" | "Transactional",
+ type: (kw.split(/\s+/).length >= 3 || kw.length >= 18 ? "Long-tail" : "Short-tail") as "Short-tail" | "Long-tail",
+ competition: (i < 4 ? "High" : i < 10 ? "Medium" : "Low") as "Low" | "Medium" | "High",
+ trend: (i < 6 ? "rising" : "stable") as "rising" | "stable" | "declining",
+ serpRankings: [{ rank: 1, title: `${kw} | ${brandLabel}`, url: `https://${target}` }],
+ relatedKeywords: keywordPool.filter((_, j) => j !== i).slice(0, 4),
  parentTopic: targetPageInfo.niche.split("&")[0].trim(),
- buyerJourneyStage: (i < 3 ? "Awareness" : i < 6 ? "Consideration" : "Decision") as "Awareness" | "Consideration" | "Decision",
- opportunityScore: Math.max(10, 85 - i * 8),
- isPillarOpportunity: i < 3,
+ buyerJourneyStage: (i < 5 ? "Awareness" : i < 11 ? "Consideration" : "Decision") as
+ | "Awareness"
+ | "Consideration"
+ | "Decision",
+ opportunityScore: Math.max(12, 92 - i * 4),
+ isPillarOpportunity: i < 5,
  }));
 
- // Populate tabs that were previously empty in fallback mode
  const contentGaps = normalizeContentGaps(
- nicheKeywords.slice(0, 8).map((kw, i) => {
- const difficulty = Math.min(75, 18 + i * 9);
+ keywordPool.slice(0, 12).map((kw, i) => {
+ const difficulty = Math.min(75, 16 + i * 5);
+ const titleCase = kw.replace(/\b\w/g, (c) => c.toUpperCase());
  return {
  competitorKeyword: kw,
- competitorRank: 3 + (i % 7),
- competitorVolume: 900 - i * 90,
+ competitorRank: 2 + (i % 8),
+ competitorVolume: Math.max(90, 1800 - i * 110),
  competitorDifficulty: difficulty,
- targetRank: i % 3 === 0 ? "Not Ranking" : 15 + i * 4,
- recommendedTopic: `Complete Guide to ${kw.charAt(0).toUpperCase() + kw.slice(1)}`,
+ targetRank: i % 3 === 0 ? "Not Ranking" : 12 + i * 3,
+ recommendedTopic:
+ i % 3 === 0
+ ? `How to Master ${titleCase} Without Wasting Budget (2026 Guide)`
+ : i % 3 === 1
+ ? `${titleCase}: ${5 + (i % 4)} Proven Steps That Actually Work`
+ : `Why Smart Teams Switch to ${titleCase} (And How to Start)`,
  recommendedType: i % 2 === 0 ? "Pillar Blog Post" : "Comparison Guide",
  difficultyCategory: difficulty < 30 ? "Easy" : difficulty < 55 ? "Medium" : "Hard",
- isQuickWin: difficulty < 35 && i < 4,
+ isQuickWin: difficulty < 38 && i < 6,
  };
  })
  );
@@ -1593,13 +2318,31 @@ async function generateFallbackData(targetRaw: string, competitorRaw?: string) {
  discoveredCompetitors,
  targetAnalysis: {
  coreNiche: targetPageInfo.niche,
- audiencePersona: `Business owners and decision-makers searching for ${targetPageInfo.niche} solutions`,
- contentStrengths: ["Clear service page structure", "Brand authority in niche", "Targeted keyword usage"],
- contentWeaknesses: ["Limited blog content", "Missing FAQ sections", "Weak internal linking between service pages"],
- detailedBreakdown: `${target.split(".")[0]} operates in the ${targetPageInfo.niche} space with a focus on ${targetPageInfo.services.slice(0, 3).join(", ")}. The site has a Domain Rating of ${targetMetrics.domainRating} and approximately ${(targetMetrics.organicTraffic / 1000).toFixed(0)}k monthly organic traffic. Primary opportunities include expanding topical authority through a structured blog content strategy and building high-quality backlinks.`,
+ audiencePersona: `People actively searching for ${targetPageInfo.niche} solutions related to ${brandLabel}`,
+ contentStrengths: [
+ targetPageInfo.scrapedPages > 0
+ ? `Live crawl covered ${targetPageInfo.scrapedPages} page(s) on ${target}`
+ : "Brand domain profile available",
+ `Core offerings: ${(targetPageInfo.services || []).slice(0, 3).join(", ") || "primary services"}`,
+ "Keyword map grounded in on-site language",
+ ],
+ contentWeaknesses: [
+ "Limited long-tail blog coverage vs competitors",
+ "Missing FAQ depth on commercial queries",
+ "Internal linking between service and content pages can be stronger",
+ ],
+ detailedBreakdown: `${brandLabel} (${target}) operates in ${targetPageInfo.niche}. Site profile source: ${targetPageInfo.source}. ${targetPageInfo.description} Top demand themes: ${nicheKeywords.slice(0, 5).join("; ")}. Estimated DR ${targetMetrics.domainRating} with ~${(targetMetrics.organicTraffic / 1000).toFixed(0)}k monthly organic visits. Priority: publish long-tail pillar content and comparison pages that match real service language.`,
  },
  keywords: keywordList,
  contentGaps,
+ siteProfile: {
+ source: targetPageInfo.source,
+ scrapedPages: targetPageInfo.scrapedPages,
+ brand: brandLabel,
+ niche: targetPageInfo.niche,
+ headings: (targetPageInfo.headings || []).slice(0, 12),
+ pageTitles: (targetPageInfo.pageTitles || []).slice(0, 8),
+ },
  serpFeatures,
  backlinkSources,
  backlinkOpportunities,
@@ -1713,13 +2456,27 @@ app.post("/api/analyze", async (req, res) => {
   try {
   // --- analysis body (dfseo + AI) ---
 
-  // ── DataForSEO real data enrichment (server-side key, no BYOK) ──
+  // ── DataForSEO real data enrichment (BYOK from user or server-side env) ──
   let dfseoData: DataForSeoBundle | null = null;
-  if (HAS_DFSEO) {
+  const aiCfg = req.body.aiConfig as { dataforseoLogin?: string; dataforseoPassword?: string; locationCode?: number; languageCode?: string } | undefined;
+  const byokCreds: DfsCredentials | undefined =
+    aiCfg?.dataforseoLogin && aiCfg?.dataforseoPassword
+      ? { login: aiCfg.dataforseoLogin, password: aiCfg.dataforseoPassword }
+      : undefined;
+  const hasDfsCreds = Boolean(byokCreds || HAS_DFSEO);
+  if (hasDfsCreds) {
     try {
       const seedKws = (base.keywords ?? []).slice(0, 5).map((k: { keyword: string }) => k.keyword);
       if (seedKws.length === 0) seedKws.push(domain.split(".")[0].replace(/-/g, " "));
-      dfseoData = await withTimeout(fetchFullBundle(domain, seedKws), 20000, "DataForSEO bundle");
+      dfseoData = await withTimeout(
+        fetchFullBundle(domain, seedKws, {
+          credentials: byokCreds,
+          locationCode: aiCfg?.locationCode,
+          languageCode: aiCfg?.languageCode,
+        }),
+        20000,
+        "DataForSEO bundle"
+      );
       console.log(`[DataForSEO] Fetched real data for ${domain}: ${dfseoData.rawSerpItems.length} SERP items, ${dfseoData.keywordLandscape.length} keywords, ${dfseoData.backlinks.total_backlinks} backlinks`);
     } catch (err: unknown) {
       console.error("[DataForSEO] Bundle fetch failed, falling back to AI/simulated data:", err instanceof Error ? err.message : err);
@@ -1784,6 +2541,8 @@ app.post("/api/analyze", async (req, res) => {
       },
       // Page speed data if available
       pageSpeed: dfseoData.pageSpeed,
+      // Cost estimate for transparency
+      estimatedCost: dfseoData.estimatedCost,
       // Metadata
       dataSource: "dataforseo",
       isFallback: false,
@@ -1843,11 +2602,27 @@ ASCII only. JSON only.`;
 
   // ── AI-only path (no DataForSEO) — original behavior ──
   try {
-    const prompt = `Compact JSON SEO analysis for "${domain}"${competitorUrl ? ` vs "${cleanDomain(competitorUrl)}"` : ""}.
-Short arrays only: keywords(5), contentGaps(6), serpFeatures(3), discoveredCompetitors(4), backlinkSources(3), backlinkOpportunities(2).
-Include: target{domain,domainRating,backlinksCount,referringDomains,organicTraffic,organicKeywords,publishingFrequency,topPages[{url,title,estTraffic,keywordsCount}]}, competitor or null, targetAnalysis{coreNiche,audiencePersona,contentStrengths[],contentWeaknesses[],detailedBreakdown}, keywords[{keyword,volume,difficulty,cpc,intent,type,opportunityScore}], contentGaps[{competitorKeyword,competitorRank,competitorVolume,competitorDifficulty,targetRank,recommendedTopic,recommendedType,difficultyCategory,isQuickWin}], rankingBlueprint{summary,priorityActions[{action,impact,effort,timeframe}],timelineEstimate}.
-For contentGaps: targetRank is a number or "Not Ranking"; difficultyCategory is Easy|Medium|Hard; competitorVolume is monthly searches; competitorDifficulty 1-100.
-Realistic numbers. ASCII only. JSON only.`;
+    const siteCtx = {
+      niche: base.targetAnalysis?.coreNiche,
+      brand: base.siteProfile?.brand || domain.split(".")[0],
+      scrapedPages: base.siteProfile?.scrapedPages,
+      source: base.siteProfile?.source,
+      seedKeywords: (base.keywords || []).slice(0, 10).map((k: any) => k.keyword),
+      services: (base.target?.topPages || []).slice(0, 5).map((p: any) => p.title),
+      snippet: (base.targetAnalysis?.detailedBreakdown || "").slice(0, 400),
+    };
+    const prompt = `SEO competitive analysis for LIVE website https://${domain}/${competitorUrl ? ` vs competitor https://${cleanDomain(competitorUrl)}/` : ""}.
+Site context from crawl (MUST stay on-niche; do not invent unrelated industries):
+${JSON.stringify(siteCtx)}
+
+Return compact JSON with:
+- keywords: exactly 15 LONG-TAIL keywords highly relevant to this business (3-7 words each, commercial + informational mix). volume,difficulty,cpc,intent,type,opportunityScore
+- contentGaps: 10 items with competitorKeyword,competitorRank,competitorVolume,competitorDifficulty,targetRank,recommendedTopic (click-worthy long-tail title),recommendedType,difficultyCategory,isQuickWin
+- discoveredCompetitors: exactly 15 industry peers/similar businesses with domain,nicheSimilarity,nicheFocus,estimatedMonthlyTraffic,analyzedTakeaway,targetKeywords[]
+- targetAnalysis{coreNiche,audiencePersona,contentStrengths[],contentWeaknesses[],detailedBreakdown}
+- rankingBlueprint{summary,priorityActions[{action,impact,effort,timeframe}],timelineEstimate}
+- serpFeatures(4), backlinkSources(4), backlinkOpportunities(3) optional
+Keep numbers realistic. ASCII only. JSON only. No off-topic keywords.`;
 
     // Prefer flash-lite for analysis speed (user can still set a custom model in Settings)
     const fastConfig: ProviderConfig = {
@@ -1859,12 +2634,12 @@ Realistic numbers. ASCII only. JSON only.`;
     };
 
     const result = await withTimeout(
-      callAI(fastConfig, prompt, "Valid compact JSON only. No fences. ASCII punctuation.", {
+      callAI(fastConfig, prompt, "Valid compact JSON only. No fences. ASCII punctuation. Stay on-niche.", {
         responseMimeType: "application/json",
-        temperature: 0.15,
-        maxOutputTokens: 2500,
+        temperature: 0.2,
+        maxOutputTokens: 5000,
       }),
-      12000,
+      22000,
       "SEO analysis"
     );
     const parsed = cleanAndParseJSON(result.text);
@@ -1883,7 +2658,10 @@ Realistic numbers. ASCII only. JSON only.`;
         ...parsed,
         target: { ...base.target, ...(parsed.target || {}) },
         competitor: parsed.competitor ?? base.competitor,
-        keywords: Array.isArray(parsed.keywords) && parsed.keywords.length ? parsed.keywords : base.keywords,
+        keywords:
+          Array.isArray(parsed.keywords) && parsed.keywords.length >= 8
+            ? parsed.keywords.slice(0, 15)
+            : base.keywords,
         contentGaps: gaps.length ? gaps : normalizeContentGaps(base.contentGaps, kwFallback),
         serpFeatures: Array.isArray(parsed.serpFeatures) && parsed.serpFeatures.length ? parsed.serpFeatures : base.serpFeatures,
         backlinkSources: Array.isArray(parsed.backlinkSources) && parsed.backlinkSources.length ? parsed.backlinkSources : base.backlinkSources,
@@ -1892,9 +2670,10 @@ Realistic numbers. ASCII only. JSON only.`;
             ? parsed.backlinkOpportunities
             : base.backlinkOpportunities,
         discoveredCompetitors:
-          Array.isArray(parsed.discoveredCompetitors) && parsed.discoveredCompetitors.length
-            ? parsed.discoveredCompetitors
+          Array.isArray(parsed.discoveredCompetitors) && parsed.discoveredCompetitors.length >= 8
+            ? parsed.discoveredCompetitors.slice(0, 15)
             : base.discoveredCompetitors,
+        siteProfile: base.siteProfile,
         autonomousBlog: autonomous,
         dataSource: "ai",
         isFallback: false,
@@ -1987,27 +2766,55 @@ app.post("/api/generate-blog", async (req, res) => {
  : String(secondaryKeywords || "");
  const targetWords = Math.max(900, Math.min(1400, Number(wordCount) || 1200));
  const brand = domain.split(".")[0] || "the brand";
- const userPrompt = `Write a BRAND-NEW SEO article as JSON for https://${domain}/
+ // Live site context so article stays relevant to the real business
+ let siteBrief: any = null;
+ try {
+  siteBrief = await withTimeout(fetchPageSummary(domain), 10000, "Blog site crawl");
+ } catch {
+  siteBrief = null;
+ }
+ const brandName = siteBrief?.brand || brand;
+ const userPrompt = `Write a BRAND-NEW highly engaging, SEO-optimized article as JSON for https://${domain}/
+
+TARGET SITE CONTEXT (must stay on-niche — write as if you researched this company):
+${JSON.stringify({
+  brand: brandName,
+  niche: siteBrief?.niche,
+  description: siteBrief?.description?.slice?.(0, 350),
+  services: (siteBrief?.services || []).slice(0, 6),
+  relatedKeywords: (siteBrief?.keywords || []).slice(0, 8),
+  source: siteBrief?.source,
+  scrapedPages: siteBrief?.scrapedPages,
+})}
 
 UNIQUE RUN ID: ${seed}
 REQUIRED STRATEGY THIS RUN: ${strategy.style} (id: ${strategy.id})
-Suggested title direction (you may improve it): ${strategy.titlePrefix(kw)}
-Suggested H2 themes (rewrite in your own words, do not copy verbatim): ${strategy.heads(kw, brand).join(" | ")}
+Suggested title seed (improve into a clickable long-tail SEO title): ${strategy.titlePrefix(kw)}
+Suggested H2 themes (rewrite in your own words): ${strategy.heads(kw, brandName).join(" | ")}
 
-Primary keyword: ${kw}
+Primary long-tail keyword: ${kw}
 Topic: ${topic || kw}
-Secondary keywords: ${secondary || "related practical terms"}
+Secondary keywords: ${secondary || (siteBrief?.keywords || []).slice(1, 5).join(", ") || "related practical terms"}
 Target length: about ${targetWords} words total
-Audience: ${audience || "professionals researching solutions"}
-Tone: ${tone || "clear, practical, confident"}
-Brand: ${brand}
+Audience: ${audience || `people researching ${siteBrief?.niche || "solutions"} from ${brandName}`}
+Tone: ${tone || "clear, practical, confident, engaging"}
+Brand: ${brandName}
+
+TITLE MUST:
+- Be a high-traffic style LONG-TAIL phrase (not a single word)
+- Be catchy and click-worthy (curiosity + benefit) without false claims
+- Put the primary keyword near the start
+- Ideally 50-70 characters
 
 HARD RULES FOR THIS RUN:
-- Completely different title, outline, examples, and CTA wording from any prior draft.
+- Article must be relevant to ${brandName} / ${domain} and the niche above.
+- Completely different title, outline, examples from any prior draft.
 - Flesch-friendly prose: sentences 12-18 words, simple words, active voice.
+- Highly engaging: concrete examples, short stories, checklists, bold takeaways.
 - Sectioned fields only (intro, keyTakeaways, sections, faqSection, conclusion).
 - Include one markdown table in a section body.
 - Include 3+ internal links to https://${domain}/... and 2+ reputable external links.
+- CTA should feel natural for ${brandName}.
 - ASCII only. No schemaMarkup field.
 Return ONLY the JSON object from the system prompt.`;
 
@@ -2197,19 +3004,32 @@ Return ONLY JSON: { "snippets": [ { "type": "default|question|benefit|how-to|lis
 });
 
 // ============================================================
-// DataForSEO Real-Time Endpoints (server-side API key)
+// DataForSEO Real-Time Endpoints (BYOK or server-side API key)
 // ============================================================
 
+function extractDfsCredentials(req: { body?: Record<string, unknown> }): DfsCredentials | undefined {
+  const body = req.body ?? {};
+  const login = body.dataforseoLogin as string | undefined;
+  const password = body.dataforseoPassword as string | undefined;
+  if (login && password) return { login, password };
+  return undefined;
+}
+
+function hasDfsAccess(req: { body?: Record<string, unknown> }): boolean {
+  return Boolean(extractDfsCredentials(req) || HAS_DFSEO);
+}
+
 app.post("/api/seo/keyword-volume", async (req, res) => {
-  if (!HAS_DFSEO) {
-    return res.status(503).json({ error: "DataForSEO credentials not configured on server." });
+  if (!hasDfsAccess(req)) {
+    return res.status(503).json({ error: "DataForSEO credentials not configured. Add them in Settings." });
   }
-  const { keywords = [], locationCode = 2840 } = req.body || {};
+  const { keywords = [], locationCode = 2840, languageCode = "en" } = req.body || {};
+  const creds = extractDfsCredentials(req);
   if (!Array.isArray(keywords) || keywords.length === 0) {
     return res.status(400).json({ error: "keywords array is required." });
   }
   try {
-    const data = await fetchKeywordVolumes(keywords.slice(0, 20), locationCode);
+    const data = await fetchKeywordVolumes(keywords.slice(0, 20), locationCode, languageCode, creds);
     res.json({ keywords: data, source: "dataforseo" });
   } catch (err: unknown) {
     const message = redactSecrets(err instanceof Error ? err.message : String(err));
@@ -2218,15 +3038,16 @@ app.post("/api/seo/keyword-volume", async (req, res) => {
 });
 
 app.post("/api/seo/serp", async (req, res) => {
-  if (!HAS_DFSEO) {
-    return res.status(503).json({ error: "DataForSEO credentials not configured on server." });
+  if (!hasDfsAccess(req)) {
+    return res.status(503).json({ error: "DataForSEO credentials not configured. Add them in Settings." });
   }
-  const { keyword = "", locationCode = 2840 } = req.body || {};
+  const { keyword = "", locationCode = 2840, languageCode = "en" } = req.body || {};
+  const creds = extractDfsCredentials(req);
   if (!keyword) {
     return res.status(400).json({ error: "keyword is required." });
   }
   try {
-    const items = await fetchSerp(keyword, locationCode);
+    const items = await fetchSerp(keyword, locationCode, languageCode, creds);
     res.json({ items, keyword, source: "dataforseo" });
   } catch (err: unknown) {
     const message = redactSecrets(err instanceof Error ? err.message : String(err));
@@ -2235,15 +3056,16 @@ app.post("/api/seo/serp", async (req, res) => {
 });
 
 app.post("/api/seo/domain-overview", async (req, res) => {
-  if (!HAS_DFSEO) {
-    return res.status(503).json({ error: "DataForSEO credentials not configured on server." });
+  if (!hasDfsAccess(req)) {
+    return res.status(503).json({ error: "DataForSEO credentials not configured. Add them in Settings." });
   }
-  const { domain = "" } = req.body || {};
+  const { domain = "", locationCode = 2840, languageCode = "en" } = req.body || {};
+  const creds = extractDfsCredentials(req);
   if (!domain) {
     return res.status(400).json({ error: "domain is required." });
   }
   try {
-    const data = await fetchDomainOverview(cleanDomain(domain));
+    const data = await fetchDomainOverview(cleanDomain(domain), locationCode, languageCode, creds);
     res.json({ ...data, source: "dataforseo" });
   } catch (err: unknown) {
     const message = redactSecrets(err instanceof Error ? err.message : String(err));
@@ -2252,15 +3074,16 @@ app.post("/api/seo/domain-overview", async (req, res) => {
 });
 
 app.post("/api/seo/backlinks", async (req, res) => {
-  if (!HAS_DFSEO) {
-    return res.status(503).json({ error: "DataForSEO credentials not configured on server." });
+  if (!hasDfsAccess(req)) {
+    return res.status(503).json({ error: "DataForSEO credentials not configured. Add them in Settings." });
   }
-  const { domain = "", limit = 100 } = req.body || {};
+  const { domain = "", limit = 100, locationCode = 2840, languageCode = "en" } = req.body || {};
+  const creds = extractDfsCredentials(req);
   if (!domain) {
     return res.status(400).json({ error: "domain is required." });
   }
   try {
-    const backlinks = await fetchBacklinks(cleanDomain(domain), Math.min(limit, 200));
+    const backlinks = await fetchBacklinks(cleanDomain(domain), Math.min(limit, 200), locationCode, languageCode, creds);
     res.json({ backlinks, source: "dataforseo" });
   } catch (err: unknown) {
     const message = redactSecrets(err instanceof Error ? err.message : String(err));
@@ -2269,15 +3092,16 @@ app.post("/api/seo/backlinks", async (req, res) => {
 });
 
 app.post("/api/seo/page-speed", async (req, res) => {
-  if (!HAS_DFSEO) {
-    return res.status(503).json({ error: "DataForSEO credentials not configured on server." });
+  if (!hasDfsAccess(req)) {
+    return res.status(503).json({ error: "DataForSEO credentials not configured. Add them in Settings." });
   }
   const { url = "" } = req.body || {};
+  const creds = extractDfsCredentials(req);
   if (!url) {
     return res.status(400).json({ error: "url is required." });
   }
   try {
-    const data = await fetchPageSpeed(url);
+    const data = await fetchPageSpeed(url, creds);
     res.json({ lighthouse: data, source: "dataforseo" });
   } catch (err: unknown) {
     const message = redactSecrets(err instanceof Error ? err.message : String(err));
@@ -2287,15 +3111,20 @@ app.post("/api/seo/page-speed", async (req, res) => {
 
 // Full bundle: SERP + Keywords + Backlinks + PageSpeed in one call
 app.post("/api/seo/full-bundle", async (req, res) => {
-  if (!HAS_DFSEO) {
-    return res.status(503).json({ error: "DataForSEO credentials not configured on server." });
+  if (!hasDfsAccess(req)) {
+    return res.status(503).json({ error: "DataForSEO credentials not configured. Add them in Settings." });
   }
-  const { domain = "", seedKeywords = [] } = req.body || {};
+  const { domain = "", seedKeywords = [], locationCode, languageCode } = req.body || {};
+  const creds = extractDfsCredentials(req);
   if (!domain) {
     return res.status(400).json({ error: "domain is required." });
   }
   try {
-    const bundle = await fetchFullBundle(cleanDomain(domain), seedKeywords);
+    const bundle = await fetchFullBundle(cleanDomain(domain), seedKeywords, {
+      credentials: creds,
+      locationCode,
+      languageCode,
+    });
     res.json({ ...bundle, source: "dataforseo" });
   } catch (err: unknown) {
     const message = redactSecrets(err instanceof Error ? err.message : String(err));

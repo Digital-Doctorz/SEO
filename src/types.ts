@@ -152,6 +152,8 @@ export interface AnalysisResult {
   rankingBlueprint?: RankingBlueprint;
   /** "dataforseo" | "dataforseo+ai" | "ai" | "simulated" */
   dataSource?: string;
+  /** Estimated cost of the DataForSEO query (USD) */
+  estimatedCost?: { amount: number; currency: string };
   pageSpeed?: {
     performance: number;
     accessibility: number;

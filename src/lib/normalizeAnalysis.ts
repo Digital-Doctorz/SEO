@@ -231,19 +231,20 @@ export function normalizeAnalysisResult(raw: unknown, fallbackTarget = "example.
     ...sanitized,
     target,
     competitor,
-    keywords: normalizeKeywords(sanitized.keywords),
+    keywords: normalizeKeywords(sanitized.keywords).slice(0, 15),
     contentGaps: normalizeContentGaps(sanitized.contentGaps),
     serpFeatures: normalizeSerpFeatures(sanitized.serpFeatures),
     backlinkSources: normalizeBacklinkSources(sanitized.backlinkSources, target.domain),
     backlinkOpportunities: normalizeBacklinkOpportunities(sanitized.backlinkOpportunities),
     discoveredCompetitors: Array.isArray(sanitized.discoveredCompetitors)
-      ? sanitized.discoveredCompetitors
+      ? sanitized.discoveredCompetitors.slice(0, 15)
       : [],
     targetAnalysis: sanitized.targetAnalysis,
     autonomousBlog: sanitized.autonomousBlog,
     localLocation: sanitized.localLocation,
     rankingBlueprint: sanitized.rankingBlueprint,
     dataSource: str(sanitized.dataSource, "simulated"),
+    estimatedCost: sanitized.estimatedCost as AnalysisResult["estimatedCost"],
     pageSpeed: sanitized.pageSpeed,
   } as AnalysisResult;
 }

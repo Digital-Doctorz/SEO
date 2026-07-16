@@ -33,24 +33,25 @@ interface BacklinkProfile {
   }>;
 }
 
-function auth(): { Authorization: string } {
-  const login = process.env.DATAFORSEO_LOGIN ?? "";
-  const password = process.env.DATAFORSEO_PASSWORD ?? "";
+function auth(credentials?: { login: string; password: string }): { Authorization: string } {
+  const login = credentials?.login || (process.env.DATAFORSEO_LOGIN ?? "");
+  const password = credentials?.password || (process.env.DATAFORSEO_PASSWORD ?? "");
+  if (!login || !password) throw new Error("DataForSEO credentials not configured");
   const token = Buffer.from(`${login}:${password}`).toString("base64");
   return { Authorization: `Basic ${token}` };
 }
 
-function headers(): Record<string, string> {
+function headers(credentials?: { login: string; password: string }): Record<string, string> {
   return {
-    ...auth(),
+    ...auth(credentials),
     "Content-Type": "application/json",
   };
 }
 
-async function post<T>(endpoint: string, body: unknown[]): Promise<T> {
+async function post<T>(endpoint: string, body: unknown[], credentials?: { login: string; password: string }): Promise<T> {
   const res = await fetch(`${BASE}${endpoint}`, {
     method: "POST",
-    headers: headers(),
+    headers: headers(credentials),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -140,62 +141,62 @@ interface DfBacklinkItem {
 
 // ── SERP ──
 
-export async function fetchSerp(keyword: string, locationCode = 2840): Promise<DfSerpItem[]> {
+export async function fetchSerp(keyword: string, locationCode = 2840, languageCode = "en", credentials?: { login: string; password: string }): Promise<DfSerpItem[]> {
   const result = await post<DfSerpResult>("/serp/google/organic/live/advanced", [
     {
       keyword,
       location_code: locationCode,
-      language_code: "en",
+      language_code: languageCode,
       device: "desktop",
       os: "windows",
       depth: 10,
     },
-  ]);
+  ], credentials);
   return result.items ?? result.search_dataframe ?? [];
 }
 
 // ── Keyword Volume ──
 
-export async function fetchKeywordVolumes(keywords: string[], locationCode = 2840): Promise<DfKeywordData[]> {
+export async function fetchKeywordVolumes(keywords: string[], locationCode = 2840, languageCode = "en", credentials?: { login: string; password: string }): Promise<DfKeywordData[]> {
   if (keywords.length === 0) return [];
   const tasks = keywords.map((kw) => ({
     keyword: kw,
     location_code: locationCode,
-    language_code: "en",
+    language_code: languageCode,
   }));
-  const result = await post<DfKeywordsResult>("/keywords_data/google/keywords/search_volume", tasks);
+  const result = await post<DfKeywordsResult>("/keywords_data/google/keywords/search_volume", tasks, credentials);
   return result.keywords ?? [];
 }
 
 // ── Domain Overview ──
 
-export async function fetchDomainOverview(domain: string): Promise<DfDomainBacklinksResult> {
+export async function fetchDomainOverview(domain: string, locationCode = 2840, languageCode = "en", credentials?: { login: string; password: string }): Promise<DfDomainBacklinksResult> {
   return post<DfDomainBacklinksResult>("/backlinks/domain/overview", [
     {
       target: domain,
-      location_code: 2840,
-      language_code: "en",
+      location_code: locationCode,
+      language_code: languageCode,
     },
-  ]);
+  ], credentials);
 }
 
 // ── Backlinks ──
 
-export async function fetchBacklinks(domain: string, limit = 100): Promise<DfBacklinkItem[]> {
+export async function fetchBacklinks(domain: string, limit = 100, locationCode = 2840, languageCode = "en", credentials?: { login: string; password: string }): Promise<DfBacklinkItem[]> {
   const result = await post<{ backlinks?: DfBacklinkItem[] }>("/backlinks/domain/backlinks", [
     {
       target: domain,
       limit,
-      location_code: 2840,
-      language_code: "en",
+      location_code: locationCode,
+      language_code: languageCode,
     },
-  ]);
+  ], credentials);
   return result.backlinks ?? [];
 }
 
 // ── Lighthouse / PageSpeed ──
 
-export async function fetchPageSpeed(url: string): Promise<DfDomainPageSpeedResult["lighthouse_result"]> {
+export async function fetchPageSpeed(url: string, credentials?: { login: string; password: string }): Promise<DfDomainPageSpeedResult["lighthouse_result"]> {
   const result = await post<DfDomainPageSpeedResult>("/page_speed/google/lighthouse/summary", [
     {
       target: url,
@@ -204,7 +205,7 @@ export async function fetchPageSpeed(url: string): Promise<DfDomainPageSpeedResu
         locale: "en",
       },
     },
-  ]);
+  ], credentials);
   return result.lighthouse_result;
 }
 
@@ -280,21 +281,51 @@ export interface DataForSeoBundle {
   rawSerpItems: DfSerpItem[];
   rawBacklinkItems: DfBacklinkItem[];
   rawKeywordData: DfKeywordData[];
+  estimatedCost: { amount: number; currency: string };
+}
+
+export interface DataForSeoOptions {
+  credentials?: { login: string; password: string };
+  locationCode?: number;
+  languageCode?: string;
+}
+
+// Approximate cost per DataForSEO operation (USD)
+const COST = {
+  serpQuery: 0.002,
+  keywordLookup: 0.0006,
+  domainOverview: 0.005,
+  backlinksFetch: 0.005,
+  pageSpeedFetch: 0.01,
+} as const;
+
+export function estimateCost(keywordCount: number): { amount: number; currency: string } {
+  const amount =
+    COST.serpQuery +
+    keywordCount * COST.keywordLookup +
+    COST.domainOverview +
+    COST.backlinksFetch +
+    COST.pageSpeedFetch;
+  return { amount: Math.round(amount * 10000) / 10000, currency: "USD" };
 }
 
 export async function fetchFullBundle(
   domain: string,
   seedKeywords: string[],
+  options?: DataForSeoOptions,
 ): Promise<DataForSeoBundle> {
+  const creds = options?.credentials;
+  const loc = options?.locationCode ?? 2840;
+  const lang = options?.languageCode ?? "en";
   const primaryKeyword = seedKeywords[0] ?? domain.replace(/\.(com|in|org|net|co\.in)$/, "").replace(/-/g, " ");
 
   // Run independent queries in parallel
   const [serpItems, domainOverview, backlinks, pageSpeed, ...keywordResults] = await Promise.all([
-    fetchSerp(primaryKeyword).catch(() => [] as DfSerpItem[]),
-    fetchDomainOverview(domain).catch(() => ({} as DfDomainBacklinksResult)),
-    fetchBacklinks(domain, 200).catch(() => [] as DfBacklinkItem[]),
-    fetchPageSpeed(`https://${domain}`).catch(() => undefined),
-    ...seedKeywords.slice(0, 20).map((kw) => fetchKeywordVolumes([kw]).catch(() => [] as DfKeywordData[])),
+    fetchSerp(primaryKeyword, loc, lang, creds).catch(() => [] as DfSerpItem[]),
+    fetchDomainOverview(domain, loc, lang, creds).catch(() => ({} as DfDomainBacklinksResult)),
+    fetchBacklinks(domain, 200, loc, lang, creds).catch(() => [] as DfBacklinkItem[]),
+    fetchPageSpeed(`https://${domain}`, creds).catch(() => undefined),
+    ...seedKeywords.slice(0, 20).map((kw) => fetchKeywordVolumes([kw], loc, lang, creds).catch(() => [] as DfKeywordData[])),
   ]);
 
   // Aggregate keyword data from individual calls
@@ -306,7 +337,7 @@ export async function fetchFullBundle(
 
   let extraKeywordData: DfKeywordData[] = [];
   if (extraKeywords.length > 0) {
-    extraKeywordData = await fetchKeywordVolumes(extraKeywords).catch(() => []);
+    extraKeywordData = await fetchKeywordVolumes(extraKeywords, loc, lang, creds).catch(() => []);
   }
 
   const combinedKeywordData = [...allKeywordData, ...extraKeywordData];
@@ -321,6 +352,8 @@ export async function fetchFullBundle(
     opportunity: (kd.search_volume ?? 0) > 100 && (kd.competition ?? 0) < 0.5 ? "high" as const : "medium" as const,
   }));
 
+  const estimatedCost = estimateCost(combinedKeywordData.length);
+
   return {
     serp: mapSerpToSerpAnalysis(serpItems),
     keywordLandscape,
@@ -329,5 +362,6 @@ export async function fetchFullBundle(
     rawSerpItems: serpItems,
     rawBacklinkItems: backlinks,
     rawKeywordData: combinedKeywordData,
+    estimatedCost,
   };
 }

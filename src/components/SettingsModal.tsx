@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { X, Key, Shield, CheckCircle2, ExternalLink, Network, Puzzle, Cpu } from "lucide-react";
+import { X, Key, Shield, CheckCircle2, ExternalLink, Network, Puzzle, Cpu, Database } from "lucide-react";
 import { AiProviderConfig } from "../types";
 
 interface SettingsModalProps {
@@ -51,6 +51,9 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
   const [customFormat, setCustomFormat] = useState(currentConfig.customFormat);
   const [saved, setSaved] = useState(false);
   const [showKey, setShowKey] = useState(false);
+  const [dataforseoLogin, setDataforseoLogin] = useState(currentConfig.dataforseoLogin ?? "");
+  const [dataforseoPassword, setDataforseoPassword] = useState(currentConfig.dataforseoPassword ?? "");
+  const [showDfsKey, setShowDfsKey] = useState(false);
 
   useEffect(() => {
     setApiKey(currentConfig.apiKey);
@@ -58,6 +61,8 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
     setApiEndpoint(currentConfig.apiEndpoint);
     setApiModel(currentConfig.apiModel);
     setCustomFormat(currentConfig.customFormat);
+    setDataforseoLogin(currentConfig.dataforseoLogin ?? "");
+    setDataforseoPassword(currentConfig.dataforseoPassword ?? "");
   }, [currentConfig, open]);
 
   const handleProviderChange = (newProvider: "gemini" | "openrouter" | "custom") => {
@@ -72,12 +77,16 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
 
   const handleSave = () => {
     localStorage.setItem(`seo_api_key_${provider}`, apiKey.trim());
+    if (dataforseoLogin.trim()) localStorage.setItem("seo_dataforseo_login", dataforseoLogin.trim());
+    if (dataforseoPassword.trim()) localStorage.setItem("seo_dataforseo_password", dataforseoPassword.trim());
     onSave({
       apiKey: apiKey.trim(),
       provider,
       apiEndpoint: apiEndpoint.trim(),
       apiModel: apiModel.trim(),
-      customFormat
+      customFormat,
+      dataforseoLogin: dataforseoLogin.trim() || undefined,
+      dataforseoPassword: dataforseoPassword.trim() || undefined,
     });
     setSaved(true);
     setTimeout(() => {
@@ -88,13 +97,19 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
 
   const handleClear = () => {
     localStorage.setItem(`seo_api_key_${provider}`, "");
+    localStorage.removeItem("seo_dataforseo_login");
+    localStorage.removeItem("seo_dataforseo_password");
     setApiKey("");
+    setDataforseoLogin("");
+    setDataforseoPassword("");
     onSave({
       apiKey: "",
       provider,
       apiEndpoint: PROVIDER_META[provider].defaultEndpoint,
       apiModel: PROVIDER_META[provider].defaultModel,
-      customFormat
+      customFormat,
+      dataforseoLogin: undefined,
+      dataforseoPassword: undefined,
     });
     setSaved(true);
     setTimeout(() => {
@@ -254,6 +269,68 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
                     {meta.keyUrlLabel} <ExternalLink className="h-3 w-3" />
                   </a>
                 )}
+              </div>
+
+              {/* Divider */}
+              <div className="border-t border-slate-100" />
+
+              {/* DataForSEO Section */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg">
+                    <Database className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-800">Live SEO Data</h3>
+                    <p className="text-[10px] text-slate-400 font-medium">Optional — for real search volumes &amp; backlinks</p>
+                  </div>
+                </div>
+
+                <div className="bg-emerald-50/60 rounded-xl p-3 border border-emerald-100 flex items-start gap-2.5">
+                  <Shield className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
+                  <div className="text-[11px] text-slate-600 leading-relaxed">
+                    <strong className="text-slate-800">Free signup, no credit card.</strong> Get real search volumes, backlink data, and rankings. Free $1 test credit included (~500 queries). After that, ~$0.03 per analysis.
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">DataForSEO Login</label>
+                  <input
+                    type="text"
+                    value={dataforseoLogin}
+                    onChange={(e) => setDataforseoLogin(e.target.value)}
+                    placeholder="your@email.com"
+                    className="w-full px-4 py-2.5 text-sm border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 font-mono transition-all"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">DataForSEO Password</label>
+                  <div className="relative">
+                    <input
+                      type={showDfsKey ? "text" : "password"}
+                      value={dataforseoPassword}
+                      onChange={(e) => setDataforseoPassword(e.target.value)}
+                      placeholder="Auto-generated API password"
+                      className="w-full px-4 py-2.5 pr-20 text-sm border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 font-mono transition-all"
+                    />
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex gap-1">
+                      <button
+                        onClick={() => setShowDfsKey(!showDfsKey)}
+                        className="px-2 py-1 text-[10px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer"
+                      >
+                        {showDfsKey ? "Hide" : "Show"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-slate-400 font-medium flex items-center gap-1 flex-wrap">
+                  <span>Don't have an account?</span>
+                  <a href="https://app.dataforseo.com/register" target="_blank" rel="noopener noreferrer" className="text-emerald-600 hover:underline inline-flex items-center gap-0.5">
+                    Sign up free at DataForSEO <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
               </div>
             </div>
 

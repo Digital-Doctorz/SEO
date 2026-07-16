@@ -4,7 +4,7 @@ import {
   Search, Globe, TrendingUp, Link, BarChart2, Calendar, 
   Sparkles, ArrowRight, AlertCircle, 
   ChevronRight, Zap, RefreshCw, Menu, X,
-  Stethoscope, Settings
+  Stethoscope, Settings, Database, ExternalLink
 } from "lucide-react";
 
 import { AnalysisResult, AiProviderConfig } from "./types";
@@ -12,6 +12,7 @@ import SettingsModal from "./components/SettingsModal";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { postApi } from "./lib/api";
 import { normalizeAnalysisResult } from "./lib/normalizeAnalysis";
+import { detectLocationFromDomain } from "./lib/geo";
 const DashboardOverview = lazy(() => import("./components/DashboardOverview"));
 const KeywordLandscape = lazy(() => import("./components/KeywordLandscape"));
 const ContentGapAnalysis = lazy(() => import("./components/ContentGapAnalysis"));
@@ -64,12 +65,16 @@ export default function App() {
     if (storedKey && !localStorage.getItem(`seo_api_key_${storedProvider}`)) {
       localStorage.setItem(`seo_api_key_${storedProvider}`, storedKey);
     }
+    const dfsLogin = localStorage.getItem("seo_dataforseo_login") || undefined;
+    const dfsPassword = localStorage.getItem("seo_dataforseo_password") || undefined;
     setAiConfig({
       apiKey: storedKey,
       provider: storedProvider,
       apiEndpoint: localStorage.getItem("seo_api_endpoint") || defaults.endpoint,
       apiModel: localStorage.getItem("seo_api_model") || defaults.model,
       customFormat: (localStorage.getItem("seo_api_custom_format") as AiProviderConfig["customFormat"]) || "openai",
+      dataforseoLogin: dfsLogin,
+      dataforseoPassword: dfsPassword,
     });
     setAiConfigLoaded(true);
   }, []);
@@ -82,6 +87,10 @@ export default function App() {
     localStorage.setItem("seo_api_endpoint", config.apiEndpoint);
     localStorage.setItem("seo_api_model", config.apiModel);
     localStorage.setItem("seo_api_custom_format", config.customFormat);
+    if (config.dataforseoLogin) localStorage.setItem("seo_dataforseo_login", config.dataforseoLogin);
+    else localStorage.removeItem("seo_dataforseo_login");
+    if (config.dataforseoPassword) localStorage.setItem("seo_dataforseo_password", config.dataforseoPassword);
+    else localStorage.removeItem("seo_dataforseo_password");
   };
 
   // Content Hub Inter-tab Communication state
@@ -102,6 +111,14 @@ export default function App() {
     setErrorMsg("");
     setAnalysisResult(null);
 
+    // Auto-detect location from target domain TLD
+    const geo = detectLocationFromDomain(target);
+    const configWithGeo: AiProviderConfig = {
+      ...aiConfig,
+      locationCode: geo.locationCode,
+      languageCode: geo.languageCode,
+    };
+
     try {
       const data = await postApi<AnalysisResult & {
         isFallback?: boolean;
@@ -109,10 +126,11 @@ export default function App() {
         error?: string;
         errorMsg?: string;
         fallbackReason?: string;
+        estimatedCost?: { amount: number; currency: string };
       }>("/api/analyze", {
         targetUrl: target,
         competitorUrl: competitor || undefined,
-        aiConfig,
+        aiConfig: configWithGeo,
       });
 
       const meta = data as AnalysisResult & {
@@ -526,6 +544,28 @@ export default function App() {
                       {analysisResult.dataSource === "dataforseo+ai" && (
                         <span className="text-slate-500">+ AI enrichment</span>
                       )}
+                      {analysisResult.estimatedCost && (
+                        <span className="text-slate-500 ml-1">~${analysisResult.estimatedCost.amount.toFixed(4)} query cost</span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Connect DataForSEO nudge banner */}
+                  {analysisResult.dataSource !== "dataforseo" && analysisResult.dataSource !== "dataforseo+ai" && !aiConfig.dataforseoLogin && (
+                    <div className="mb-3 p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <Database className="h-4 w-4 text-emerald-600 shrink-0" />
+                        <div className="text-xs">
+                          <strong className="text-emerald-800">Get real search data.</strong>{" "}
+                          <span className="text-emerald-700">Connect DataForSEO in Settings for live search volumes, backlinks &amp; rankings. Free signup, no card needed.</span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setSettingsModalOpen(true)}
+                        className="shrink-0 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap"
+                      >
+                        Connect
+                      </button>
                     </div>
                   )}
                   <div className={activeTab === "overview" ? "block" : "hidden"}>
