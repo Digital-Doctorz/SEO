@@ -64,6 +64,16 @@ export async function generateBlogPost(params: {
   previousContent?: string;
   previousOutline?: string[];
   enhanceMode?: boolean;
+  /** Live SEO analysis: keywords, gaps, competitors, niche — master prompt ground truth */
+  analysisContext?: {
+    keywords?: string[];
+    contentGaps?: Array<{ topic?: string; keyword?: string; opportunity?: string }>;
+    competitors?: string[];
+    niche?: string;
+    audience?: string;
+    strengths?: string[];
+    weaknesses?: string[];
+  };
 }): Promise<
   BlogPost & {
     isFallback?: boolean;
@@ -71,6 +81,7 @@ export async function generateBlogPost(params: {
     errorMsg?: string;
     strategyId?: string;
     enhanceMode?: boolean;
+    masterPromptApplied?: boolean;
   }
 > {
   const variationSeed =
@@ -83,6 +94,7 @@ export async function generateBlogPost(params: {
       errorMsg?: string;
       strategyId?: string;
       enhanceMode?: boolean;
+      masterPromptApplied?: boolean;
     }
   >("/api/generate-blog", {
     topic: params.topic,
@@ -100,6 +112,7 @@ export async function generateBlogPost(params: {
     previousContent: params.previousContent || "",
     previousOutline: params.previousOutline || [],
     enhanceMode: Boolean(params.enhanceMode),
+    analysisContext: params.analysisContext || null,
   });
   return sanitizeDeep(data);
 }

@@ -649,6 +649,32 @@ export default function App() {
                       autonomousBlog={analysisResult.autonomousBlog}
                       targetPages={analysisResult.target.topPages}
                       aiConfig={aiConfig}
+                      analysisContext={{
+                        keywords: (analysisResult.keywords || [])
+                          .map((k) => k.keyword)
+                          .filter(Boolean)
+                          .slice(0, 20),
+                        contentGaps: (analysisResult.contentGaps || [])
+                          .slice(0, 10)
+                          .map((g) => ({
+                            topic: g.recommendedTopic,
+                            keyword: g.competitorKeyword,
+                            opportunity: g.isQuickWin
+                              ? "Quick win content gap"
+                              : `${g.recommendedType || "content"} opportunity`,
+                          })),
+                        competitors: [
+                          analysisResult.competitor?.domain,
+                          ...((analysisResult.discoveredCompetitors || []).map((c) => c.domain) ||
+                            []),
+                        ]
+                          .filter(Boolean)
+                          .slice(0, 15) as string[],
+                        niche: analysisResult.targetAnalysis?.coreNiche,
+                        audience: analysisResult.targetAnalysis?.audiencePersona,
+                        strengths: analysisResult.targetAnalysis?.contentStrengths,
+                        weaknesses: analysisResult.targetAnalysis?.contentWeaknesses,
+                      }}
                     />
                     </Suspense>
                     </ErrorBoundary>

@@ -27,6 +27,17 @@ export interface SavedArticle {
   customLabel?: string;
 }
 
+/** Live SEO analysis snapshot passed into blog generation so articles stay on-niche. */
+export interface BlogAnalysisContext {
+  keywords?: string[];
+  contentGaps?: Array<{ topic?: string; keyword?: string; opportunity?: string }>;
+  competitors?: string[];
+  niche?: string;
+  audience?: string;
+  strengths?: string[];
+  weaknesses?: string[];
+}
+
 export interface ContentHubProps {
   initialKeyword?: string;
   initialTopic?: string;
@@ -34,6 +45,8 @@ export interface ContentHubProps {
   autonomousBlog?: BlogPost;
   targetPages?: PageMetric[];
   aiConfig?: AiProviderConfig;
+  /** Real-time analysis (keywords, gaps, competitors, niche) for master-prompt blog gen */
+  analysisContext?: BlogAnalysisContext;
 }
 
 export type { SocialPost, BlogPost, PageMetric, AiProviderConfig };
