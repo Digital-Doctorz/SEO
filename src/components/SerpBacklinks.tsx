@@ -34,15 +34,18 @@ interface SerpBacklinksProps {
 }
 
 export default function SerpBacklinks({ 
-  serpFeatures, 
-  backlinkSources, 
-  backlinkOpportunities, 
+  serpFeatures: serpFeaturesProp, 
+  backlinkSources: backlinkSourcesProp, 
+  backlinkOpportunities: backlinkOpportunitiesProp, 
   targetDomain,
   targetRating,
   competitorDomain,
   competitorRating,
   discoveredCompetitors
 }: SerpBacklinksProps) {
+  const serpFeatures = Array.isArray(serpFeaturesProp) ? serpFeaturesProp : [];
+  const backlinkSources = Array.isArray(backlinkSourcesProp) ? backlinkSourcesProp : [];
+  const backlinkOpportunities = Array.isArray(backlinkOpportunitiesProp) ? backlinkOpportunitiesProp : [];
   const [activeSubTab, setActiveSubTab] = useState<"serp" | "backlinks">("serp");
 
   const getSerpIcon = (type: string) => {

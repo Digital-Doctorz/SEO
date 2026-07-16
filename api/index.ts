@@ -3,9 +3,20 @@ import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
+import {
+  fetchSerp,
+  fetchKeywordVolumes,
+  fetchDomainOverview,
+  fetchBacklinks,
+  fetchPageSpeed,
+  fetchFullBundle,
+  type DataForSeoBundle,
+} from "./lib/dataforseo";
 
 dotenv.config();
 dotenv.config({ path: ".env.local", override: true });
+
+const HAS_DFSEO = Boolean(process.env.DATAFORSEO_LOGIN && process.env.DATAFORSEO_PASSWORD);
 
 function cleanDomain(url: string): string {
  let domain = url.trim();
@@ -216,6 +227,78 @@ function buildArticleSchema(opts: {
  });
  }
  return JSON.stringify({ "@context": "https://schema.org", "@graph": graph }, null, 2);
+}
+
+/**
+ * Ensure every content-gap row has the full UI schema.
+ * AI often returns partial objects (missing volume/rank) which crash the Gaps tab.
+ */
+function normalizeContentGaps(raw: unknown, fallbackKeywords: string[] = []): any[] {
+ const source = Array.isArray(raw) ? raw : [];
+ const items = source.length > 0
+ ? source
+ : fallbackKeywords.slice(0, 6).map((kw, i) => ({
+ competitorKeyword: kw,
+ recommendedTopic: `Complete Guide to ${String(kw).charAt(0).toUpperCase()}${String(kw).slice(1)}`,
+ difficultyCategory: i < 2 ? "Easy" : i < 4 ? "Medium" : "Hard",
+ isQuickWin: i < 3,
+ }));
+
+ return items
+ .map((g: any, i: number) => {
+ if (!g || typeof g !== "object") return null;
+ const keyword = sanitizeText(
+ g.competitorKeyword || g.keyword || g.query || fallbackKeywords[i] || `opportunity ${i + 1}`
+ );
+ if (!keyword) return null;
+
+ const difficultyRaw = Number(g.competitorDifficulty ?? g.difficulty ?? g.kd ?? 25 + (i % 5) * 10);
+ const difficulty = Math.max(1, Math.min(100, Number.isFinite(difficultyRaw) ? Math.round(difficultyRaw) : 30));
+
+ let difficultyCategory = sanitizeText(g.difficultyCategory || g.difficulty_category || "");
+ if (!["Easy", "Medium", "Hard"].includes(difficultyCategory)) {
+ difficultyCategory = difficulty < 30 ? "Easy" : difficulty < 55 ? "Medium" : "Hard";
+ }
+
+ const volumeRaw = Number(g.competitorVolume ?? g.volume ?? g.searchVolume ?? 1200 - i * 100);
+ const volume = Math.max(50, Number.isFinite(volumeRaw) ? Math.round(volumeRaw) : 500);
+
+ const rankRaw = Number(g.competitorRank ?? g.rank ?? g.position ?? 3 + (i % 7));
+ const competitorRank = Math.max(1, Math.min(100, Number.isFinite(rankRaw) ? Math.round(rankRaw) : 5));
+
+ let targetRank: number | "Not Ranking" = "Not Ranking";
+ if (g.targetRank === "Not Ranking" || g.targetRank === "unranked" || g.target_rank === "Not Ranking") {
+ targetRank = "Not Ranking";
+ } else if (g.targetRank != null && g.targetRank !== "") {
+ const tr = Number(g.targetRank);
+ targetRank = Number.isFinite(tr) ? Math.round(tr) : "Not Ranking";
+ } else if (i % 3 !== 0) {
+ targetRank = 15 + i * 4;
+ }
+
+ const recommendedTopic = sanitizeText(
+ g.recommendedTopic || g.topic || g.recommended_topic || `Complete Guide to ${keyword}`
+ );
+ const recommendedType = sanitizeText(
+ g.recommendedType || g.contentType || g.recommended_type || (i % 2 === 0 ? "Pillar Blog Post" : "Comparison Guide")
+ );
+ const isQuickWin = Boolean(
+ g.isQuickWin ?? g.quickWin ?? g.is_quick_win ?? (difficulty < 35 && i < 4)
+ );
+
+ return {
+ competitorKeyword: keyword,
+ competitorRank,
+ competitorVolume: volume,
+ competitorDifficulty: difficulty,
+ targetRank,
+ recommendedTopic: recommendedTopic || `Guide to ${keyword}`,
+ recommendedType: recommendedType || "Pillar Blog Post",
+ difficultyCategory,
+ isQuickWin,
+ };
+ })
+ .filter(Boolean);
 }
 
 /** Assemble full markdown from sectioned AI payload (more reliable than one giant string). */
@@ -1218,21 +1301,22 @@ async function generateFallbackData(targetRaw: string, competitorRaw?: string) {
  }));
 
  // Populate tabs that were previously empty in fallback mode
- const contentGaps = nicheKeywords.slice(0, 6).map((kw, i) => {
+ const contentGaps = normalizeContentGaps(
+ nicheKeywords.slice(0, 8).map((kw, i) => {
  const difficulty = Math.min(75, 18 + i * 9);
- const difficultyCategory = (difficulty < 30 ? "Easy" : difficulty < 55 ? "Medium" : "Hard") as "Easy" | "Medium" | "Hard";
  return {
  competitorKeyword: kw,
  competitorRank: 3 + (i % 7),
  competitorVolume: 900 - i * 90,
  competitorDifficulty: difficulty,
- targetRank: (i % 3 === 0 ? "Not Ranking" : 15 + i * 4) as number | "Not Ranking",
+ targetRank: i % 3 === 0 ? "Not Ranking" : 15 + i * 4,
  recommendedTopic: `Complete Guide to ${kw.charAt(0).toUpperCase() + kw.slice(1)}`,
  recommendedType: i % 2 === 0 ? "Pillar Blog Post" : "Comparison Guide",
- difficultyCategory,
+ difficultyCategory: difficulty < 30 ? "Easy" : difficulty < 55 ? "Medium" : "Hard",
  isQuickWin: difficulty < 35 && i < 4,
  };
- });
+ })
+ );
 
  const serpFeatures = [
  {
@@ -1397,93 +1481,224 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.post("/api/analyze", async (req, res) => {
- const domain = resolveDomain(req.body);
- const competitorUrl = req.body?.competitorUrl as string | undefined;
- if (!domain || domain === "target-website.com") {
- return res.status(400).json({ error: "Target URL is required." });
- }
+  const domain = resolveDomain(req.body);
+  const competitorUrl = req.body?.competitorUrl as string | undefined;
+  if (!domain || domain === "target-website.com") {
+    return res.status(400).json({ error: "Target URL is required." });
+  }
 
- // Fast path: always build structured baseline immediately (no network AI)
- const base = await generateFallbackData(domain, competitorUrl);
- const providerConfig = getProviderConfig(req);
+  // Fast path: always build structured baseline immediately (no network AI)
+  const base = await generateFallbackData(domain, competitorUrl);
 
- if (!providerConfig) {
- return res.json(
- sanitizeDeep({
- ...base,
- isFallback: true,
- needsApiKey: true,
- fallbackReason:
- "Demo data only. Open Settings and add your own AI API key for live analysis. No shared keys are stored on this server.",
- })
- );
- }
+  // ── DataForSEO real data enrichment (server-side key, no BYOK) ──
+  let dfseoData: DataForSeoBundle | null = null;
+  if (HAS_DFSEO) {
+    try {
+      const seedKws = (base.keywords ?? []).slice(0, 5).map((k: { keyword: string }) => k.keyword);
+      if (seedKws.length === 0) seedKws.push(domain.split(".")[0].replace(/-/g, " "));
+      dfseoData = await withTimeout(fetchFullBundle(domain, seedKws), 20000, "DataForSEO bundle");
+      console.log(`[DataForSEO] Fetched real data for ${domain}: ${dfseoData.rawSerpItems.length} SERP items, ${dfseoData.keywordLandscape.length} keywords, ${dfseoData.backlinks.total_backlinks} backlinks`);
+    } catch (err: unknown) {
+      console.error("[DataForSEO] Bundle fetch failed, falling back to AI/simulated data:", err instanceof Error ? err.message : err);
+      dfseoData = null;
+    }
+  }
 
- // Live AI enrichment — short timeout, NO googleSearch (slow). Prefer flash-lite for speed.
- try {
- const prompt = `Compact JSON SEO analysis for "${domain}"${competitorUrl ? ` vs "${cleanDomain(competitorUrl)}"` : ""}.
-Short arrays only: keywords(5), contentGaps(4), serpFeatures(3), discoveredCompetitors(4), backlinkSources(3), backlinkOpportunities(2).
-Include: target{domain,domainRating,backlinksCount,referringDomains,organicTraffic,organicKeywords,publishingFrequency,topPages[{url,title,estTraffic,keywordsCount}]}, competitor or null, targetAnalysis{coreNiche,audiencePersona,contentStrengths[],contentWeaknesses[],detailedBreakdown}, keywords[{keyword,volume,difficulty,cpc,intent,type,opportunityScore}], contentGaps[{competitorKeyword,recommendedTopic,difficultyCategory,isQuickWin}], rankingBlueprint{summary,priorityActions[{action,impact,effort,timeframe}],timelineEstimate}.
+  const providerConfig = getProviderConfig(req);
+
+  // ── No AI key AND no DataForSEO → demo fallback ──
+  if (!providerConfig && !dfseoData) {
+    return res.json(
+      sanitizeDeep({
+        ...base,
+        contentGaps: normalizeContentGaps(base.contentGaps),
+        isFallback: true,
+        needsApiKey: true,
+        dataSource: "simulated",
+        fallbackReason:
+          "Demo data only. Open Settings and add your own AI API key, or configure DataForSEO credentials for real SEO data.",
+      })
+    );
+  }
+
+  // ── DataForSEO available (with or without AI key) ──
+  if (dfseoData) {
+    // Merge real data into base
+    const enriched = {
+      ...base,
+      // Real keyword landscape
+      keywords: dfseoData.keywordLandscape.length > 0
+        ? dfseoData.keywordLandscape.map((kw) => ({
+            keyword: kw.keyword,
+            volume: kw.volume,
+            difficulty: kw.difficulty,
+            cpc: kw.cpc,
+            trend: kw.trend,
+            intent: kw.volume > 1000 ? "informational" : "navigational",
+            type: "organic",
+            opportunityScore: kw.opportunity === "high" ? 85 : 62,
+          }))
+        : base.keywords,
+      // Real SERP data
+      serpFeatures: dfseoData.serp.organic.length > 0
+        ? dfseoData.serp.organic.slice(0, 10).map((r) => ({
+            type: "organic",
+            position: r.position,
+            title: r.title,
+            url: r.url,
+            domain: r.domain,
+            snippet: r.snippet,
+          }))
+        : base.serpFeatures,
+      // Real backlinks
+      backlinkSources: dfseoData.backlinks.top_referring_domains.length > 0
+        ? dfseoData.backlinks.top_referring_domains.slice(0, 5).map((b) => ({
+            domain: b.source_domain,
+            url: b.source_url,
+            dr: b.domain_rating,
+            anchor: b.anchor,
+          }))
+        : base.backlinkSources,
+      // Update target with real metrics
+      target: {
+        ...base.target,
+        domainRating: dfseoData.backlinks.domain_rating || base.target?.domainRating,
+        backlinksCount: dfseoData.backlinks.total_backlinks || base.target?.backlinksCount,
+        referringDomains: dfseoData.backlinks.referring_domains || base.target?.referringDomains,
+      },
+      // Page speed data if available
+      pageSpeed: dfseoData.pageSpeed,
+      // Metadata
+      dataSource: "dataforseo",
+      isFallback: false,
+    };
+
+    // If AI key is also available, let AI enrich with gaps/blueprint on top of real data
+    if (providerConfig) {
+      try {
+        const prompt = `Quick SEO enrichment for "${domain}" using real DataForSEO data.
+Real metrics: ${JSON.stringify({
+          backlinks: dfseoData.backlinks.total_backlinks,
+          referringDomains: dfseoData.backlinks.referring_domains,
+          domainRating: dfseoData.backlinks.domain_rating,
+          topKeywords: dfseoData.keywordLandscape.slice(0, 5).map((k) => k.keyword),
+          serpTop3: dfseoData.serp.organic.slice(0, 3).map((r) => r.title),
+        })}.
+Return compact JSON: { contentGaps[{competitorKeyword,competitorRank,competitorVolume,competitorDifficulty,targetRank,recommendedTopic,recommendedType,difficultyCategory,isQuickWin}], rankingBlueprint{summary,priorityActions[{action,impact,effort,timeframe}],timelineEstimate}, discoveredCompetitors[{domain,overlapScore,threatLevel}] }.
+contentGaps: 5-8 rows. targetRank number or "Not Ranking". difficultyCategory Easy|Medium|Hard. competitorVolume monthly searches. competitorDifficulty 1-100.
+ASCII only. JSON only.`;
+
+        const fastConfig: ProviderConfig = {
+          ...providerConfig,
+          apiModel: providerConfig.provider === "gemini" ? "gemini-2.5-flash-lite" : providerConfig.apiModel,
+        };
+
+        const result = await withTimeout(
+          callAI(fastConfig, prompt, "Valid compact JSON only. No fences.", {
+            responseMimeType: "application/json",
+            temperature: 0.15,
+            maxOutputTokens: 2000,
+          }),
+          10000,
+          "AI enrichment"
+        );
+        const parsed = cleanAndParseJSON(result.text);
+        enriched.contentGaps = normalizeContentGaps(
+          parsed.contentGaps,
+          (base.keywords || []).map((k: any) => k.keyword).filter(Boolean)
+        );
+        if (!enriched.contentGaps.length) enriched.contentGaps = base.contentGaps;
+        enriched.rankingBlueprint = parsed.rankingBlueprint || base.rankingBlueprint;
+        enriched.discoveredCompetitors = Array.isArray(parsed.discoveredCompetitors) && parsed.discoveredCompetitors.length
+          ? parsed.discoveredCompetitors
+          : base.discoveredCompetitors;
+        enriched.dataSource = "dataforseo+ai";
+      } catch {
+        // AI enrichment failed — DataForSEO data is still valuable
+        enriched.contentGaps = normalizeContentGaps(base.contentGaps);
+      }
+    } else {
+      // No AI key: still normalize gaps from baseline
+      enriched.contentGaps = normalizeContentGaps(base.contentGaps || enriched.contentGaps);
+    }
+
+    return res.json(sanitizeDeep(enriched));
+  }
+
+  // ── AI-only path (no DataForSEO) — original behavior ──
+  try {
+    const prompt = `Compact JSON SEO analysis for "${domain}"${competitorUrl ? ` vs "${cleanDomain(competitorUrl)}"` : ""}.
+Short arrays only: keywords(5), contentGaps(6), serpFeatures(3), discoveredCompetitors(4), backlinkSources(3), backlinkOpportunities(2).
+Include: target{domain,domainRating,backlinksCount,referringDomains,organicTraffic,organicKeywords,publishingFrequency,topPages[{url,title,estTraffic,keywordsCount}]}, competitor or null, targetAnalysis{coreNiche,audiencePersona,contentStrengths[],contentWeaknesses[],detailedBreakdown}, keywords[{keyword,volume,difficulty,cpc,intent,type,opportunityScore}], contentGaps[{competitorKeyword,competitorRank,competitorVolume,competitorDifficulty,targetRank,recommendedTopic,recommendedType,difficultyCategory,isQuickWin}], rankingBlueprint{summary,priorityActions[{action,impact,effort,timeframe}],timelineEstimate}.
+For contentGaps: targetRank is a number or "Not Ranking"; difficultyCategory is Easy|Medium|Hard; competitorVolume is monthly searches; competitorDifficulty 1-100.
 Realistic numbers. ASCII only. JSON only.`;
 
- // Prefer flash-lite for analysis speed (user can still set a custom model in Settings)
- const fastConfig: ProviderConfig = {
- ...providerConfig,
- apiModel:
- providerConfig.provider === "gemini"
- ? "gemini-2.5-flash-lite"
- : providerConfig.apiModel,
- };
+    // Prefer flash-lite for analysis speed (user can still set a custom model in Settings)
+    const fastConfig: ProviderConfig = {
+      ...providerConfig,
+      apiModel:
+        providerConfig.provider === "gemini"
+          ? "gemini-2.5-flash-lite"
+          : providerConfig.apiModel,
+    };
 
- const result = await withTimeout(
- callAI(fastConfig, prompt, "Valid compact JSON only. No fences. ASCII punctuation.", {
- responseMimeType: "application/json",
- temperature: 0.15,
- maxOutputTokens: 2500,
- }),
- 12000,
- "SEO analysis"
- );
- const parsed = cleanAndParseJSON(result.text);
- const autonomous =
- parsed.autonomousBlog
- ? normalizeBlogPayload(parsed.autonomousBlog, domain, base.keywords?.[0]?.keyword || "services")
- : base.autonomousBlog;
- res.json(
- sanitizeDeep({
- ...base,
- ...parsed,
- target: { ...base.target, ...(parsed.target || {}) },
- competitor: parsed.competitor ?? base.competitor,
- keywords: Array.isArray(parsed.keywords) && parsed.keywords.length ? parsed.keywords : base.keywords,
- contentGaps: Array.isArray(parsed.contentGaps) && parsed.contentGaps.length ? parsed.contentGaps : base.contentGaps,
- serpFeatures: Array.isArray(parsed.serpFeatures) && parsed.serpFeatures.length ? parsed.serpFeatures : base.serpFeatures,
- backlinkSources: Array.isArray(parsed.backlinkSources) && parsed.backlinkSources.length ? parsed.backlinkSources : base.backlinkSources,
- backlinkOpportunities:
- Array.isArray(parsed.backlinkOpportunities) && parsed.backlinkOpportunities.length
- ? parsed.backlinkOpportunities
- : base.backlinkOpportunities,
- discoveredCompetitors:
- Array.isArray(parsed.discoveredCompetitors) && parsed.discoveredCompetitors.length
- ? parsed.discoveredCompetitors
- : base.discoveredCompetitors,
- autonomousBlog: autonomous,
- isFallback: false,
- })
- );
- } catch (err: unknown) {
- const message = redactSecrets(err instanceof Error ? err.message : String(err));
- console.error("Analyze error:", message);
- res.json(
- sanitizeDeep({
- ...base,
- isFallback: true,
- errorMsg: message.includes("timed out")
- ? "Live AI timed out. Showing fast structured analysis instead."
- : message,
- })
- );
- }
+    const result = await withTimeout(
+      callAI(fastConfig, prompt, "Valid compact JSON only. No fences. ASCII punctuation.", {
+        responseMimeType: "application/json",
+        temperature: 0.15,
+        maxOutputTokens: 2500,
+      }),
+      12000,
+      "SEO analysis"
+    );
+    const parsed = cleanAndParseJSON(result.text);
+    const autonomous =
+      parsed.autonomousBlog
+        ? normalizeBlogPayload(parsed.autonomousBlog, domain, base.keywords?.[0]?.keyword || "services")
+        : base.autonomousBlog;
+    const kwFallback = (base.keywords || []).map((k: any) => k.keyword).filter(Boolean);
+    const gaps = normalizeContentGaps(
+      Array.isArray(parsed.contentGaps) && parsed.contentGaps.length ? parsed.contentGaps : base.contentGaps,
+      kwFallback
+    );
+    res.json(
+      sanitizeDeep({
+        ...base,
+        ...parsed,
+        target: { ...base.target, ...(parsed.target || {}) },
+        competitor: parsed.competitor ?? base.competitor,
+        keywords: Array.isArray(parsed.keywords) && parsed.keywords.length ? parsed.keywords : base.keywords,
+        contentGaps: gaps.length ? gaps : normalizeContentGaps(base.contentGaps, kwFallback),
+        serpFeatures: Array.isArray(parsed.serpFeatures) && parsed.serpFeatures.length ? parsed.serpFeatures : base.serpFeatures,
+        backlinkSources: Array.isArray(parsed.backlinkSources) && parsed.backlinkSources.length ? parsed.backlinkSources : base.backlinkSources,
+        backlinkOpportunities:
+          Array.isArray(parsed.backlinkOpportunities) && parsed.backlinkOpportunities.length
+            ? parsed.backlinkOpportunities
+            : base.backlinkOpportunities,
+        discoveredCompetitors:
+          Array.isArray(parsed.discoveredCompetitors) && parsed.discoveredCompetitors.length
+            ? parsed.discoveredCompetitors
+            : base.discoveredCompetitors,
+        autonomousBlog: autonomous,
+        dataSource: "ai",
+        isFallback: false,
+      })
+    );
+  } catch (err: unknown) {
+    const message = redactSecrets(err instanceof Error ? err.message : String(err));
+    console.error("Analyze error:", message);
+    res.json(
+      sanitizeDeep({
+        ...base,
+        contentGaps: normalizeContentGaps(base.contentGaps),
+        isFallback: true,
+        dataSource: "simulated",
+        errorMsg: message.includes("timed out")
+          ? "Live AI timed out. Showing fast structured analysis instead."
+          : message,
+      })
+    );
+  }
 });
 
 app.post("/api/generate-blog", async (req, res) => {
@@ -1741,10 +1956,117 @@ Return ONLY JSON: { "snippets": [ { "type": "default|question|benefit|how-to|lis
  const parsed = cleanAndParseJSON(result.text);
  if (Array.isArray(parsed)) return res.json({ snippets: parsed });
  res.json(parsed);
- } catch (err: unknown) {
- const message = redactSecrets(err instanceof Error ? err.message : String(err));
- res.status(502).json({ isFallback: true, fallbackReason: message, snippets: [] });
- }
+  } catch (err: unknown) {
+    const message = redactSecrets(err instanceof Error ? err.message : String(err));
+    res.status(502).json({ isFallback: true, fallbackReason: message, snippets: [] });
+  }
+});
+
+// ============================================================
+// DataForSEO Real-Time Endpoints (server-side API key)
+// ============================================================
+
+app.post("/api/seo/keyword-volume", async (req, res) => {
+  if (!HAS_DFSEO) {
+    return res.status(503).json({ error: "DataForSEO credentials not configured on server." });
+  }
+  const { keywords = [], locationCode = 2840 } = req.body || {};
+  if (!Array.isArray(keywords) || keywords.length === 0) {
+    return res.status(400).json({ error: "keywords array is required." });
+  }
+  try {
+    const data = await fetchKeywordVolumes(keywords.slice(0, 20), locationCode);
+    res.json({ keywords: data, source: "dataforseo" });
+  } catch (err: unknown) {
+    const message = redactSecrets(err instanceof Error ? err.message : String(err));
+    res.status(502).json({ error: "DataForSEO keyword lookup failed", detail: message });
+  }
+});
+
+app.post("/api/seo/serp", async (req, res) => {
+  if (!HAS_DFSEO) {
+    return res.status(503).json({ error: "DataForSEO credentials not configured on server." });
+  }
+  const { keyword = "", locationCode = 2840 } = req.body || {};
+  if (!keyword) {
+    return res.status(400).json({ error: "keyword is required." });
+  }
+  try {
+    const items = await fetchSerp(keyword, locationCode);
+    res.json({ items, keyword, source: "dataforseo" });
+  } catch (err: unknown) {
+    const message = redactSecrets(err instanceof Error ? err.message : String(err));
+    res.status(502).json({ error: "DataForSEO SERP fetch failed", detail: message });
+  }
+});
+
+app.post("/api/seo/domain-overview", async (req, res) => {
+  if (!HAS_DFSEO) {
+    return res.status(503).json({ error: "DataForSEO credentials not configured on server." });
+  }
+  const { domain = "" } = req.body || {};
+  if (!domain) {
+    return res.status(400).json({ error: "domain is required." });
+  }
+  try {
+    const data = await fetchDomainOverview(cleanDomain(domain));
+    res.json({ ...data, source: "dataforseo" });
+  } catch (err: unknown) {
+    const message = redactSecrets(err instanceof Error ? err.message : String(err));
+    res.status(502).json({ error: "DataForSEO domain overview failed", detail: message });
+  }
+});
+
+app.post("/api/seo/backlinks", async (req, res) => {
+  if (!HAS_DFSEO) {
+    return res.status(503).json({ error: "DataForSEO credentials not configured on server." });
+  }
+  const { domain = "", limit = 100 } = req.body || {};
+  if (!domain) {
+    return res.status(400).json({ error: "domain is required." });
+  }
+  try {
+    const backlinks = await fetchBacklinks(cleanDomain(domain), Math.min(limit, 200));
+    res.json({ backlinks, source: "dataforseo" });
+  } catch (err: unknown) {
+    const message = redactSecrets(err instanceof Error ? err.message : String(err));
+    res.status(502).json({ error: "DataForSEO backlinks fetch failed", detail: message });
+  }
+});
+
+app.post("/api/seo/page-speed", async (req, res) => {
+  if (!HAS_DFSEO) {
+    return res.status(503).json({ error: "DataForSEO credentials not configured on server." });
+  }
+  const { url = "" } = req.body || {};
+  if (!url) {
+    return res.status(400).json({ error: "url is required." });
+  }
+  try {
+    const data = await fetchPageSpeed(url);
+    res.json({ lighthouse: data, source: "dataforseo" });
+  } catch (err: unknown) {
+    const message = redactSecrets(err instanceof Error ? err.message : String(err));
+    res.status(502).json({ error: "DataForSEO page speed failed", detail: message });
+  }
+});
+
+// Full bundle: SERP + Keywords + Backlinks + PageSpeed in one call
+app.post("/api/seo/full-bundle", async (req, res) => {
+  if (!HAS_DFSEO) {
+    return res.status(503).json({ error: "DataForSEO credentials not configured on server." });
+  }
+  const { domain = "", seedKeywords = [] } = req.body || {};
+  if (!domain) {
+    return res.status(400).json({ error: "domain is required." });
+  }
+  try {
+    const bundle = await fetchFullBundle(cleanDomain(domain), seedKeywords);
+    res.json({ ...bundle, source: "dataforseo" });
+  } catch (err: unknown) {
+    const message = redactSecrets(err instanceof Error ? err.message : String(err));
+    res.status(502).json({ error: "DataForSEO full bundle failed", detail: message });
+  }
 });
 
 const distPath = path.join(process.cwd(), "dist");

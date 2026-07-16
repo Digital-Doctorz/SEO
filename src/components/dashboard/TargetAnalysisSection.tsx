@@ -275,28 +275,28 @@ export default function TargetAnalysisSection({
  </div>
 
  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
- {contentGaps.length > 0 ? (
- contentGaps.slice(0, 4).map((gap, idx) => (
+ {(contentGaps || []).length > 0 ? (
+ (contentGaps || []).slice(0, 4).map((gap, idx) => (
  <div key={idx} className="p-4 rounded-xl border border-slate-200 bg-white shadow-3xs space-y-3 hover:border-blue-400 transition-all">
  <div className="flex items-center justify-between">
  <span className="font-mono text-xs font-extrabold text-slate-800 bg-slate-100 px-2.5 py-1 rounded-lg">
- {gap.competitorKeyword}
+ {gap?.competitorKeyword || "keyword"}
  </span>
  <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
- gap.difficultyCategory === "Easy" ? "bg-green-50 text-green-700 border border-green-100" :
- gap.difficultyCategory === "Medium" ? "bg-amber-50 text-amber-700 border border-amber-100" :
+ gap?.difficultyCategory === "Easy" ? "bg-green-50 text-green-700 border border-green-100" :
+ gap?.difficultyCategory === "Medium" ? "bg-amber-50 text-amber-700 border border-amber-100" :
  "bg-rose-50 text-rose-700 border border-rose-100"
  }`}>
- {gap.difficultyCategory} Diff
+ {gap?.difficultyCategory || "Medium"} Diff
  </span>
  </div>
  <div>
  <span className="text-[10px] text-slate-400 block font-bold uppercase">Recommended Topic Target</span>
- <p className="text-sm font-bold text-slate-800 line-clamp-1 mt-0.5">{gap.recommendedTopic}</p>
+ <p className="text-sm font-bold text-slate-800 line-clamp-1 mt-0.5">{gap?.recommendedTopic || "Topic opportunity"}</p>
  </div>
  <div className="flex items-center justify-between text-xs text-slate-500 pt-2 border-t border-slate-100">
- <span>Vol: <strong className="text-slate-700">{formatNum(gap.competitorVolume)}/mo</strong></span>
- <span>Competitor: <strong className="text-rose-500 font-bold">Rank #{gap.competitorRank}</strong></span>
+ <span>Vol: <strong className="text-slate-700">{formatNum(gap?.competitorVolume || 0)}/mo</strong></span>
+ <span>Competitor: <strong className="text-rose-500 font-bold">Rank #{gap?.competitorRank || "—"}</strong></span>
  </div>
  </div>
  ))

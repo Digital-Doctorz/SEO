@@ -142,6 +142,20 @@ export interface AnalysisResult {
   autonomousBlog?: BlogPost;
   localLocation?: LocalLocation;
   rankingBlueprint?: RankingBlueprint;
+  /** "dataforseo" | "dataforseo+ai" | "ai" | "simulated" */
+  dataSource?: string;
+  pageSpeed?: {
+    performance: number;
+    accessibility: number;
+    best_practices: number;
+    seo: number;
+    fcp_ms?: number;
+    lcp_ms?: number;
+    tbt_ms?: number;
+    cls?: number;
+    si_ms?: number;
+    tti_ms?: number;
+  };
 }
 
 export interface DiscoveredCompetitor {

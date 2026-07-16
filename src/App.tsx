@@ -116,11 +116,57 @@ export default function App() {
       });
 
       // Sanitize text fields so mojibake never reaches the UI
-      const clean = sanitizeDeep(data);
+      const clean = sanitizeDeep(data) as typeof data & AnalysisResult;
+
+      // Always normalize array fields so tabs never crash on partial AI payloads
+      const safeResult: AnalysisResult = {
+        ...clean,
+        keywords: Array.isArray(clean.keywords) ? clean.keywords : [],
+        contentGaps: Array.isArray(clean.contentGaps)
+          ? clean.contentGaps.map((g: any, i: number) => {
+              const difficulty = Number(g?.competitorDifficulty ?? g?.difficulty ?? 30) || 30;
+              const cat = g?.difficultyCategory;
+              const difficultyCategory =
+                cat === "Easy" || cat === "Medium" || cat === "Hard"
+                  ? cat
+                  : difficulty < 30
+                    ? "Easy"
+                    : difficulty < 55
+                      ? "Medium"
+                      : "Hard";
+              return {
+                competitorKeyword: String(g?.competitorKeyword || g?.keyword || `gap-${i + 1}`),
+                competitorRank: Number(g?.competitorRank ?? g?.rank ?? 5) || 5,
+                competitorVolume: Number(g?.competitorVolume ?? g?.volume ?? 500) || 500,
+                competitorDifficulty: Math.max(1, Math.min(100, Math.round(difficulty))),
+                targetRank:
+                  g?.targetRank === "Not Ranking" || g?.targetRank == null
+                    ? ("Not Ranking" as const)
+                    : Number.isFinite(Number(g.targetRank))
+                      ? Number(g.targetRank)
+                      : ("Not Ranking" as const),
+                recommendedTopic: String(
+                  g?.recommendedTopic || g?.topic || `Guide to ${g?.competitorKeyword || "topic"}`
+                ),
+                recommendedType: String(g?.recommendedType || "Pillar Blog Post"),
+                difficultyCategory,
+                isQuickWin: Boolean(g?.isQuickWin ?? difficulty < 35),
+              };
+            })
+          : [],
+        serpFeatures: Array.isArray(clean.serpFeatures) ? clean.serpFeatures : [],
+        backlinkSources: Array.isArray(clean.backlinkSources) ? clean.backlinkSources : [],
+        backlinkOpportunities: Array.isArray(clean.backlinkOpportunities)
+          ? clean.backlinkOpportunities
+          : [],
+        discoveredCompetitors: Array.isArray(clean.discoveredCompetitors)
+          ? clean.discoveredCompetitors
+          : [],
+      };
 
       // Fallback data is still useful - show it with a notice
       if (clean.isFallback) {
-        setAnalysisResult(clean);
+        setAnalysisResult(safeResult);
         setErrorMsg(
           clean.needsApiKey
             ? "No API key configured. Open Settings to enter your key or review pre-compiled fallback analysis."
@@ -131,9 +177,12 @@ export default function App() {
       }
 
       if (clean.error) throw new Error(String(clean.error));
-      if (clean.errorMsg) throw new Error(String(clean.errorMsg));
+      // Soft-notice only — do not block UI when enrichment partially fails
+      if (clean.errorMsg) {
+        setErrorMsg(String(clean.errorMsg));
+      }
 
-      setAnalysisResult(clean);
+      setAnalysisResult(safeResult);
       setActiveTab("overview");
     } catch (err: unknown) {
       console.error("Analysis request failed:", err);
@@ -499,6 +548,29 @@ export default function App() {
 
                 {/* Component Workspace Switchboard */}
                 <div className="min-h-[500px]">
+                  {/* Data source indicator */}
+                  {analysisResult.dataSource && (
+                    <div className="mb-3 flex items-center gap-2 text-xs">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium ${
+                        analysisResult.dataSource === "dataforseo" || analysisResult.dataSource === "dataforseo+ai"
+                          ? "bg-emerald-900/40 text-emerald-300 border border-emerald-700/50"
+                          : analysisResult.dataSource === "ai"
+                          ? "bg-blue-900/40 text-blue-300 border border-blue-700/50"
+                          : "bg-slate-800/60 text-slate-400 border border-slate-700/50"
+                      }`}>
+                        {analysisResult.dataSource === "dataforseo" || analysisResult.dataSource === "dataforseo+ai" ? (
+                          <><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> Live SEO Data</>
+                        ) : analysisResult.dataSource === "ai" ? (
+                          <><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg> AI Analysis</>
+                        ) : (
+                          <><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg> Demo Data</>
+                        )}
+                      </span>
+                      {analysisResult.dataSource === "dataforseo+ai" && (
+                        <span className="text-slate-500">+ AI enrichment</span>
+                      )}
+                    </div>
+                  )}
                   <div className={activeTab === "overview" ? "block" : "hidden"}>
                     <ErrorBoundary>
                     <Suspense fallback={<div className="text-center py-16 text-slate-400 font-semibold">Loading...</div>}>
@@ -546,9 +618,9 @@ export default function App() {
                     <ErrorBoundary>
                     <Suspense fallback={<div className="text-center py-16 text-slate-400 font-semibold">Loading...</div>}>
                     <ContentGapAnalysis 
-                      gaps={analysisResult.contentGaps} 
-                      targetDomain={analysisResult.target.domain}
-                      competitorDomain={analysisResult.competitor?.domain || "Competitor"}
+                      gaps={analysisResult.contentGaps || []} 
+                      targetDomain={analysisResult.target?.domain || targetUrl || "your-site.com"}
+                      competitorDomain={analysisResult.competitor?.domain || competitorUrl || "Competitor"}
                       onSelectTopic={handleSelectTopicForBlog}
                     />
                     </Suspense>
