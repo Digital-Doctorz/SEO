@@ -1,6 +1,7 @@
 import type { AiProviderConfig, BlogPost, SocialPost } from "../../types";
 import { postApi } from "../../lib/api";
 import { sanitizeDeep, sanitizeText } from "../../lib/text";
+import { resolveAiConfig } from "../../lib/aiConfig";
 
 export interface MetaSnippet {
   type: string;
@@ -20,7 +21,7 @@ export async function generateMetaSnippets(params: {
     content: params.content,
     articleTitle: params.articleTitle,
     targetDomain: params.targetDomain,
-    aiConfig: params.aiConfig,
+    aiConfig: resolveAiConfig(params.aiConfig),
   });
 }
 
@@ -42,7 +43,7 @@ export async function generateSocialPost(params: {
     audience: params.audience,
     contentGoal: params.contentGoal,
     brandVoice: params.brandVoice,
-    aiConfig: params.aiConfig,
+    aiConfig: resolveAiConfig(params.aiConfig),
   });
 }
 
@@ -105,7 +106,8 @@ export async function generateBlogPost(params: {
     tone: params.tone,
     targetDomain: params.targetDomain,
     competitorUrl: params.competitorUrl || "",
-    aiConfig: params.aiConfig,
+    // Always send the key currently saved for the active provider (OpenRouter/Gemini/Custom)
+    aiConfig: resolveAiConfig(params.aiConfig),
     variationSeed,
     regenerateToken: variationSeed,
     previousTitle: params.previousTitle || "",
@@ -411,7 +413,7 @@ export async function analyzeKeywordDeep(params: {
       keyword: params.keyword,
       targetDomain: params.targetDomain,
       targetUrl: params.targetDomain,
-      aiConfig: params.aiConfig,
+      aiConfig: resolveAiConfig(params.aiConfig),
     },
     { signal: params.signal }
   );

@@ -380,18 +380,33 @@ function sleep(ms: number) {
 /** User-safe error strings (never dump raw Google JSON to the UI). */
 function humanizeProviderError(raw: unknown): string {
  const msg = String(raw instanceof Error ? raw.message : raw || "");
+ if (/OpenRouter/i.test(msg)) {
+  if (/401|403|Unauthorized|invalid.*key|user not found/i.test(msg)) {
+   return "OpenRouter API key was rejected. Open Settings → select OpenRouter → paste a key from https://openrouter.ai/keys → Save.";
+  }
+  if (/402|credits|can only afford|insufficient/i.test(msg)) {
+   return "OpenRouter has no credits for this model. Add credits at openrouter.ai or switch to a free model (e.g. meta-llama/llama-3.3-70b-instruct:free).";
+  }
+  if (/429|rate.?limit/i.test(msg)) {
+   return "OpenRouter rate limit hit. Wait a minute, try a different model in Settings, or add credits for higher limits.";
+  }
+  if (/model|not found|no endpoints/i.test(msg)) {
+   return "OpenRouter model unavailable. In Settings set Model to meta-llama/llama-3.3-70b-instruct:free (or another model you can access).";
+  }
+  const cleanedOr = msg.replace(/\s+/g, " ").trim().slice(0, 220);
+  return cleanedOr || "OpenRouter error. Check provider, key, and model in Settings. A full offline draft was still generated.";
+ }
  if (/429|RESOURCE_EXHAUSTED|quota|rate-limit|rate limit|free_tier/i.test(msg)) {
  const retry = msg.match(/retry in ([\d.]+)\s*s/i);
  const wait = retry ? Math.ceil(Number(retry[1])) : 30;
- return `Gemini API quota or rate limit reached (free tier is limited). Wait ~${wait}s, switch model in Settings (e.g. gemini-2.5-flash), or upgrade billing at Google AI Studio. A full offline draft was still generated for you.`;
+ return `AI provider quota or rate limit reached. Wait ~${wait}s, switch model in Settings, or check billing (Gemini AI Studio / OpenRouter credits). A full offline draft was still generated for you.`;
  }
  if (/401|403|API_KEY|invalid.*key|permission/i.test(msg)) {
- return "AI API key was rejected. Open Settings and paste a valid Gemini key from Google AI Studio.";
+ return "AI API key was rejected. Open Settings, confirm the correct provider (Gemini vs OpenRouter), paste a valid key, and Save.";
  }
  if (/timed out/i.test(msg)) {
  return "AI timed out. Showing a complete offline draft — try again with a shorter word count.";
  }
- // Strip JSON blobs
  const cleaned = msg
  .replace(/\{[\s\S]{0,2000}"error"[\s\S]{0,4000}\}/g, "")
  .replace(/\s+/g, " ")
@@ -1648,6 +1663,121 @@ interface ProviderConfig {
  customFormat: "openai" | "anthropic" | "gemini";
 }
 
+function normalizeProviderId(raw: unknown, apiKey = ""): "gemini" | "openrouter" | "custom" {
+ const p = String(raw || "")
+  .toLowerCase()
+  .trim()
+  .replace(/[\s_]+/g, "");
+ if (p === "openrouter" || p === "open-router" || p === "or") return "openrouter";
+ if (p === "custom") return "custom";
+ if (p === "gemini" || p === "google" || p === "googleai") return "gemini";
+ // Infer from key when provider missing/wrong
+ if (/^sk-or-v1-/i.test(apiKey) || /^sk-or-/i.test(apiKey)) return "openrouter";
+ if (/^AIza[0-9A-Za-z_\-]{10,}/.test(apiKey)) return "gemini";
+ return "gemini";
+}
+
+async function callOpenRouter(
+ apiKey: string,
+ apiEndpoint: string,
+ apiModel: string,
+ prompt: string,
+ systemPrompt: string | undefined,
+ options?: { responseMimeType?: string; temperature?: number; maxOutputTokens?: number }
+): Promise<{ text: string }> {
+ let endpoint = (apiEndpoint || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
+ if (endpoint.includes("openrouter.ai") && !endpoint.endsWith("/api/v1")) {
+  endpoint = "https://openrouter.ai/api/v1";
+ }
+ const model = (apiModel || "meta-llama/llama-3.3-70b-instruct:free").trim();
+ // Fix common leftover Gemini model names when provider is OpenRouter
+ const safeModel = /gemini|^models\//i.test(model)
+  ? "meta-llama/llama-3.3-70b-instruct:free"
+  : model;
+
+ const messages: any[] = [];
+ if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
+ // When JSON is required, reinforce in the user message (many free models ignore response_format)
+ const wantJson = options?.responseMimeType === "application/json";
+ const userContent = wantJson
+  ? `${prompt}\n\nIMPORTANT: Respond with ONLY a valid JSON object. No markdown fences, no commentary.`
+  : prompt;
+ messages.push({ role: "user", content: userContent });
+
+ const maxTokens = Math.min(8192, Math.max(1024, options?.maxOutputTokens ?? 8192));
+ const baseBody: any = {
+  model: safeModel,
+  messages,
+  temperature: options?.temperature ?? 0.1,
+  max_tokens: maxTokens,
+ };
+
+ const headers: Record<string, string> = {
+  "Content-Type": "application/json",
+  Authorization: `Bearer ${apiKey}`,
+  "HTTP-Referer": "https://seo-nine-phi.vercel.app",
+  "X-Title": "SEO Content Hub",
+ };
+
+ async function once(withJsonMode: boolean): Promise<{ text: string }> {
+  const body = { ...baseBody };
+  // Only request json_object when likely supported; free models often 400 on this
+  if (withJsonMode && wantJson && !/:free$/i.test(safeModel)) {
+   body.response_format = { type: "json_object" };
+  }
+  const response = await fetch(`${endpoint}/chat/completions`, {
+   method: "POST",
+   headers,
+   body: JSON.stringify(body),
+  });
+  let data: any = null;
+  try {
+   data = await response.json();
+  } catch {
+   throw new Error(`OpenRouter error ${response.status}: non-JSON response`);
+  }
+  if (!response.ok) {
+   const errMsg =
+    data?.error?.message ||
+    data?.error?.metadata?.raw ||
+    (typeof data?.error === "string" ? data.error : null) ||
+    JSON.stringify(data?.error || data).slice(0, 300);
+   throw new Error(`OpenRouter error ${response.status}: ${errMsg}`);
+  }
+  const text =
+   data.choices?.[0]?.message?.content ||
+   data.choices?.[0]?.text ||
+   "";
+  if (!text || !String(text).trim()) {
+   throw new Error("OpenRouter error: empty model response. Try another model in Settings.");
+  }
+  return { text: String(text) };
+ }
+
+ try {
+  // Prefer no strict json_object for free models; paid models get json mode first
+  if (wantJson && !/:free$/i.test(safeModel)) {
+   try {
+    return await once(true);
+   } catch (e: any) {
+    const m = String(e?.message || e);
+    if (/response_format|json_object|not supported|400/i.test(m)) {
+     return await once(false);
+    }
+    throw e;
+   }
+  }
+  return await once(false);
+ } catch (e: any) {
+  // Last resort: retry once without json mode
+  const m = String(e?.message || e);
+  if (wantJson && /response_format|json_object|not supported/i.test(m)) {
+   return await once(false);
+  }
+  throw e;
+ }
+}
+
 async function callAI(
  config: ProviderConfig,
  prompt: string,
@@ -1667,26 +1797,7 @@ async function callAI(
  }
 
  if (provider === "openrouter") {
- const endpoint = (apiEndpoint || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
- const messages: any[] = [];
- if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
- messages.push({ role: "user", content: prompt });
- const body: any = {
- model: apiModel || "meta-llama/llama-3.3-70b-instruct:free",
- messages,
- temperature: options?.temperature ?? 0.1,
- max_tokens: 8192,
- };
- if (options?.responseMimeType === "application/json") body.response_format = { type: "json_object" };
- const response = await fetch(`${endpoint}/chat/completions`, {
- method: "POST",
- headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}`, "HTTP-Referer": "http://localhost:3000", "X-Title": "Local SEO App" },
- body: JSON.stringify(body),
- });
- const data = await response.json();
- if (!response.ok) throw new Error(`OpenRouter error ${response.status}: ${data.error?.message || JSON.stringify(data)}`);
- const text = data.choices?.[0]?.message?.content || "";
- return { text };
+ return callOpenRouter(apiKey, apiEndpoint, apiModel, prompt, systemPrompt, options);
  }
 
  if (provider === "custom") {
@@ -1697,7 +1808,7 @@ async function callAI(
  if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
  messages.push({ role: "user", content: prompt });
  const body: any = { model: apiModel, messages, temperature: options?.temperature ?? 0.1, max_tokens: 8192 };
- if (options?.responseMimeType === "application/json") body.response_format = { type: "json_object" };
+ // Avoid forcing json_object — many proxies reject it
  const response = await fetch(`${endpoint}/chat/completions`, {
  method: "POST",
  headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
@@ -1737,31 +1848,60 @@ async function callAI(
 }
 
 /**
- * BYOK only ΓÇö every user supplies their own key via request body (from browser Settings).
+ * BYOK only — every user supplies their own key via request body (from browser Settings).
  * NEVER fall back to process.env / GEMINI_API_KEY / shared server secrets.
- * Keys are never written to disk, logs, or shared storage on the server.
+ * Normalizes provider from key shape so OpenRouter keys never hit Gemini by mistake.
  */
-function getProviderConfig(req: { body?: { aiConfig?: Partial<ProviderConfig> } }): ProviderConfig | null {
+function getProviderConfig(req: { body?: { aiConfig?: Partial<ProviderConfig> & { provider?: string } } }): ProviderConfig | null {
  const cfg = req.body?.aiConfig;
- const rawKey = typeof cfg?.apiKey === "string" ? cfg.apiKey.trim() : "";
+ if (!cfg || typeof cfg !== "object") return null;
+ const rawKey = typeof cfg.apiKey === "string" ? cfg.apiKey.trim() : "";
  if (!rawKey) return null;
- // Reject obvious placeholders so a fake "key" never hits a provider
  const lower = rawKey.toLowerCase();
  if (
- lower.includes("your") ||
- lower.includes("placeholder") ||
- lower === "my_gemini_api_key" ||
- lower === "xxx" ||
- rawKey.length < 8
+  lower.includes("your") ||
+  lower.includes("placeholder") ||
+  lower === "my_gemini_api_key" ||
+  lower === "xxx" ||
+  lower === "paste_key_here" ||
+  rawKey.length < 12
  ) {
- return null;
+  return null;
  }
+
+ let provider = normalizeProviderId(cfg.provider, rawKey);
+ // Hard correct: sk-or key must use OpenRouter path
+ if (/^sk-or/i.test(rawKey)) provider = "openrouter";
+ if (/^AIza/i.test(rawKey) && provider === "openrouter") provider = "gemini";
+
+ let apiModel = typeof cfg.apiModel === "string" ? cfg.apiModel.trim() : "";
+ let apiEndpoint = typeof cfg.apiEndpoint === "string" ? cfg.apiEndpoint.trim() : "";
+
+ if (provider === "openrouter") {
+  if (!apiModel || /gemini|^models\//i.test(apiModel)) {
+   apiModel = "meta-llama/llama-3.3-70b-instruct:free";
+  }
+  if (!apiEndpoint || /googleapis|generativelanguage/i.test(apiEndpoint)) {
+   apiEndpoint = "https://openrouter.ai/api/v1";
+  }
+  apiEndpoint = apiEndpoint.replace(/\/+$/, "");
+  if (apiEndpoint.includes("openrouter.ai") && !apiEndpoint.endsWith("/api/v1")) {
+   apiEndpoint = "https://openrouter.ai/api/v1";
+  }
+ }
+ if (provider === "gemini") {
+  if (!apiModel || /llama|claude|openrouter|gpt-/i.test(apiModel)) {
+   apiModel = "gemini-2.5-flash";
+  }
+  apiEndpoint = "";
+ }
+
  return {
- apiKey: rawKey,
- provider: cfg?.provider || "gemini",
- apiEndpoint: (cfg?.apiEndpoint || "").trim(),
- apiModel: (cfg?.apiModel || "").trim(),
- customFormat: cfg?.customFormat || "openai",
+  apiKey: rawKey,
+  provider,
+  apiEndpoint,
+  apiModel,
+  customFormat: cfg.customFormat === "anthropic" || cfg.customFormat === "gemini" ? cfg.customFormat : "openai",
  };
 }
 
@@ -1842,7 +1982,7 @@ DEPTH (non-negotiable):
 - Named tools/processes (GA4, Screaming Frog, Ahrefs, etc. when relevant)
 - Trade-offs and "when NOT to"
 - 4-6 internal markdown links to https://{domain}/...
-- 2-4 reputable external links (.gov/.edu/official docs)
+- 15+ high-authority external backlinks to reputable sources (.gov, .edu, major industry publications, official documentation, research institutions, Wikipedia, established tools/platforms). Every external link must be directly relevant to the article topic and genuinely useful for the reader — link to primary sources, original research, official docs, tool pages, and authoritative guides, not generic homepages.
 - Media: 2-3 [IMAGE: scene. Alt Text: "alt"] + 1 [CHART:bar title="..." labels="a,b,c" values="1,2,3"]
 
 SEO/GEO:
@@ -1921,7 +2061,7 @@ QUALITY BAR:
 - Prose 60-80%; bullets only for steps/checklists/4+ item lists.
 - Structure: Intro + Quick Answer → Key Takeaways → 6-8 H2s → Mistakes → FAQ → Conclusion+CTA
 - Media: 2-3 [IMAGE:...] + 1 [CHART:bar ...] + ≥1 markdown table
-- 3+ internal links to brand domain; 2+ external authority links
+- 3+ internal links to brand domain; 15+ high-authority external backlinks relevant to the article topic and readers
 - ASCII punctuation only
 
 ${masterBlock}

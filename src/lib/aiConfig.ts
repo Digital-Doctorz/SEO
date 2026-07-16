@@ -1,0 +1,253 @@
+import type { AiProviderConfig } from "../types";
+
+export const AI_PROVIDER_DEFAULTS: Record<
+  AiProviderConfig["provider"],
+  { model: string; endpoint: string }
+> = {
+  gemini: { model: "gemini-2.5-flash", endpoint: "" },
+  openrouter: {
+    model: "meta-llama/llama-3.3-70b-instruct:free",
+    endpoint: "https://openrouter.ai/api/v1",
+  },
+  custom: { model: "gpt-4o-mini", endpoint: "" },
+};
+
+const PROVIDERS: AiProviderConfig["provider"][] = ["gemini", "openrouter", "custom"];
+
+/** Infer provider from API key shape when user pastes a key without switching tabs. */
+export function detectProviderFromKey(apiKey: string): AiProviderConfig["provider"] | null {
+  const k = (apiKey || "").trim();
+  if (!k) return null;
+  if (/^sk-or-v1-/i.test(k) || /^sk-or-/i.test(k)) return "openrouter";
+  if (/^AIza[0-9A-Za-z_\-]{10,}/.test(k)) return "gemini";
+  // OpenAI-style keys used with OpenRouter or custom OpenAI-compatible endpoints
+  if (/^sk-[A-Za-z0-9]{20,}/.test(k) && !/^sk-or/i.test(k)) return null;
+  return null;
+}
+
+export function normalizeProvider(
+  raw: unknown,
+  apiKey = ""
+): AiProviderConfig["provider"] {
+  const p = String(raw || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[\s_]+/g, "");
+  if (p === "openrouter" || p === "open-router" || p === "or") return "openrouter";
+  if (p === "custom" || p === "openai" || p === "anthropic") return "custom";
+  if (p === "gemini" || p === "google" || p === "googleai") return "gemini";
+  const detected = detectProviderFromKey(apiKey);
+  if (detected) return detected;
+  return "gemini";
+}
+
+/** True when key shape clearly does not match the selected provider. */
+export function keyProviderMismatch(
+  provider: AiProviderConfig["provider"],
+  apiKey: string
+): string | null {
+  const k = (apiKey || "").trim();
+  if (!k) return "API key is empty.";
+  if (provider === "openrouter") {
+    if (/^AIza/i.test(k)) {
+      return "This looks like a Gemini key (starts with AIza). Switch provider to Gemini, or paste an OpenRouter key (sk-or-v1-...).";
+    }
+    // OpenRouter keys are usually sk-or-v1-...; also allow other sk- keys if user uses a proxy
+    if (!/^sk-/i.test(k) && k.length < 20) {
+      return "OpenRouter keys usually start with sk-or-v1-. Check that you copied the full key.";
+    }
+  }
+  if (provider === "gemini") {
+    if (/^sk-or/i.test(k)) {
+      return "This looks like an OpenRouter key. Switch provider to OpenRouter, or paste a Gemini key from Google AI Studio.";
+    }
+  }
+  return null;
+}
+
+export function isValidApiKeyShape(apiKey: string): boolean {
+  const k = (apiKey || "").trim();
+  if (k.length < 12) return false;
+  const lower = k.toLowerCase();
+  if (
+    lower.includes("your") ||
+    lower.includes("placeholder") ||
+    lower === "xxx" ||
+    lower === "my_gemini_api_key" ||
+    lower === "paste_key_here"
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function normalizeAiConfig(
+  partial: Partial<AiProviderConfig> | null | undefined
+): AiProviderConfig {
+  const apiKey = typeof partial?.apiKey === "string" ? partial.apiKey.trim() : "";
+  let provider = normalizeProvider(partial?.provider, apiKey);
+
+  // Auto-correct obvious mismatches (e.g. sk-or key with Gemini still selected)
+  const detected = detectProviderFromKey(apiKey);
+  if (detected && detected !== provider) {
+    // Only auto-switch for unambiguous key shapes
+    if (detected === "openrouter" || detected === "gemini") {
+      provider = detected;
+    }
+  }
+
+  const defaults = AI_PROVIDER_DEFAULTS[provider];
+  let apiModel = (partial?.apiModel || "").trim();
+  let apiEndpoint = (partial?.apiEndpoint || "").trim();
+
+  // Fix leftover Gemini model when on OpenRouter (common after provider switch)
+  if (provider === "openrouter") {
+    if (!apiModel || /gemini|gpt-4o-mini|^models\//i.test(apiModel)) {
+      apiModel = defaults.model;
+    }
+    if (!apiEndpoint || /generativelanguage|googleapis/i.test(apiEndpoint)) {
+      apiEndpoint = defaults.endpoint;
+    }
+    // Normalize endpoint path
+    apiEndpoint = apiEndpoint.replace(/\/+$/, "");
+    if (!apiEndpoint.endsWith("/api/v1") && apiEndpoint.includes("openrouter.ai")) {
+      apiEndpoint = "https://openrouter.ai/api/v1";
+    }
+  }
+  if (provider === "gemini") {
+    if (!apiModel || /llama|claude|gpt-|mistral|openrouter/i.test(apiModel)) {
+      apiModel = defaults.model;
+    }
+    apiEndpoint = "";
+  }
+  if (provider === "custom" && !apiModel) {
+    apiModel = defaults.model;
+  }
+
+  const customFormat =
+    partial?.customFormat === "anthropic" ||
+    partial?.customFormat === "gemini" ||
+    partial?.customFormat === "openai"
+      ? partial.customFormat
+      : "openai";
+
+  return {
+    apiKey,
+    provider,
+    apiEndpoint,
+    apiModel,
+    customFormat,
+    dataforseoLogin: partial?.dataforseoLogin?.trim() || undefined,
+    dataforseoPassword: partial?.dataforseoPassword?.trim() || undefined,
+    locationCode: partial?.locationCode,
+    languageCode: partial?.languageCode,
+  };
+}
+
+export function loadAiConfigFromStorage(): AiProviderConfig {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return normalizeAiConfig({ provider: "gemini", apiKey: "" });
+  }
+  try {
+    const rawProvider = localStorage.getItem("seo_api_provider") || "gemini";
+    const provider = normalizeProvider(rawProvider);
+    const defaults = AI_PROVIDER_DEFAULTS[provider];
+
+    // Per-provider key (preferred) → legacy single key
+    let apiKey =
+      localStorage.getItem(`seo_api_key_${provider}`) ||
+      localStorage.getItem("seo_api_key") ||
+      "";
+
+    // Per-provider model/endpoint → global fallback → defaults
+    let apiModel =
+      localStorage.getItem(`seo_api_model_${provider}`) ||
+      localStorage.getItem("seo_api_model") ||
+      defaults.model;
+    let apiEndpoint =
+      localStorage.getItem(`seo_api_endpoint_${provider}`) ||
+      localStorage.getItem("seo_api_endpoint") ||
+      defaults.endpoint;
+
+    const customFormat =
+      (localStorage.getItem("seo_api_custom_format") as AiProviderConfig["customFormat"]) ||
+      "openai";
+
+    return normalizeAiConfig({
+      apiKey,
+      provider,
+      apiModel,
+      apiEndpoint,
+      customFormat,
+      dataforseoLogin: localStorage.getItem("seo_dataforseo_login") || undefined,
+      dataforseoPassword: localStorage.getItem("seo_dataforseo_password") || undefined,
+    });
+  } catch {
+    return normalizeAiConfig({ provider: "gemini", apiKey: "" });
+  }
+}
+
+export function saveAiConfigToStorage(config: AiProviderConfig): AiProviderConfig {
+  const normalized = normalizeAiConfig(config);
+  if (typeof window === "undefined" || !window.localStorage) return normalized;
+
+  localStorage.setItem("seo_api_provider", normalized.provider);
+  localStorage.setItem(`seo_api_key_${normalized.provider}`, normalized.apiKey);
+  // Keep legacy key in sync for older code paths
+  localStorage.setItem("seo_api_key", normalized.apiKey);
+  localStorage.setItem(`seo_api_model_${normalized.provider}`, normalized.apiModel);
+  localStorage.setItem("seo_api_model", normalized.apiModel);
+  localStorage.setItem(`seo_api_endpoint_${normalized.provider}`, normalized.apiEndpoint);
+  localStorage.setItem("seo_api_endpoint", normalized.apiEndpoint);
+  localStorage.setItem("seo_api_custom_format", normalized.customFormat);
+
+  if (normalized.dataforseoLogin) {
+    localStorage.setItem("seo_dataforseo_login", normalized.dataforseoLogin);
+  } else {
+    localStorage.removeItem("seo_dataforseo_login");
+  }
+  if (normalized.dataforseoPassword) {
+    localStorage.setItem("seo_dataforseo_password", normalized.dataforseoPassword);
+  } else {
+    localStorage.removeItem("seo_dataforseo_password");
+  }
+
+  // Persist this provider's key under its own slot without wiping others
+  for (const p of PROVIDERS) {
+    if (p === normalized.provider) continue;
+    // do not clear other providers' keys
+  }
+
+  return normalized;
+}
+
+/**
+ * Prefer live React state, fall back to localStorage so blog/analyze always
+ * send the key the user last saved — even if a component has a stale prop.
+ */
+export function resolveAiConfig(
+  override?: Partial<AiProviderConfig> | null
+): AiProviderConfig | undefined {
+  const stored = loadAiConfigFromStorage();
+  const merged = normalizeAiConfig({
+    ...stored,
+    ...(override || {}),
+    // Explicit empty override should not wipe storage key
+    apiKey:
+      override?.apiKey !== undefined && String(override.apiKey).trim()
+        ? String(override.apiKey).trim()
+        : stored.apiKey,
+    provider: override?.provider || stored.provider,
+  });
+
+  if (!merged.apiKey || !isValidApiKeyShape(merged.apiKey)) {
+    return undefined;
+  }
+  return merged;
+}
+
+export function maskApiKey(apiKey: string): string {
+  const k = (apiKey || "").trim();
+  if (k.length < 12) return k ? "••••" : "";
+  return `${k.slice(0, 6)}…${k.slice(-4)}`;
+}

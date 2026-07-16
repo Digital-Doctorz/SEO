@@ -13,6 +13,13 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { postApi } from "./lib/api";
 import { normalizeAnalysisResult } from "./lib/normalizeAnalysis";
 import { detectLocationFromDomain } from "./lib/geo";
+import {
+  loadAiConfigFromStorage,
+  saveAiConfigToStorage,
+  resolveAiConfig,
+  AI_PROVIDER_DEFAULTS,
+  normalizeAiConfig,
+} from "./lib/aiConfig";
 const DashboardOverview = lazy(() => import("./components/DashboardOverview"));
 const KeywordLandscape = lazy(() => import("./components/KeywordLandscape"));
 const ContentGapAnalysis = lazy(() => import("./components/ContentGapAnalysis"));
@@ -41,56 +48,27 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState("");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Settings / API Key state (persisted to localStorage)
-  const DEFAULT_PROVIDER: AiProviderConfig["provider"] = "gemini";
-  const PROVIDER_DEFAULTS: Record<AiProviderConfig["provider"], { model: string; endpoint: string }> = {
-    gemini: { model: "gemini-2.5-flash", endpoint: "" },
-    openrouter: { model: "meta-llama/llama-3.3-70b-instruct:free", endpoint: "https://openrouter.ai/api/v1" },
-    custom: { model: "gpt-4o-mini", endpoint: "" }
-  };
-  const STATIC_DEFAULT_CONFIG: AiProviderConfig = {
+  // Settings / API Key state (persisted to localStorage — provider-specific keys)
+  const STATIC_DEFAULT_CONFIG: AiProviderConfig = normalizeAiConfig({
     apiKey: "",
     provider: "gemini",
-    apiEndpoint: "",
-    apiModel: "gemini-2.5-flash",
+    apiEndpoint: AI_PROVIDER_DEFAULTS.gemini.endpoint,
+    apiModel: AI_PROVIDER_DEFAULTS.gemini.model,
     customFormat: "openai",
-  };
+  });
   const [aiConfig, setAiConfig] = useState<AiProviderConfig>(STATIC_DEFAULT_CONFIG);
   const [aiConfigLoaded, setAiConfigLoaded] = useState(false);
 
   useEffect(() => {
-    const storedProvider = (localStorage.getItem("seo_api_provider") as AiProviderConfig["provider"]) || DEFAULT_PROVIDER;
-    const defaults = PROVIDER_DEFAULTS[storedProvider];
-    let storedKey = localStorage.getItem(`seo_api_key_${storedProvider}`) || localStorage.getItem("seo_api_key") || "";
-    if (storedKey && !localStorage.getItem(`seo_api_key_${storedProvider}`)) {
-      localStorage.setItem(`seo_api_key_${storedProvider}`, storedKey);
-    }
-    const dfsLogin = localStorage.getItem("seo_dataforseo_login") || undefined;
-    const dfsPassword = localStorage.getItem("seo_dataforseo_password") || undefined;
-    setAiConfig({
-      apiKey: storedKey,
-      provider: storedProvider,
-      apiEndpoint: localStorage.getItem("seo_api_endpoint") || defaults.endpoint,
-      apiModel: localStorage.getItem("seo_api_model") || defaults.model,
-      customFormat: (localStorage.getItem("seo_api_custom_format") as AiProviderConfig["customFormat"]) || "openai",
-      dataforseoLogin: dfsLogin,
-      dataforseoPassword: dfsPassword,
-    });
+    const loaded = loadAiConfigFromStorage();
+    setAiConfig(loaded);
     setAiConfigLoaded(true);
   }, []);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
 
   const handleSaveAiConfig = (config: AiProviderConfig) => {
-    setAiConfig(config);
-    localStorage.setItem(`seo_api_key_${config.provider}`, config.apiKey);
-    localStorage.setItem("seo_api_provider", config.provider);
-    localStorage.setItem("seo_api_endpoint", config.apiEndpoint);
-    localStorage.setItem("seo_api_model", config.apiModel);
-    localStorage.setItem("seo_api_custom_format", config.customFormat);
-    if (config.dataforseoLogin) localStorage.setItem("seo_dataforseo_login", config.dataforseoLogin);
-    else localStorage.removeItem("seo_dataforseo_login");
-    if (config.dataforseoPassword) localStorage.setItem("seo_dataforseo_password", config.dataforseoPassword);
-    else localStorage.removeItem("seo_dataforseo_password");
+    const saved = saveAiConfigToStorage(config);
+    setAiConfig(saved);
   };
 
   // Content Hub Inter-tab Communication state
@@ -111,13 +89,16 @@ export default function App() {
     setErrorMsg("");
     setAnalysisResult(null);
 
-    // Auto-detect location from target domain TLD
+    // Always resolve latest key from storage so OpenRouter/Gemini match what user saved
     const geo = detectLocationFromDomain(target);
-    const configWithGeo: AiProviderConfig = {
-      ...aiConfig,
-      locationCode: geo.locationCode,
-      languageCode: geo.languageCode,
-    };
+    const liveConfig = resolveAiConfig(aiConfig) || resolveAiConfig(null);
+    const configWithGeo: AiProviderConfig | undefined = liveConfig
+      ? {
+          ...liveConfig,
+          locationCode: geo.locationCode,
+          languageCode: geo.languageCode,
+        }
+      : undefined;
 
     try {
       const data = await postApi<AnalysisResult & {
@@ -413,7 +394,17 @@ export default function App() {
                 className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-all cursor-pointer"
               >
                 <Settings className="h-3.5 w-3.5" />
-                <span>API Settings — {aiConfig.provider} {aiConfig.apiKey ? <span className="text-emerald-500 ml-1">●</span> : <span className="text-amber-400 ml-1">○</span>}</span>
+                <span>
+                  API Settings —{" "}
+                  <span className="capitalize font-bold">{aiConfig.provider}</span>
+                  {aiConfig.apiKey ? (
+                    <span className="text-emerald-500 ml-1" title="Key saved">
+                      ● key set
+                    </span>
+                  ) : (
+                    <span className="text-amber-400 ml-1">○ no key</span>
+                  )}
+                </span>
               </button>
             </div>
           </aside>
