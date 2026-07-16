@@ -846,12 +846,30 @@ export default function ContentHub({
             )}
 
             {generationError && (
-              <div className="p-5 bg-rose-50 border border-rose-100 rounded-2xl text-rose-700 text-xs flex gap-3 items-start animate-fadeIn">
-                <AlertCircle className="h-5 w-5 text-rose-500 mt-0.5 shrink-0" />
+              <div
+                className={`p-5 rounded-2xl text-xs flex gap-3 items-start animate-fadeIn border ${
+                  blogPost
+                    ? "bg-amber-50 border-amber-100 text-amber-900"
+                    : "bg-rose-50 border-rose-100 text-rose-700"
+                }`}
+              >
+                <AlertCircle
+                  className={`h-5 w-5 mt-0.5 shrink-0 ${blogPost ? "text-amber-500" : "text-rose-500"}`}
+                />
                 <div className="space-y-1">
-                  <strong className="font-bold block text-sm text-rose-800">Draft Generation Failed</strong>
-                  <p className="leading-relaxed text-rose-600">{generationError}</p>
-                  <p className="text-[10px] text-rose-400 mt-2 font-medium">Please check your model configuration or try re-drafting with the button on the left panel.</p>
+                  <strong
+                    className={`font-bold block text-sm ${blogPost ? "text-amber-900" : "text-rose-800"}`}
+                  >
+                    {blogPost ? "Draft ready (AI fallback used)" : "Draft Generation Failed"}
+                  </strong>
+                  <p className={`leading-relaxed ${blogPost ? "text-amber-800" : "text-rose-600"}`}>
+                    {generationError}
+                  </p>
+                  <p className={`text-[10px] mt-2 font-medium ${blogPost ? "text-amber-600" : "text-rose-400"}`}>
+                    {blogPost
+                      ? "Your article includes structure, images, tables, and charts. Fix quota in Google AI Studio or switch model in Settings, then re-draft for full AI writing."
+                      : "Check your API key/model in Settings, wait if rate-limited, then try again."}
+                  </p>
                 </div>
               </div>
             )}

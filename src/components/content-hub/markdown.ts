@@ -75,6 +75,51 @@ export function formatMarkdownToHtml(markdown?: string | null): string {
     return renderImageHtml(finalUrl, alt);
   });
 
+  // Inline bar charts: [CHART:bar title="..." labels="a,b,c" values="10,20,30"]
+  html = html.replace(
+    /\[CHART:bar\s+([^\]]+)\]/gi,
+    (_full, attrs: string) => {
+      const getAttr = (name: string) => {
+        const m = attrs.match(new RegExp(`${name}\\s*=\\s*&quot;([^&]*)&quot;|${name}\\s*=\\s*"([^"]*)"`, "i"));
+        return (m?.[1] || m?.[2] || "").trim();
+      };
+      const title = getAttr("title") || "Comparison chart";
+      const labels = (getAttr("labels") || "A,B,C").split(",").map((s) => s.trim()).filter(Boolean);
+      const values = (getAttr("values") || "50,70,40")
+        .split(",")
+        .map((s) => Math.max(0, Math.min(100, Number(s.trim()) || 0)));
+      const max = Math.max(...values, 1);
+      const bars = labels
+        .map((label, i) => {
+          const v = values[i] ?? 0;
+          const h = Math.round((v / max) * 120);
+          const x = 40 + i * 90;
+          const y = 140 - h;
+          return `
+            <rect x="${x}" y="${y}" width="48" height="${h}" rx="6" fill="#2563eb" opacity="0.9" />
+            <text x="${x + 24}" y="158" text-anchor="middle" class="fill-slate-500" font-size="10" font-family="system-ui">${label.slice(0, 12)}</text>
+            <text x="${x + 24}" y="${y - 6}" text-anchor="middle" class="fill-slate-700" font-size="11" font-weight="700" font-family="system-ui">${v}</text>
+          `;
+        })
+        .join("");
+      const width = Math.max(320, 40 + labels.length * 90);
+      return `
+        <div class="my-8 border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm max-w-2xl mx-auto">
+          <div class="px-4 py-3 border-b border-slate-100 bg-slate-50">
+            <span class="text-xs font-extrabold text-slate-800">${title}</span>
+          </div>
+          <div class="p-4 overflow-x-auto">
+            <svg viewBox="0 0 ${width} 175" class="w-full max-w-xl mx-auto" role="img" aria-label="${title}">
+              <line x1="30" y1="20" x2="30" y2="140" stroke="#e2e8f0" stroke-width="1" />
+              <line x1="30" y1="140" x2="${width - 10}" y2="140" stroke="#e2e8f0" stroke-width="1" />
+              ${bars}
+            </svg>
+          </div>
+        </div>
+      `;
+    }
+  );
+
   // Numbered lists
   html = html.replace(/^\d+\.\s+(.*?)$/gm, "<li data-ol=\"1\">$1</li>");
 

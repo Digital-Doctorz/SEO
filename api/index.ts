@@ -373,18 +373,55 @@ function resolveDomain(
  return cleanDomain(raw);
 }
 
+function sleep(ms: number) {
+ return new Promise((r) => setTimeout(r, ms));
+}
+
+/** User-safe error strings (never dump raw Google JSON to the UI). */
+function humanizeProviderError(raw: unknown): string {
+ const msg = String(raw instanceof Error ? raw.message : raw || "");
+ if (/429|RESOURCE_EXHAUSTED|quota|rate-limit|rate limit|free_tier/i.test(msg)) {
+ const retry = msg.match(/retry in ([\d.]+)\s*s/i);
+ const wait = retry ? Math.ceil(Number(retry[1])) : 30;
+ return `Gemini API quota or rate limit reached (free tier is limited). Wait ~${wait}s, switch model in Settings (e.g. gemini-2.5-flash), or upgrade billing at Google AI Studio. A full offline draft was still generated for you.`;
+ }
+ if (/401|403|API_KEY|invalid.*key|permission/i.test(msg)) {
+ return "AI API key was rejected. Open Settings and paste a valid Gemini key from Google AI Studio.";
+ }
+ if (/timed out/i.test(msg)) {
+ return "AI timed out. Showing a complete offline draft — try again with a shorter word count.";
+ }
+ // Strip JSON blobs
+ const cleaned = msg
+ .replace(/\{[\s\S]{0,2000}"error"[\s\S]{0,4000}\}/g, "")
+ .replace(/\s+/g, " ")
+ .trim();
+ return cleaned.slice(0, 280) || "AI provider error. Showing a complete offline draft you can edit.";
+}
+
 async function generateContentWithFallback(
  ai: GoogleGenAI,
  contents: string | any[],
  config: any,
  defaultModel: string = "gemini-2.5-flash"
 ): Promise<any> {
- // Prefer speed: primary model first, one lite fallback, single retry only
- const modelsToTry = Array.from(new Set([defaultModel, "gemini-2.5-flash-lite"])).slice(0, 2);
+ // Try user's model first, then other Flash variants (avoid dying on one free-tier-exhausted model)
+ const modelsToTry = Array.from(
+ new Set(
+ [
+ defaultModel || "gemini-2.5-flash",
+ "gemini-2.5-flash",
+ "gemini-2.0-flash",
+ "gemini-1.5-flash",
+ "gemini-1.5-flash-latest",
+ "gemini-2.5-flash-lite",
+ ].filter(Boolean)
+ )
+ ).slice(0, 5);
  let lastError: any = null;
  for (const model of modelsToTry) {
  let retries = 1;
- let delay = 500;
+ let delay = 800;
  while (retries >= 0) {
  try {
  console.log(`[Gemini] Attempting model: "${model}"`);
@@ -396,20 +433,38 @@ async function generateContentWithFallback(
  throw new Error(`Empty response from model ${model}`);
  } catch (err: any) {
  lastError = err;
- const msg = String(err?.message || "");
- const isQuota = /quota|resource_exhausted|billing|exceeded|limit/i.test(msg)
- && !/rate limit exceeded/i.test(msg);
- if (retries > 0 && !isQuota && (err.status === 503 || err.status === 429 || /high demand|Spikes in demand/i.test(msg))) {
- await new Promise((r) => setTimeout(r, delay));
+ const msg = String(err?.message || err || "");
+ const isDailyQuota =
+ /free_tier|GenerateRequestsPerDay|quotaValue|RESOURCE_EXHAUSTED/i.test(msg) &&
+ !/retry in/i.test(msg);
+ const isTransient429 =
+ err?.status === 429 ||
+ /high demand|Spikes in demand|rate limit|retry in/i.test(msg);
+ const is503 = err?.status === 503 || /unavailable|overloaded/i.test(msg);
+
+ // Daily free-tier exhausted for THIS model -> try next model immediately
+ if (isDailyQuota || (/quota exceeded/i.test(msg) && /free_tier|free tier/i.test(msg))) {
+ console.warn(`[Gemini] Quota hit for ${model}, trying next model`);
+ break;
+ }
+
+ // Short rate-limit: wait once (cap 12s so Vercel stays alive), then retry same model
+ const retryMatch = msg.match(/retry in ([\d.]+)\s*s/i);
+ if (retries > 0 && (isTransient429 || is503)) {
+ const waitMs = retryMatch
+ ? Math.min(12000, Math.ceil(parseFloat(retryMatch[1]) * 1000))
+ : delay;
+ console.warn(`[Gemini] Transient error on ${model}, retry in ${waitMs}ms`);
+ await sleep(waitMs);
  delay *= 2;
  retries--;
- } else {
+ continue;
+ }
  break;
  }
  }
  }
- }
- throw lastError || new Error("All fallback models failed.");
+ throw lastError || new Error("All Gemini models failed (quota or network).");
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label = "Request"): Promise<T> {
@@ -764,6 +819,8 @@ function buildUniqueArticle(opts: {
  content: string;
  faqSection: Array<{ question: string; answer: string }>;
  strategyId: string;
+ tables?: any[];
+ visualizations?: any[];
 } {
  const domain = cleanDomain(opts.domain);
  const brandFromSite = sanitizeText(opts.siteBrief?.brand || "");
@@ -891,11 +948,17 @@ function buildUniqueArticle(opts: {
   ? `This is an enhanced redraft (run ${seed}). Structure, facts density, and CTAs were upgraded from the prior draft${opts.previousTitle ? ` ("${sanitizeText(opts.previousTitle).slice(0, 60)}")` : ""}.`
   : `This draft is grounded in ${opts.siteBrief?.source === "live-crawl" ? `a live crawl of ${domain}` : `a niche profile for ${domain}`}.`;
 
+ const heroImage = `[IMAGE: Professional visual for ${kw} and ${brand} in ${niche}. Alt Text: "${kw} illustrated for ${brand}"]`;
+ const midImage = `[IMAGE: Process diagram style photo for implementing ${kw}. Alt Text: "Step by step ${kw} workflow"]`;
+ const chartBlock = `[CHART:bar title="${kw} approach effectiveness" labels="Focused plan,Ad-hoc,Full rebuild,${brand} path" values="88,40,62,91"]`;
+
  const content = improveReadability(
   [
    `# ${title}`,
    "",
    strategy.intro(kw, brand),
+   "",
+   heroImage,
    "",
    enhanceNote,
    "",
@@ -907,11 +970,17 @@ function buildUniqueArticle(opts: {
    `- ${kw} works best with one clear goal and weekly measurement.`,
    `- Stay relevant to ${brand} and ${niche}; generic advice loses trust.`,
    "- Answer the reader question in the first lines of each H2.",
-   "- Use a comparison table before you recommend a path.",
+   "- Use a comparison table and chart before you recommend a path.",
    `- Link service and resource pages on [${brand}](https://${domain}/) for topical strength.`,
    "- Redrafts should deepen facts and structure, not just rephrase.",
    "",
    bodySections,
+   "",
+   "## Visual summary",
+   "",
+   midImage,
+   "",
+   chartBlock,
    "",
    "## Frequently Asked Questions",
    "",
@@ -932,7 +1001,93 @@ function buildUniqueArticle(opts: {
   content,
   faqSection,
   strategyId: strategy.id,
+  tables: [
+   {
+    title: `${kw} approach comparison`,
+    type: "Decision table",
+    headers: ["Approach", "Best for", "Effort", "Signal time"],
+    rows: [
+     [`Focused ${kw} plan`, "Clear weekly goals", "Medium", "4-8 weeks"],
+     ["Ad-hoc experiments", "Quick tests", "Low", "Unclear"],
+     ["Full overhaul", "Large teams", "High", "8-16 weeks"],
+     [`${brand}-aligned path`, niche.slice(0, 28), "Medium", "3-6 weeks"],
+    ],
+   },
+  ],
+  visualizations: [
+   {
+    type: "Line Chart",
+    title: `${kw} momentum: structured vs ad-hoc (12 weeks)`,
+    data: [
+     { week: 1, structured: 20, adhoc: 18 },
+     { week: 3, structured: 38, adhoc: 24 },
+     { week: 6, structured: 55, adhoc: 30 },
+     { week: 9, structured: 72, adhoc: 34 },
+     { week: 12, structured: 90, adhoc: 40 },
+    ],
+   },
+   {
+    type: "Bar Chart",
+    title: `Buyer priorities when evaluating ${kw}`,
+    data: [
+     { label: "Clarity", value: 92 },
+     { label: "Speed", value: 78 },
+     { label: "Proof", value: 85 },
+     { label: "Cost", value: 70 },
+    ],
+   },
+  ],
  };
+}
+
+/** Ensure article markdown includes images + chart blocks when missing. */
+function ensureMediaInContent(content: string, kw: string, brand: string, _domain: string): string {
+ let c = content || "";
+ if (!/\[IMAGE:/i.test(c)) {
+  const hero = `[IMAGE: Hero visual for ${kw} with ${brand}. Alt Text: "${kw} overview for ${brand}"]`;
+  const mid = `[IMAGE: Practical workflow visual for ${kw}. Alt Text: "${kw} process illustration"]`;
+  const parts = c.split(/\n\n/);
+  if (parts.length >= 2) {
+   parts.splice(2, 0, hero);
+   if (parts.length >= 6) parts.splice(Math.min(6, parts.length - 1), 0, mid);
+   c = parts.join("\n\n");
+  } else {
+   c = `${c}\n\n${hero}\n\n${mid}`;
+  }
+ }
+ if (!/\[CHART:/i.test(c)) {
+  c += `\n\n[CHART:bar title="${kw} effectiveness by approach" labels="Focused,Ad-hoc,Rebuild,${brand}" values="88,42,65,91"]\n`;
+ }
+ if (!/\|.+\|/.test(c)) {
+  c += `\n\n| Approach | Best for | Effort |\n| --- | --- | --- |\n| Focused ${kw} | Clear goals | Medium |\n| Ad-hoc | Experiments | Low |\n| Full rebuild | Large teams | High |\n`;
+ }
+ return c;
+}
+
+function buildDefaultVisualizations(kw: string) {
+ return [
+  {
+   type: "Line Chart",
+   title: `${kw}: structured content vs ad-hoc publishing`,
+   data: [
+    { week: 1, structured: 22, adhoc: 20 },
+    { week: 3, structured: 40, adhoc: 26 },
+    { week: 6, structured: 58, adhoc: 32 },
+    { week: 9, structured: 74, adhoc: 36 },
+    { week: 12, structured: 92, adhoc: 41 },
+   ],
+  },
+  {
+   type: "Bar Chart",
+   title: `What readers want from a ${kw} guide`,
+   data: [
+    { label: "Clear steps", value: 94 },
+    { label: "Examples", value: 86 },
+    { label: "Comparisons", value: 80 },
+    { label: "FAQs", value: 77 },
+   ],
+  },
+ ];
 }
 
 function buildLinkingRecommendations(domain: string, brand: string, kw: string, content: string) {
@@ -1096,6 +1251,7 @@ function normalizeBlogPayload(parsed: any, domain: string, kw: string, seed?: nu
  }
  }
  content = improveReadability(content);
+ content = ensureMediaInContent(content, kw, brand, domain);
  if (faqSection.length === 0) {
  faqSection = [
  {
@@ -1152,6 +1308,26 @@ function normalizeBlogPayload(parsed: any, domain: string, kw: string, seed?: nu
  });
  const preWritingAnalysis = parsed?.preWritingAnalysis || buildPreWritingAnalysis(kw, domain);
 
+ const tables =
+  Array.isArray(parsed?.tables) && parsed.tables.length
+   ? parsed.tables
+   : [
+      {
+       title: `${kw} decision matrix`,
+       type: "Comparison",
+       headers: ["Approach", "Best for", "Effort", "Signal time"],
+       rows: [
+        [`Focused ${kw}`, "Clear goals", "Medium", "4-8 weeks"],
+        ["Ad-hoc posts", "Experiments", "Low", "Unclear"],
+        ["Full rebuild", "Large teams", "High", "8-16 weeks"],
+       ],
+      },
+     ];
+ const visualizations =
+  Array.isArray(parsed?.visualizations) && parsed.visualizations.length
+   ? parsed.visualizations
+   : buildDefaultVisualizations(kw);
+
  return sanitizeDeep({
  title,
  metaDescription,
@@ -1163,6 +1339,8 @@ function normalizeBlogPayload(parsed: any, domain: string, kw: string, seed?: nu
  linkingRecommendations,
  technicalSeo,
  preWritingAnalysis,
+ tables,
+ visualizations,
  strategyId: parsed?.strategyId,
  variationSeed: seed ?? parsed?.variationSeed,
  });
@@ -1345,6 +1523,10 @@ SEO / GEO:
 - 2-4 external links to reputable .gov/.edu/standards/major industry sources
 - Entity-rich language matching the site niche
 - Scannable F-pattern; bold key phrases sparingly
+- MEDIA (required): 2-3 image placeholders in section bodies using exactly:
+  [IMAGE: descriptive scene. Alt Text: "short alt text"]
+- Include exactly one chart line in a section body:
+  [CHART:bar title="Approach effectiveness" labels="Focused plan,Ad-hoc,Full rebuild" values="88,42,65"]
 
 REDRAFT / ENHANCE MODE (when previous draft is provided):
 - Do NOT lightly edit. Fully rewrite and UPGRADE the article.
@@ -2987,8 +3169,9 @@ Return ONLY the JSON object defined in the system prompt.`;
  }
  res.json({ ...normalized, strategyId: strategy.id, variationSeed: seed });
  } catch (err: unknown) {
- const message = redactSecrets(err instanceof Error ? err.message : String(err));
- console.error("Blog error:", message);
+ const raw = redactSecrets(err instanceof Error ? err.message : String(err));
+ console.error("Blog error:", raw);
+ const friendly = humanizeProviderError(raw);
  const unique = buildUniqueArticle({
  domain,
  kw,
@@ -2996,16 +3179,20 @@ Return ONLY the JSON object defined in the system prompt.`;
  seed: seed + 31,
  audience,
  tone,
+ siteBrief,
+ enhance: isEnhance,
+ previousTitle: String(previousTitle || ""),
  });
  const normalized = normalizeBlogPayload(unique, domain, kw, seed + 31);
+ // Always return 200 with a rich draft so the editor never "fails empty"
  return res.json({
  ...normalized,
  isFallback: true,
  strategyId: unique.strategyId,
  variationSeed: seed + 31,
- fallbackReason: message.includes("timed out")
- ? "AI timed out. Showing a fresh unique draft you can edit. Regenerate for another strategy."
- : `AI issue: ${message}. Showing a fresh unique draft. Regenerate for a new angle.`,
+ enhanceMode: isEnhance,
+ quotaExceeded: /quota|rate limit|429|RESOURCE_EXHAUSTED/i.test(raw),
+ fallbackReason: friendly,
  });
  }
 });

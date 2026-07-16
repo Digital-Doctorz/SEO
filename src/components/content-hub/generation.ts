@@ -122,6 +122,15 @@ export function ensureBlogEnrichment(
     "article";
   const pageUrl = `https://${domain}/blog/${slug}`;
 
+  // Ensure media placeholders exist in content for draft rendering
+  let content = post.content || "";
+  if (content && !/\[IMAGE:/i.test(content)) {
+    content = `${content}\n\n[IMAGE: Hero visual for ${kw}. Alt Text: "${kw} for ${brand}"]\n\n[IMAGE: Workflow visual for ${kw}. Alt Text: "${kw} process"]\n`;
+  }
+  if (content && !/\[CHART:/i.test(content)) {
+    content += `\n\n[CHART:bar title="${kw} comparison" labels="Focused,Ad-hoc,Rebuild" values="88,42,65"]\n`;
+  }
+
   const linkingRecommendations = post.linkingRecommendations?.internal?.length
     ? post.linkingRecommendations
     : {
@@ -237,11 +246,54 @@ export function ensureBlogEnrichment(
     ],
   };
 
+  const tables =
+    Array.isArray(post.tables) && post.tables.length
+      ? post.tables
+      : [
+          {
+            title: `${kw} approach comparison`,
+            type: "Decision table",
+            headers: ["Approach", "Best for", "Effort"],
+            rows: [
+              [`Focused ${kw}`, "Clear goals", "Medium"],
+              ["Ad-hoc", "Quick tests", "Low"],
+              ["Full rebuild", "Large teams", "High"],
+            ],
+          },
+        ];
+
+  const visualizations =
+    Array.isArray(post.visualizations) && post.visualizations.length
+      ? post.visualizations
+      : [
+          {
+            type: "Line Chart",
+            title: `${kw}: structured vs ad-hoc (12 weeks)`,
+            data: [
+              { week: 1, structured: 22, adhoc: 18 },
+              { week: 6, structured: 58, adhoc: 32 },
+              { week: 12, structured: 90, adhoc: 40 },
+            ],
+          },
+          {
+            type: "Bar Chart",
+            title: `Reader priorities for ${kw}`,
+            data: [
+              { label: "Steps", value: 92 },
+              { label: "Proof", value: 84 },
+              { label: "Speed", value: 76 },
+            ],
+          },
+        ];
+
   return {
     ...post,
+    content,
     linkingRecommendations,
     technicalSeo,
     preWritingAnalysis,
+    tables,
+    visualizations,
   };
 }
 
