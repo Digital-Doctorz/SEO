@@ -11,7 +11,7 @@ import { AnalysisResult, AiProviderConfig } from "./types";
 import SettingsModal from "./components/SettingsModal";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { postApi } from "./lib/api";
-import { sanitizeDeep } from "./lib/text";
+import { normalizeAnalysisResult } from "./lib/normalizeAnalysis";
 const DashboardOverview = lazy(() => import("./components/DashboardOverview"));
 const KeywordLandscape = lazy(() => import("./components/KeywordLandscape"));
 const ContentGapAnalysis = lazy(() => import("./components/ContentGapAnalysis"));
@@ -115,72 +115,29 @@ export default function App() {
         aiConfig,
       });
 
-      // Sanitize text fields so mojibake never reaches the UI
-      const clean = sanitizeDeep(data) as typeof data & AnalysisResult;
-
-      // Always normalize array fields so tabs never crash on partial AI payloads
-      const safeResult: AnalysisResult = {
-        ...clean,
-        keywords: Array.isArray(clean.keywords) ? clean.keywords : [],
-        contentGaps: Array.isArray(clean.contentGaps)
-          ? clean.contentGaps.map((g: any, i: number) => {
-              const difficulty = Number(g?.competitorDifficulty ?? g?.difficulty ?? 30) || 30;
-              const cat = g?.difficultyCategory;
-              const difficultyCategory =
-                cat === "Easy" || cat === "Medium" || cat === "Hard"
-                  ? cat
-                  : difficulty < 30
-                    ? "Easy"
-                    : difficulty < 55
-                      ? "Medium"
-                      : "Hard";
-              return {
-                competitorKeyword: String(g?.competitorKeyword || g?.keyword || `gap-${i + 1}`),
-                competitorRank: Number(g?.competitorRank ?? g?.rank ?? 5) || 5,
-                competitorVolume: Number(g?.competitorVolume ?? g?.volume ?? 500) || 500,
-                competitorDifficulty: Math.max(1, Math.min(100, Math.round(difficulty))),
-                targetRank:
-                  g?.targetRank === "Not Ranking" || g?.targetRank == null
-                    ? ("Not Ranking" as const)
-                    : Number.isFinite(Number(g.targetRank))
-                      ? Number(g.targetRank)
-                      : ("Not Ranking" as const),
-                recommendedTopic: String(
-                  g?.recommendedTopic || g?.topic || `Guide to ${g?.competitorKeyword || "topic"}`
-                ),
-                recommendedType: String(g?.recommendedType || "Pillar Blog Post"),
-                difficultyCategory,
-                isQuickWin: Boolean(g?.isQuickWin ?? difficulty < 35),
-              };
-            })
-          : [],
-        serpFeatures: Array.isArray(clean.serpFeatures) ? clean.serpFeatures : [],
-        backlinkSources: Array.isArray(clean.backlinkSources) ? clean.backlinkSources : [],
-        backlinkOpportunities: Array.isArray(clean.backlinkOpportunities)
-          ? clean.backlinkOpportunities
-          : [],
-        discoveredCompetitors: Array.isArray(clean.discoveredCompetitors)
-          ? clean.discoveredCompetitors
-          : [],
+      const meta = data as AnalysisResult & {
+        isFallback?: boolean;
+        needsApiKey?: boolean;
+        error?: string;
+        errorMsg?: string;
+        fallbackReason?: string;
       };
+      // Canonical normalize: stable shapes for every tab (gaps, keywords, SERP, links)
+      const safeResult = normalizeAnalysisResult(meta, target);
 
-      // Fallback data is still useful - show it with a notice
-      if (clean.isFallback) {
+      if (meta.isFallback) {
         setAnalysisResult(safeResult);
         setErrorMsg(
-          clean.needsApiKey
+          meta.needsApiKey
             ? "No API key configured. Open Settings to enter your key or review pre-compiled fallback analysis."
-            : clean.errorMsg || clean.fallbackReason || ""
+            : meta.errorMsg || meta.fallbackReason || ""
         );
         setActiveTab("overview");
         return;
       }
 
-      if (clean.error) throw new Error(String(clean.error));
-      // Soft-notice only — do not block UI when enrichment partially fails
-      if (clean.errorMsg) {
-        setErrorMsg(String(clean.errorMsg));
-      }
+      if (meta.error) throw new Error(String(meta.error));
+      if (meta.errorMsg) setErrorMsg(String(meta.errorMsg));
 
       setAnalysisResult(safeResult);
       setActiveTab("overview");

@@ -44,7 +44,16 @@ export default function DashboardOverview({
   onSelectCompetitor 
 }: DashboardOverviewProps) {
   const [selectedMetric, setSelectedMetric] = useState<"dr" | "traffic" | "backlinks" | "frequency">("dr");
-  const trendData = buildTrendData(target.organicTraffic, competitor?.organicTraffic);
+
+  if (!target?.domain) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center text-slate-500 text-sm">
+        No analysis target loaded. Run an analysis from the home screen first.
+      </div>
+    );
+  }
+
+  const trendData = buildTrendData(target.organicTraffic || 0, competitor?.organicTraffic);
 
   return (
     <div className="space-y-8">

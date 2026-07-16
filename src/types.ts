@@ -4,6 +4,14 @@ export interface AiProviderConfig {
   apiEndpoint: string;
   apiModel: string;
   customFormat: "openai" | "anthropic" | "gemini";
+  /** DataForSEO API login (optional — enables live SEO data when both are set) */
+  dataforseoLogin?: string;
+  /** DataForSEO API password (auto-generated, different from account password) */
+  dataforseoPassword?: string;
+  /** Auto-detected location code from target domain TLD (e.g. 2840 = US, 2356 = India) */
+  locationCode?: number;
+  /** Auto-detected language code from target domain TLD (e.g. "en", "de", "fr") */
+  languageCode?: string;
 }
 
 export interface PageMetric {

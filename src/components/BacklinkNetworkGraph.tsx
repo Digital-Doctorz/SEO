@@ -36,13 +36,14 @@ interface LinkEdge {
 }
 
 export default function BacklinkNetworkGraph({
-  backlinkSources,
+  backlinkSources: sourcesProp,
   targetDomain,
   targetRating,
   competitorDomain,
   competitorRating,
   onSimulateRatingChange
 }: BacklinkNetworkGraphProps) {
+  const backlinkSources = Array.isArray(sourcesProp) ? sourcesProp : [];
   // Filters
   const [minDR, setMinDR] = useState<number>(0);
   const [followOnly, setFollowOnly] = useState<boolean>(false);

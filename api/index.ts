@@ -1697,8 +1697,21 @@ app.post("/api/analyze", async (req, res) => {
     return res.status(400).json({ error: "Target URL is required." });
   }
 
-  // Fast path: always build structured baseline immediately (no network AI)
-  const base = await generateFallbackData(domain, competitorUrl);
+  let base: any;
+  try {
+    // Fast path: always build structured baseline immediately (no network AI)
+    base = await generateFallbackData(domain, competitorUrl);
+  } catch (bootErr: unknown) {
+    console.error("Baseline generation failed:", bootErr);
+    return res.status(500).json({
+      error: "Failed to build analysis baseline",
+      isFallback: true,
+      fallbackReason: "Internal baseline error. Please retry.",
+    });
+  }
+
+  try {
+  // --- analysis body (dfseo + AI) ---
 
   // ── DataForSEO real data enrichment (server-side key, no BYOK) ──
   let dfseoData: DataForSeoBundle | null = null;
@@ -1901,6 +1914,24 @@ Realistic numbers. ASCII only. JSON only.`;
           : message,
       })
     );
+  }
+  } catch (fatal: unknown) {
+    // Never 500 an empty body — always return usable baseline
+    const message = redactSecrets(fatal instanceof Error ? fatal.message : String(fatal));
+    console.error("Analyze fatal:", message);
+    try {
+      res.json(
+        sanitizeDeep({
+          ...base,
+          contentGaps: normalizeContentGaps(base?.contentGaps),
+          isFallback: true,
+          dataSource: "simulated",
+          errorMsg: message,
+        })
+      );
+    } catch {
+      res.status(500).json({ error: "Analysis failed", isFallback: true, fallbackReason: message });
+    }
   }
 });
 
@@ -2282,6 +2313,14 @@ const isProd =
  process.env.NODE_ENV === "production" ||
  process.argv.includes("--prod") ||
  isServerless;
+
+// Global JSON error handler for API routes (never leak stack traces to clients)
+app.use((err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) return next(err);
+  const message = redactSecrets(err instanceof Error ? err.message : String(err || "Unknown error"));
+  console.error("Unhandled API error:", message);
+  res.status(500).json({ error: "Internal server error", isFallback: true, fallbackReason: message });
+});
 
 if (isProd) {
  app.use(express.static(distPath));

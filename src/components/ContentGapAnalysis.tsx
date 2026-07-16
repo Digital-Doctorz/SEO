@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ContentGap } from "../types";
+import { normalizeContentGaps } from "../lib/normalizeAnalysis";
 import { AlertCircle, Zap, BookOpen, ChevronRight, HelpCircle, Filter } from "lucide-react";
 import { motion } from "motion/react";
 
@@ -10,59 +11,9 @@ interface ContentGapAnalysisProps {
   onSelectTopic: (topic: string, keyword: string) => void;
 }
 
-/** Normalize partial/malformed gap rows so the Gaps tab never crashes. */
+/** @deprecated use normalizeContentGaps from lib/normalizeAnalysis */
 export function normalizeGapsClient(raw: unknown): ContentGap[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((g: any, i: number): ContentGap | null => {
-      if (!g || typeof g !== "object") return null;
-      const competitorKeyword = String(
-        g.competitorKeyword || g.keyword || g.query || ""
-      ).trim();
-      if (!competitorKeyword) return null;
-
-      const difficultyNum = Number(g.competitorDifficulty ?? g.difficulty ?? 30);
-      const competitorDifficulty = Number.isFinite(difficultyNum)
-        ? Math.max(1, Math.min(100, Math.round(difficultyNum)))
-        : 30;
-
-      let difficultyCategory = String(g.difficultyCategory || "").trim() as ContentGap["difficultyCategory"];
-      if (difficultyCategory !== "Easy" && difficultyCategory !== "Medium" && difficultyCategory !== "Hard") {
-        difficultyCategory =
-          competitorDifficulty < 30 ? "Easy" : competitorDifficulty < 55 ? "Medium" : "Hard";
-      }
-
-      const vol = Number(g.competitorVolume ?? g.volume ?? 500);
-      const competitorVolume = Number.isFinite(vol) ? Math.max(0, Math.round(vol)) : 500;
-
-      const rank = Number(g.competitorRank ?? g.rank ?? 5);
-      const competitorRank = Number.isFinite(rank) ? Math.max(1, Math.round(rank)) : 5;
-
-      let targetRank: number | "Not Ranking" = "Not Ranking";
-      if (g.targetRank === "Not Ranking" || String(g.targetRank).toLowerCase() === "unranked") {
-        targetRank = "Not Ranking";
-      } else if (g.targetRank != null && g.targetRank !== "") {
-        const tr = Number(g.targetRank);
-        targetRank = Number.isFinite(tr) ? Math.round(tr) : "Not Ranking";
-      }
-
-      return {
-        competitorKeyword,
-        competitorRank,
-        competitorVolume,
-        competitorDifficulty,
-        targetRank,
-        recommendedTopic: String(
-          g.recommendedTopic || g.topic || `Complete Guide to ${competitorKeyword}`
-        ).trim(),
-        recommendedType: String(
-          g.recommendedType || g.contentType || (i % 2 === 0 ? "Pillar Blog Post" : "Comparison Guide")
-        ).trim(),
-        difficultyCategory,
-        isQuickWin: Boolean(g.isQuickWin ?? g.quickWin ?? competitorDifficulty < 35),
-      };
-    })
-    .filter((g): g is ContentGap => g != null);
+  return normalizeContentGaps(raw);
 }
 
 function formatVolume(n: number): string {
@@ -83,7 +34,7 @@ export default function ContentGapAnalysis({
   const [difficultyFilter, setDifficultyFilter] = useState<"All" | "Easy" | "Medium" | "Hard">("All");
   const [quickWinOnly, setQuickWinOnly] = useState(false);
 
-  const gaps = useMemo(() => normalizeGapsClient(rawGaps), [rawGaps]);
+  const gaps = useMemo(() => normalizeContentGaps(rawGaps), [rawGaps]);
 
   const filteredGaps = useMemo(() => {
     return gaps.filter((gap) => {
