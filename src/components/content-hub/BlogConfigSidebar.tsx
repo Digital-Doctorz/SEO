@@ -232,7 +232,7 @@ export default function BlogConfigSidebar(props: BlogConfigSidebarProps) {
  <input
  type="range"
  min={400}
- max={2500}
+ max={1400}
  step={100}
  value={wordCount}
  onChange={(e) => onWordCount(Number(e.target.value))}

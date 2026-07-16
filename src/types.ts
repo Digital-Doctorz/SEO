@@ -189,6 +189,10 @@ export interface BlogPost {
   outline: string[];
   content: string;
   schemaMarkup: string; // JSON-LD
+  /** Present when server/client recovered from AI failure */
+  isFallback?: boolean;
+  fallbackReason?: string;
+  errorMsg?: string;
   preWritingAnalysis?: {
     avgLength: number;
     optimalStructure: string;

@@ -449,30 +449,31 @@ export default function ContentHub({
       keywordLower.includes("workspace") ||
       keywordLower.includes("knowledge");
 
+    // Cap word counts: oversized generations often truncate JSON and fail on serverless
     if (isMedical) {
       return {
-        wordCount: 2500, // Deep authority content for medical
+        wordCount: 1200,
         targetAudience: "Patients seeking natural joint pain relief without surgery",
         toneOfVoice: "Empathetic & Warm",
         secondaryKeywords: ["joint restoration", "knee pain relief", "phytomedicine", "osteoarthritis natural treatment"]
       };
     } else if (isPayments) {
       return {
-        wordCount: 1800,
+        wordCount: 1100,
         targetAudience: "Technical Engineers & Developers",
         toneOfVoice: "Technical & Precise",
         secondaryKeywords: ["payment gateway integration", "multi-currency processing", "checkout workflows", "api security"]
       };
     } else if (isNotes) {
       return {
-        wordCount: 1200,
+        wordCount: 1000,
         targetAudience: "General Professionals",
         toneOfVoice: "Educational & Conversational",
         secondaryKeywords: ["productivity templates", "knowledge base workflows", "structured workspaces", "notion template"]
       };
     } else {
       return {
-        wordCount: 1500,
+        wordCount: 1100,
         targetAudience: "Marketing Managers & SEOs",
         toneOfVoice: "Authoritative & Analytical",
         secondaryKeywords: ["organic traffic growth", "competitor analysis", "content strategy", "topical authority"]
@@ -565,64 +566,103 @@ export default function ContentHub({
     setGenerationError(null);
 
     try {
-      const maxAttempts = 2;
-      let lastErrorMsg = "";
-      let success = false;
+      // Single attempt: server already recovers with a structured draft on AI failure
+      const cappedWords = Math.min(1400, Math.max(800, Number(wordCountToUse) || 1100));
+      let data = await generateBlogPost({
+        topic: topicToUse,
+        keyword: keywordToUse || topicToUse,
+        secondaryKeywords: secondaryKeywordsToUse,
+        wordCount: cappedWords,
+        audience: audienceToUse,
+        tone: toneToUse,
+        targetDomain,
+        aiConfig,
+      });
 
-      for (let attempt = 1; attempt <= maxAttempts && !success; attempt++) {
-        try {
-          if (attempt > 1) {
-            await new Promise((resolve) => setTimeout(resolve, 800));
-          }
+      data = ensureSchemaString(data);
+      validateBlogResponse(data);
 
-          let data = await generateBlogPost({
-            topic: topicToUse,
-            keyword: keywordToUse,
-            secondaryKeywords: secondaryKeywordsToUse,
-            wordCount: wordCountToUse,
-            audience: audienceToUse,
-            tone: toneToUse,
-            targetDomain,
-            aiConfig,
-          });
-
-          data = ensureSchemaString(data);
-          validateBlogResponse(data);
-
-          setBlogPost(data);
-          handleSaveArticleVersion(data, true);
-          if (data.isFallback) {
-            setGenerationError(
-              data.fallbackReason ||
-                data.errorMsg ||
-                "Draft recovered after an AI issue. Edit freely, or add/check your API key in Settings and regenerate."
-            );
-          }
-          success = true;
-        } catch (err: unknown) {
-          lastErrorMsg =
-            err instanceof Error
-              ? err.message
-              : "An unexpected error occurred while generating your blog post draft.";
-          if (
-            lastErrorMsg.includes("Validation Error") ||
-            lastErrorMsg.includes("Invalid article response")
-          ) {
-            throw err;
-          }
-        }
-      }
-
-      if (!success) {
-        throw new Error(`Generation failed after ${maxAttempts} attempts. Last error: ${lastErrorMsg}`);
+      setBlogPost(data);
+      handleSaveArticleVersion(data, true);
+      if (data.isFallback) {
+        setGenerationError(
+          data.fallbackReason ||
+            data.errorMsg ||
+            "Draft recovered after an AI issue. Edit freely, or check your API key in Settings and regenerate."
+        );
       }
     } catch (err: unknown) {
       console.error("Final error in generateBlogContent:", err);
-      setGenerationError(
+      const msg =
         err instanceof Error
           ? err.message
-          : "An unexpected error occurred while generating your blog post draft."
-      );
+          : "An unexpected error occurred while generating your blog post draft.";
+      // Last-resort local draft so the editor never stays blank
+      const localDraft: BlogPost = {
+        title: topicToUse,
+        metaDescription: `Practical guide to ${keywordToUse || topicToUse}. Steps, examples, and FAQs.`.slice(0, 155),
+        slugSuggestion: (keywordToUse || topicToUse)
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/(^-|-$)/g, ""),
+        outline: [
+          `What is ${keywordToUse || topicToUse}?`,
+          "Key steps to get started",
+          "Common mistakes",
+          "Frequently Asked Questions",
+        ],
+        content: [
+          `# ${topicToUse}`,
+          "",
+          `This draft covers **${keywordToUse || topicToUse}** for teams working with ${targetDomain}.`,
+          "",
+          "## Key Takeaways",
+          `- Define a clear goal for ${keywordToUse || topicToUse}.`,
+          "- Ship a useful first version, then improve weekly.",
+          "- Use FAQs and structured headings for search visibility.",
+          "",
+          `## What is ${keywordToUse || topicToUse}?`,
+          "",
+          `${keywordToUse || topicToUse} is a practical approach to better outcomes with clear process and measurement.`,
+          "",
+          "## Key steps to get started",
+          "",
+          "1. Audit your current baseline.",
+          "2. Prioritize one high-intent topic.",
+          "3. Publish, measure, and iterate.",
+          "",
+          "## Frequently Asked Questions",
+          "",
+          `### How long does ${keywordToUse || topicToUse} take?`,
+          "Most teams see early signals within 4-8 weeks.",
+          "",
+          "## Conclusion",
+          "",
+          `Continue at https://${targetDomain}/.`,
+        ].join("\n"),
+        schemaMarkup: JSON.stringify(
+          {
+            "@context": "https://schema.org",
+            "@type": "Article",
+            headline: topicToUse,
+            description: `Guide to ${keywordToUse || topicToUse}`,
+          },
+          null,
+          2
+        ),
+        faqSection: [
+          {
+            question: `What is ${keywordToUse || topicToUse}?`,
+            answer: "A focused approach with clear process and measurement.",
+          },
+        ],
+        isFallback: true,
+        fallbackReason: msg.includes("API key")
+          ? "Add your AI API key in Settings to generate a full article. Showing a starter draft for now."
+          : `${msg} Showing a starter draft you can edit.`,
+      };
+      setBlogPost(localDraft);
+      setGenerationError(localDraft.fallbackReason || msg);
     } finally {
       setIsBlogGenerating(false);
     }

@@ -14,28 +14,117 @@ function cleanDomain(url: string): string {
  return domain || "target-website.com";
 }
 
+/** Strip mojibake / fancy unicode so API responses stay readable. */
+function sanitizeText(input: unknown): string {
+ if (input == null) return "";
+ let s = String(input);
+ s = s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+ s = s.replace(/[\u200B-\u200D\uFEFF\u00AD\uFFFD]/g, "");
+ s = s.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
+ s = s.replace(/[\u2014\u2013\u2012\u2015]/g, "-");
+ s = s.replace(/\u2022|\u00B7/g, "-");
+ s = s.replace(/\u2026/g, "...");
+ s = s.replace(/[\u2018\u2019\u201A\u2032]/g, "'");
+ s = s.replace(/[\u201C\u201D\u201E\u2033]/g, '"');
+ s = s.replace(/[\u2190-\u21FF]/g, "->");
+ s = s.replace(/\u20AC/g, "EUR");
+ s = s.replace(/â€[™˜'"]|â€œ|â€\u009C|â€\u009D/g, "'");
+ s = s.replace(/â€"|â€“|â€”/g, "-");
+ s = s.replace(/â€¦/g, "...");
+ s = s.replace(/â€¢/g, "-");
+ s = s.replace(/Ãƒ[\u0080-\u00FF]{0,4}/g, "");
+ s = s.replace(/Ã¢[\u0080-\u00FF]{0,6}/g, "");
+ s = s.replace(/Â/g, "");
+ s = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
+ s = s.replace(/[ \t]{2,}/g, " ");
+ s = s.replace(/ *\n */g, "\n");
+ s = s.replace(/\n{3,}/g, "\n\n");
+ return s.trim();
+}
+
+function sanitizeDeep<T>(value: T): T {
+ if (typeof value === "string") return sanitizeText(value) as T;
+ if (Array.isArray(value)) return value.map((v) => sanitizeDeep(v)) as T;
+ if (value && typeof value === "object") {
+ const out: Record<string, unknown> = {};
+ for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+ out[k] = sanitizeDeep(v);
+ }
+ return out as T;
+ }
+ return value;
+}
+
+/** Close open strings/braces so truncated model output can still parse. */
+function repairTruncatedJson(s: string): string {
+ let inString = false;
+ let escape = false;
+ const stack: string[] = [];
+ let result = "";
+ for (let i = 0; i < s.length; i++) {
+ const c = s[i];
+ if (escape) {
+ result += c;
+ escape = false;
+ continue;
+ }
+ if (c === "\\" && inString) {
+ result += c;
+ escape = true;
+ continue;
+ }
+ if (c === '"') {
+ inString = !inString;
+ result += c;
+ continue;
+ }
+ if (!inString) {
+ if (c === "{") stack.push("}");
+ else if (c === "[") stack.push("]");
+ else if (c === "}" || c === "]") {
+ if (stack.length && stack[stack.length - 1] === c) stack.pop();
+ }
+ }
+ result += c;
+ }
+ if (inString) result += '"';
+ result = result.replace(/,\s*([}\]])/g, "$1");
+ result = result.replace(/,\s*$/, "");
+ while (stack.length) result += stack.pop();
+ return result;
+}
+
 function cleanAndParseJSON(text: string): any {
- let cleaned = text.trim();
+ let cleaned = String(text || "").trim();
  if (cleaned.startsWith("```")) {
- cleaned = cleaned.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/, "");
+ cleaned = cleaned.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "");
  }
  cleaned = cleaned.trim();
  try {
  return JSON.parse(cleaned);
- } catch (err) {
+ } catch {
+ /* continue */
+ }
  const firstBrace = cleaned.indexOf("{");
+ if (firstBrace === -1) {
+ throw new Error(`Failed to parse JSON: no object found. Snippet: ${cleaned.slice(0, 180)}`);
+ }
  const lastBrace = cleaned.lastIndexOf("}");
- if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
- const extracted = cleaned.substring(firstBrace, lastBrace + 1);
+ const extracted =
+ lastBrace > firstBrace
+ ? cleaned.substring(firstBrace, lastBrace + 1)
+ : cleaned.substring(firstBrace);
  try {
  return JSON.parse(extracted);
- } catch (innerErr) {
+ } catch {
+ /* try repair */
+ }
+ try {
+ return JSON.parse(repairTruncatedJson(extracted));
+ } catch (err) {
  throw new Error(
- `Failed to parse extracted JSON: ${(innerErr as Error).message}. Original text: ${text}`
+ `Failed to parse JSON: ${(err as Error).message}. Snippet: ${cleaned.slice(0, 200)}`
  );
- }
- }
- throw err;
  }
 }
 
@@ -129,72 +218,198 @@ function buildArticleSchema(opts: {
  return JSON.stringify({ "@context": "https://schema.org", "@graph": graph }, null, 2);
 }
 
+/** Assemble full markdown from sectioned AI payload (more reliable than one giant string). */
+function assembleBlogFromParts(parsed: any, title: string, kw: string, domain: string, brand: string): string {
+ const intro = sanitizeText(parsed?.intro || "");
+ const takeaways: string[] = Array.isArray(parsed?.keyTakeaways)
+ ? parsed.keyTakeaways.map((t: unknown) => sanitizeText(t)).filter(Boolean)
+ : [];
+ const sections: Array<{ heading: string; body: string }> = Array.isArray(parsed?.sections)
+ ? parsed.sections
+ .map((s: any) => ({
+ heading: sanitizeText(s?.heading || s?.h2 || s?.title || ""),
+ body: sanitizeText(s?.body || s?.content || ""),
+ }))
+ .filter((s: { heading: string; body: string }) => s.heading || s.body)
+ : [];
+ const conclusion = sanitizeText(parsed?.conclusion || "");
+ const rawFaq = parsed?.faqSection || parsed?.faq || [];
+ const faqs: Array<{ question: string; answer: string }> = Array.isArray(rawFaq)
+ ? rawFaq
+ .map((f: any) => ({
+ question: sanitizeText(f?.question || f?.q || ""),
+ answer: sanitizeText(f?.answer || f?.a || ""),
+ }))
+ .filter((f: { question: string; answer: string }) => f.question && f.answer)
+ : [];
+
+ // Prefer existing full content if already long enough
+ const existing = sanitizeText(parsed?.content || "");
+ if (existing.length >= 400 && sections.length === 0) return existing;
+
+ if (intro || takeaways.length || sections.length) {
+ const parts: string[] = [`# ${title}`, ""];
+ if (intro) parts.push(intro, "");
+ if (takeaways.length) {
+ parts.push("## Key Takeaways", ...takeaways.map((t) => (t.startsWith("-") ? t : `- ${t}`)), "");
+ }
+ for (const sec of sections) {
+ if (sec.heading) parts.push(`## ${sec.heading.replace(/^#+\s*/, "")}`, "");
+ if (sec.body) parts.push(sec.body, "");
+ }
+ if (faqs.length) {
+ parts.push("## Frequently Asked Questions", "");
+ for (const f of faqs) {
+ parts.push(`### ${f.question}`, f.answer, "");
+ }
+ }
+ if (conclusion) {
+ parts.push("## Conclusion", "", conclusion);
+ } else {
+ parts.push(
+ "## Conclusion",
+ "",
+ `Use this guide to put ${kw} into practice. Learn more at [${brand}](https://${domain}/).`
+ );
+ }
+ return parts.join("\n").trim();
+ }
+ return existing;
+}
+
+function buildRecoveryArticle(title: string, kw: string, domain: string, brand: string, outline: string[]): string {
+ const heads =
+ outline.length > 0
+ ? outline
+ : [
+ `What is ${kw}?`,
+ `Why ${kw} matters for ${brand}`,
+ `How to implement ${kw} step by step`,
+ `Common mistakes to avoid`,
+ `Tools and metrics that matter`,
+ ];
+ return [
+ `# ${title}`,
+ "",
+ `Looking for a practical guide to **${kw}**? This article gives ${brand} audiences a clear framework: definitions, steps, a comparison table, FAQs, and a concrete next action.`,
+ "",
+ "## Key Takeaways",
+ `- ${kw} works best with clear goals and weekly measurement.`,
+ "- Lead with the reader problem, then give a direct answer.",
+ "- Structure content with H2s, lists, and FAQs for search and AI answers.",
+ `- Link related pages on [${brand}](https://${domain}/) to build topical authority.`,
+ "- Iterate from data, not guesswork.",
+ "",
+ ...heads.flatMap((h) => [
+ `## ${h}`,
+ "",
+ `${sanitizeText(h)} starts with a direct answer: focus on outcomes readers can apply this week. Break the work into small steps, assign owners, and track one primary metric.`,
+ "",
+ "### Practical checklist",
+ "1. Define the goal and audience.",
+ "2. Draft the outline with search intent in mind.",
+ "3. Ship a minimum useful version, then improve.",
+ "",
+ ]),
+ "## Comparison at a glance",
+ "",
+ "| Approach | Best for | Effort | Time to signal |",
+ "| --- | --- | --- | --- |",
+ `| Focused ${kw} plan | Teams with clear goals | Medium | 4-8 weeks |`,
+ "| Ad-hoc posting | One-off experiments | Low | Unclear |",
+ "| Full overhaul | Mature sites with resources | High | 8-16 weeks |",
+ "",
+ "## Frequently Asked Questions",
+ "",
+ `### What is ${kw}?`,
+ `${kw} is a focused method to improve results with clear process, content structure, and measurement.`,
+ "",
+ `### How long until I see results from ${kw}?`,
+ "Most teams see early signals within 4-8 weeks when execution is consistent.",
+ "",
+ `### Who should own ${kw}?`,
+ "A cross-functional owner with support from content, product, and analytics works best.",
+ "",
+ "### Where can I go next?",
+ `Visit [${brand}](https://${domain}/) for services, resources, and next steps.`,
+ "",
+ "## Conclusion",
+ "",
+ `You now have a working blueprint for ${kw}. Start with one section, measure outcomes, and expand. Explore more at [https://${domain}/](https://${domain}/).`,
+ ].join("\n");
+}
+
 function normalizeBlogPayload(parsed: any, domain: string, kw: string): any {
- const brand = (domain.split(".")[0] || "Brand").replace(/^\w/, (c) => c.toUpperCase());
- const title = String(parsed?.title || kw).trim() || kw;
- let content = String(parsed?.content || "").trim();
- const metaDescription = String(
- parsed?.metaDescription || `Practical guide to ${kw} from ${brand}. Clear steps, examples, and FAQs.`
+ const brand = (domain.split(".")[0] || "Brand").replace(/^\w/, (c: string) => c.toUpperCase());
+ const title = sanitizeText(parsed?.title || kw) || kw;
+ const metaDescription = sanitizeText(
+ parsed?.metaDescription ||
+ `Practical guide to ${kw} from ${brand}. Clear steps, examples, and FAQs for faster results.`
  ).slice(0, 160);
- const outline = Array.isArray(parsed?.outline) ? parsed.outline.map(String) : [];
+ const outline = Array.isArray(parsed?.outline)
+ ? parsed.outline.map((o: unknown) => sanitizeText(o)).filter(Boolean)
+ : [];
  let faqSection: Array<{ question: string; answer: string }> = [];
  const rawFaq = parsed?.faqSection || parsed?.faq || [];
  if (Array.isArray(rawFaq)) {
  faqSection = rawFaq
  .map((f: any) => ({
- question: String(f?.question || f?.q || "").trim(),
- answer: String(f?.answer || f?.a || "").trim(),
+ question: sanitizeText(f?.question || f?.q || ""),
+ answer: sanitizeText(f?.answer || f?.a || ""),
  }))
  .filter((f) => f.question && f.answer);
  }
+ let content = assembleBlogFromParts(parsed, title, kw, domain, brand);
  if (content.length < 250) {
- const heads = outline.length > 0 ? outline : [
- `What is ${kw}?`,
- `Why ${kw} matters`,
- `How to get started with ${kw}`,
- `Common mistakes to avoid`,
- `Frequently Asked Questions`,
- ];
- content = [
- `# ${title}`,
- "",
- metaDescription,
- "",
- "## Key Takeaways",
- `- ${kw} is a practical priority for ${brand} audiences.`,
- "- Start with clear goals, measure outcomes, and iterate weekly.",
- "- Use structured content and FAQs to improve search visibility.",
- "",
- ...heads.flatMap((h) => [`## ${h}`, "", `Here is a clear overview of ${h.toLowerCase()}. Focus on actionable steps, real examples, and measurable outcomes that help readers apply ${kw} immediately.`, ""]),
- "## Conclusion",
- "",
- `Use this guide to move from research to action on ${kw}. Learn more at https://${domain}/.`,
- ].join("\n");
+ content = buildRecoveryArticle(title, kw, domain, brand, outline);
  }
  if (faqSection.length === 0) {
  faqSection = [
- { question: `What is ${kw}?`, answer: `${kw} is a focused approach that helps teams improve outcomes with clear process and measurement.` },
- { question: `How long does ${kw} take to show results?`, answer: "Most teams see early signals within 4-8 weeks when execution is consistent." },
- { question: `Who should own ${kw}?`, answer: "A cross-functional owner with support from content, product, and analytics works best." },
- { question: `Where can I learn more?`, answer: `Visit https://${domain}/ for resources, services, and next steps.` },
+ {
+ question: `What is ${kw}?`,
+ answer: `${kw} is a focused approach that helps teams improve outcomes with clear process and measurement.`,
+ },
+ {
+ question: `How long does ${kw} take to show results?`,
+ answer: "Most teams see early signals within 4-8 weeks when execution is consistent.",
+ },
+ {
+ question: `Who should own ${kw}?`,
+ answer: "A cross-functional owner with support from content, product, and analytics works best.",
+ },
+ {
+ question: `Where can I learn more?`,
+ answer: `Visit https://${domain}/ for resources, services, and next steps.`,
+ },
  ];
  }
- let schemaMarkup = parsed?.schemaMarkup;
- if (schemaMarkup && typeof schemaMarkup === "object") {
- schemaMarkup = JSON.stringify(schemaMarkup, null, 2);
- }
- if (typeof schemaMarkup !== "string" || !schemaMarkup.trim()) {
- schemaMarkup = buildArticleSchema({ title, description: metaDescription, domain, brand, faqs: faqSection });
- } else {
- try { JSON.parse(schemaMarkup); } catch {
- schemaMarkup = buildArticleSchema({ title, description: metaDescription, domain, brand, faqs: faqSection });
- }
- }
- const slugSuggestion = String(parsed?.slugSuggestion || title)
+ // Always rebuild schema server-side for validity (AI schema often breaks)
+ const schemaMarkup = buildArticleSchema({
+ title,
+ description: metaDescription,
+ domain,
+ brand,
+ faqs: faqSection,
+ });
+ const slugSuggestion =
+ sanitizeText(parsed?.slugSuggestion || title)
  .toLowerCase()
  .replace(/[^a-z0-9]+/g, "-")
  .replace(/(^-|-$)/g, "") || "article";
- return { title, metaDescription, slugSuggestion, outline, content, schemaMarkup, faqSection };
+ return sanitizeDeep({
+ title,
+ metaDescription,
+ slugSuggestion,
+ outline: outline.length
+ ? outline
+ : content
+ .split("\n")
+ .filter((l: string) => l.startsWith("## "))
+ .map((l: string) => l.replace(/^##\s+/, "")),
+ content,
+ schemaMarkup,
+ faqSection,
+ });
 }
 
 // ============================================================
@@ -338,39 +553,31 @@ function redactSecrets(message: string): string {
 const SEO_BLOG_SYSTEM_PROMPT = `You are an elite SEO content strategist and editorial writer.
 Write for humans first; structure for search engines and AI answer engines (GEO).
 
-MANDATORY ARTICLE STANDARDS:
-1. Information gain: add net-new value (counter-narrative, specific examples, decision frameworks, practical checklists). Avoid generic consensus fluff.
-2. Primary keyword in title (near start), first 100 words, one H2, and naturally 0.8–2% density. Never keyword-stuff.
-3. Intro 40–120 words: hook (pain/stat/question) → primary keyword → what the reader will learn.
-4. After intro: "## Key Takeaways" with 5–7 bullets OR a 50–100 word **TL;DR**.
-5. Body uses QAE: each H2 as a clear question or intent phrase → answer in first 40–60 words → evidence (examples, steps, mini-tables).
-6. Paragraphs 40–80 words; use lists, H3s, and short tables every 2–3 sections. Scannable F-pattern; bold key phrases sparingly.
-7. Include at least one comparison or decision table in markdown.
-8. Include a step-by-step "## How to..." section when intent is how-to/commercial.
-9. FAQ: 4–6 natural-language questions with concise answers (People Also Ask style).
-10. Conclusion: summary + clear CTA linking to the brand domain (services/about/contact style paths).
-11. E-E-A-T tone: specific, authoritative, cite plausible reputable sources inline as markdown links (e.g. industry standards, .gov/.edu/major pubs). Do not invent fake study DOIs.
-12. GEO/AEO: self-contained answer blocks; definition under first H2; entity-rich language; no walls of text.
-13. Meta title ≤60 chars; meta description 140–155 chars with primary keyword and a benefit.
-14. Internal links: 3–6 markdown links to https://{domain}/... paths with descriptive anchors (not "click here").
-15. External links: 2–4 high-authority sources.
-16. Output language matches the topic; reading level roughly grade 8–10 unless technical audience is specified.
+MANDATORY STANDARDS:
+1. Information gain: specific examples, decision frameworks, checklists. No generic fluff.
+2. Primary keyword near start of title, in intro, and in one H2. Natural density ~1%. Never stuff.
+3. Intro 40-100 words: hook -> keyword -> what reader learns.
+4. 5 key takeaways as short bullets.
+5. QAE body: each section answers first, then steps/evidence.
+6. One markdown comparison table somewhere in a section body.
+7. 4 FAQ Q&As in faqSection (People Also Ask style).
+8. Conclusion with CTA to the brand domain.
+9. 2-4 internal markdown links to https://{domain}/... paths.
+10. Plain ASCII punctuation only (hyphens, straight quotes). No emojis, no fancy dashes.
 
-FORBIDDEN:
-- Keyword stuffing or repeating the keyword in every sentence
-- Thin filler, vague claims, "in today's digital world" clichés
-- Fabricated personal medical/legal advice presented as clinical fact for YMYL without disclaimers
-- Inventing exact survey percentages from non-existent studies
+FORBIDDEN: keyword stuffing, "in today's digital world", fake study stats, incomplete JSON.
 
-Return ONLY valid JSON (no markdown fences) with:
+Return ONLY valid compact JSON (no markdown fences, no schemaMarkup field):
 {
  "title": string,
- "metaDescription": string,
+ "metaDescription": string (140-155 chars),
  "slugSuggestion": string (kebab-case),
- "outline": string[] (H2 titles in order),
- "content": string (full markdown article including Key Takeaways, body, FAQ section, conclusion),
- "schemaMarkup": string (JSON-LD as a stringified object — Article + FAQPage graph preferred),
- "faqSection": [{ "question": string, "answer": string }]
+ "outline": string[] (H2 titles),
+ "intro": string (markdown paragraphs, no H1),
+ "keyTakeaways": string[] (5 short bullets without leading dashes),
+ "sections": [ { "heading": string, "body": string } ] (5-7 sections; body is markdown without the H2 line; one body includes a markdown table),
+ "faqSection": [ { "question": string, "answer": string } ],
+ "conclusion": string (markdown with CTA link)
 }`;
 
 
@@ -679,7 +886,7 @@ async function generateFallbackData(targetRaw: string, competitorRaw?: string) {
  sourceDomain: "niche-authority.com",
  opportunityUrl: "https://niche-authority.com/write-for-us",
  description: `Pitch a data-backed article on ${nicheKeywords[0] || "industry trends"} with a contextual link to your pillar page.`,
- actionPlan: "Draft outline € pitch editor € publish with 1 dofollow contextual link.",
+ actionPlan: "Draft outline -> pitch editor -> publish with 1 dofollow contextual link.",
  },
  {
  type: "Unlinked Mention" as const,
@@ -747,7 +954,11 @@ async function generateFallbackData(targetRaw: string, competitorRaw?: string) {
  ],
  localKeywordsToTarget: [],
  },
- autonomousBlog: getAutonomousBlog(target, nicheKeywords[0] || "services"),
+ autonomousBlog: normalizeBlogPayload(
+ getAutonomousBlog(target, nicheKeywords[0] || "services"),
+ target,
+ nicheKeywords[0] || "services"
+ ),
  };
 }
 
@@ -772,7 +983,7 @@ function socialFallback(
  platform: platform || "Twitter/X",
  content: `Discover how ${brand} approaches ${kw}.\n\n${topic || "Fresh insights"} for teams who care about organic growth.\n\nLearn more: https://${domain}`,
  hashtags: [kw.replace(/\s+/g, ""), "SEO", "ContentMarketing"].filter(Boolean),
- optimalPostingTime: "Tue–Thu 9–11am local",
+ optimalPostingTime: "Tue-Thu 9-11am local",
  engagementStrategy: "Ask a question in the first line and reply to comments within 1 hour.",
  seoNotes: `Primary keyword: ${kw}`,
  isFallback: true,
@@ -803,34 +1014,49 @@ app.post("/api/analyze", async (req, res) => {
  const providerConfig = getProviderConfig(req);
 
  if (!providerConfig) {
- return res.json({
+ return res.json(
+ sanitizeDeep({
  ...base,
  isFallback: true,
  needsApiKey: true,
  fallbackReason:
  "Demo data only. Open Settings and add your own AI API key for live analysis. No shared keys are stored on this server.",
- });
+ })
+ );
  }
 
- // Live AI enrichment — short timeout, NO googleSearch tools (those make analysis very slow)
+ // Live AI enrichment — short timeout, NO googleSearch (slow). Prefer flash-lite for speed.
  try {
- const prompt = `Return compact JSON SEO analysis for domain "${domain}"${competitorUrl ? ` vs competitor "${cleanDomain(competitorUrl)}"` : ""}.
-Keep arrays short: keywords(6), contentGaps(5), serpFeatures(4), discoveredCompetitors(6), backlinkSources(5), backlinkOpportunities(3).
-Fields: target{domain,domainRating,backlinksCount,referringDomains,organicTraffic,organicKeywords,publishingFrequency,topPages[{url,title,estTraffic,keywordsCount}]}, competitor(same or null), discoveredCompetitors[{domain,nicheSimilarity,nicheFocus,estimatedMonthlyTraffic,popularBlogUrl,latestArticleTitle,latestArticleUrl,analyzedTakeaway}], targetAnalysis{coreNiche,audiencePersona,contentStrengths[],contentWeaknesses[],detailedBreakdown}, keywords[{keyword,volume,difficulty,cpc,intent,type,competition,trend,serpRankings,relatedKeywords,parentTopic,buyerJourneyStage,opportunityScore,isPillarOpportunity}], contentGaps, serpFeatures, backlinkSources, backlinkOpportunities, rankingBlueprint{currentPosition,targetPosition,summary,technicalSeo[],localSeo[],contentStrategy[],linkBuilding[],timelineEstimate,priorityActions[{action,impact,effort,timeframe}],localKeywordsToTarget[]}.
-Use realistic numbers. ASCII text only (no fancy unicode dashes or emojis). JSON only.`;
+ const prompt = `Compact JSON SEO analysis for "${domain}"${competitorUrl ? ` vs "${cleanDomain(competitorUrl)}"` : ""}.
+Short arrays only: keywords(5), contentGaps(4), serpFeatures(3), discoveredCompetitors(4), backlinkSources(3), backlinkOpportunities(2).
+Include: target{domain,domainRating,backlinksCount,referringDomains,organicTraffic,organicKeywords,publishingFrequency,topPages[{url,title,estTraffic,keywordsCount}]}, competitor or null, targetAnalysis{coreNiche,audiencePersona,contentStrengths[],contentWeaknesses[],detailedBreakdown}, keywords[{keyword,volume,difficulty,cpc,intent,type,opportunityScore}], contentGaps[{competitorKeyword,recommendedTopic,difficultyCategory,isQuickWin}], rankingBlueprint{summary,priorityActions[{action,impact,effort,timeframe}],timelineEstimate}.
+Realistic numbers. ASCII only. JSON only.`;
+
+ // Prefer flash-lite for analysis speed (user can still set a custom model in Settings)
+ const fastConfig: ProviderConfig = {
+ ...providerConfig,
+ apiModel:
+ providerConfig.provider === "gemini"
+ ? "gemini-2.5-flash-lite"
+ : providerConfig.apiModel,
+ };
 
  const result = await withTimeout(
- callAI(providerConfig, prompt, "You output valid compact JSON only. No markdown fences. ASCII punctuation only.", {
+ callAI(fastConfig, prompt, "Valid compact JSON only. No fences. ASCII punctuation.", {
  responseMimeType: "application/json",
- temperature: 0.2,
- maxOutputTokens: 4096,
+ temperature: 0.15,
+ maxOutputTokens: 2500,
  }),
- 18000,
+ 12000,
  "SEO analysis"
  );
  const parsed = cleanAndParseJSON(result.text);
- // Merge: prefer AI where present, keep baseline structure for missing fields
- res.json({
+ const autonomous =
+ parsed.autonomousBlog
+ ? normalizeBlogPayload(parsed.autonomousBlog, domain, base.keywords?.[0]?.keyword || "services")
+ : base.autonomousBlog;
+ res.json(
+ sanitizeDeep({
  ...base,
  ...parsed,
  target: { ...base.target, ...(parsed.target || {}) },
@@ -839,22 +1065,30 @@ Use realistic numbers. ASCII text only (no fancy unicode dashes or emojis). JSON
  contentGaps: Array.isArray(parsed.contentGaps) && parsed.contentGaps.length ? parsed.contentGaps : base.contentGaps,
  serpFeatures: Array.isArray(parsed.serpFeatures) && parsed.serpFeatures.length ? parsed.serpFeatures : base.serpFeatures,
  backlinkSources: Array.isArray(parsed.backlinkSources) && parsed.backlinkSources.length ? parsed.backlinkSources : base.backlinkSources,
- backlinkOpportunities: Array.isArray(parsed.backlinkOpportunities) && parsed.backlinkOpportunities.length ? parsed.backlinkOpportunities : base.backlinkOpportunities,
- discoveredCompetitors: Array.isArray(parsed.discoveredCompetitors) && parsed.discoveredCompetitors.length ? parsed.discoveredCompetitors : base.discoveredCompetitors,
- autonomousBlog: parsed.autonomousBlog || base.autonomousBlog,
+ backlinkOpportunities:
+ Array.isArray(parsed.backlinkOpportunities) && parsed.backlinkOpportunities.length
+ ? parsed.backlinkOpportunities
+ : base.backlinkOpportunities,
+ discoveredCompetitors:
+ Array.isArray(parsed.discoveredCompetitors) && parsed.discoveredCompetitors.length
+ ? parsed.discoveredCompetitors
+ : base.discoveredCompetitors,
+ autonomousBlog: autonomous,
  isFallback: false,
- });
+ })
+ );
  } catch (err: unknown) {
  const message = redactSecrets(err instanceof Error ? err.message : String(err));
  console.error("Analyze error:", message);
- // Never fail the UX — return fast baseline with notice
- res.json({
+ res.json(
+ sanitizeDeep({
  ...base,
  isFallback: true,
  errorMsg: message.includes("timed out")
  ? "Live AI timed out. Showing fast structured analysis instead."
  : message,
- });
+ })
+ );
  }
 });
 
@@ -879,48 +1113,48 @@ app.post("/api/generate-blog", async (req, res) => {
  const secondary = Array.isArray(secondaryKeywords)
  ? secondaryKeywords.filter(Boolean).join(", ")
  : String(secondaryKeywords || "");
- // Cap length for reliability (long generations often truncate/fail JSON)
- const targetWords = Math.max(900, Math.min(2200, Number(wordCount) || 1500));
+ // Cap length hard: giant single-string articles break JSON on serverless
+ const targetWords = Math.max(800, Math.min(1400, Number(wordCount) || 1200));
  const brand = domain.split(".")[0] || "the brand";
- const userPrompt = `Write an SEO article as JSON for https://${domain}/
+ const userPrompt = `Write SEO article parts as JSON for https://${domain}/
 
 Primary keyword: ${kw}
 Topic: ${topic || kw}
 Secondary keywords: ${secondary || "related practical terms"}
-Length: about ${targetWords} words
+Target length: about ${targetWords} words total across all parts
 Audience: ${audience || "professionals researching solutions"}
 Tone: ${tone || "clear, authoritative, practical"}
 Brand: ${brand}
 
-content (markdown) must include:
-- # Title
-- Intro with keyword in first 100 words
-- ## Key Takeaways (5 bullets)
-- 5-7 ## sections with direct answers first
-- One markdown table
-- ## Frequently Asked Questions (4 Q&As)
-- ## Conclusion with CTA to https://${domain}/
-
-Use only plain ASCII punctuation (hyphens, not special dashes). No emojis.
-schemaMarkup must be a JSON string (Article + FAQPage).
-Return ONLY JSON with keys: title, metaDescription, slugSuggestion, outline, content, schemaMarkup, faqSection.`;
+Use sectioned fields (intro, keyTakeaways, sections, faqSection, conclusion) - NOT one giant content string.
+Include one markdown table inside one section body.
+ASCII punctuation only. No emojis. No schemaMarkup field.
+Return ONLY the JSON object described in the system prompt.`;
 
  const result = await withTimeout(
  callAI(providerConfig, userPrompt, SEO_BLOG_SYSTEM_PROMPT, {
  responseMimeType: "application/json",
- temperature: 0.4,
- maxOutputTokens: 8192,
+ temperature: 0.35,
+ maxOutputTokens: 6144,
  }),
- 45000,
+ 40000,
  "Blog generation"
  );
  const parsed = cleanAndParseJSON(result.text);
  const normalized = normalizeBlogPayload(parsed, domain, kw);
+ // Soft length check: if AI returned near-empty parts, still return recovery
+ if (!normalized.content || normalized.content.length < 200) {
+ const template = getAutonomousBlog(domain, kw);
+ return res.json({
+ ...normalizeBlogPayload(template, domain, kw),
+ isFallback: true,
+ fallbackReason: "AI returned incomplete content. Showing a structured draft you can edit.",
+ });
+ }
  res.json(normalized);
  } catch (err: unknown) {
  const message = redactSecrets(err instanceof Error ? err.message : String(err));
  console.error("Blog error:", message);
- // Graceful recovery: quality template so the editor never blank-fails
  try {
  const template = getAutonomousBlog(domain, kw);
  const normalized = normalizeBlogPayload(template, domain, kw);
@@ -928,12 +1162,17 @@ Return ONLY JSON with keys: title, metaDescription, slugSuggestion, outline, con
  ...normalized,
  isFallback: true,
  fallbackReason: message.includes("timed out")
- ? "AI timed out. Showing a structured draft you can edit. Try again or shorten word count."
- : `AI error: ${message}. Showing a structured draft you can edit.`,
+ ? "AI timed out. Showing a structured draft you can edit. Try again with a shorter word count."
+ : `AI issue: ${message}. Showing a structured draft you can edit.`,
  });
  } catch {
- return res.status(502).json({
- error: "Blog generation failed",
+ const emergency = normalizeBlogPayload(
+ { title: kw, outline: [] },
+ domain,
+ kw
+ );
+ return res.json({
+ ...emergency,
  isFallback: true,
  fallbackReason: message,
  });
@@ -1002,17 +1241,42 @@ app.post("/api/analyze-keyword-deep", async (req, res) => {
  });
  }
  try {
- const prompt = `Perform a deep keyword analysis for "${keyword}" in the context of "${domain}". Use googleSearch for real data. Return JSON with: keyword, topResults, averageContentLength, commonSubtopics, featuredSnippet, peopleAlsoAsk, relatedSearches, contentTypeAnalysis, freshnessRequirements.`;
- const result = await callAI(providerConfig, prompt, "", {
- tools: [{ googleSearch: {} }],
+ // No googleSearch tools - they make this endpoint extremely slow on Vercel
+ const prompt = `Deep keyword SEO audit for "${keyword}" targeting site "${domain}".
+Return compact JSON only (ASCII text):
+{
+ "keyword": string,
+ "topResults": [{ "rank": number, "title": string, "url": string, "contentLength": number, "contentType": string, "domainRating": number, "freshnessScore": "Fresh|Stable|Legacy" }] (8 items),
+ "averageContentLength": number,
+ "commonSubtopics": [{ "subtopic": string, "relevance": number, "description": string }] (5),
+ "featuredSnippet": { "format": "Paragraph|List|Table", "extractedText": string, "optimizedOpportunity": string },
+ "peopleAlsoAsk": [{ "question": string, "answer": string, "sourceUrl": string }] (4),
+ "relatedSearches": string[] (6),
+ "contentTypeAnalysis": { "dominantType": string, "percentageBreakdown": [{ "type": string, "percentage": number }] },
+ "freshnessRequirements": { "level": "Low|Medium|High", "explanation": string, "recommendedUpdateFrequency": string }
+}
+Use realistic SERP-style data for the niche. JSON only.`;
+ const fastConfig = {
+ ...providerConfig,
+ apiModel:
+ providerConfig.provider === "gemini"
+ ? "gemini-2.5-flash-lite"
+ : providerConfig.apiModel,
+ };
+ const result = await withTimeout(
+ callAI(fastConfig, prompt, "Valid compact JSON only. No fences. ASCII only.", {
  responseMimeType: "application/json",
- temperature: 0.1,
- });
- res.json(cleanAndParseJSON(result.text));
+ temperature: 0.15,
+ maxOutputTokens: 3000,
+ }),
+ 15000,
+ "Deep keyword analysis"
+ );
+ res.json(sanitizeDeep(cleanAndParseJSON(result.text)));
  } catch (err: unknown) {
  const message = redactSecrets(err instanceof Error ? err.message : String(err));
  const data = await generateDeepKeywordFallback(keyword, domain);
- res.json({ ...data, isFallback: true, errorMsg: message });
+ res.json(sanitizeDeep({ ...data, isFallback: true, errorMsg: message }));
  }
 });
 

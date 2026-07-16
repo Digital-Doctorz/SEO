@@ -75,22 +75,70 @@ export function formatMarkdownToHtml(markdown?: string | null): string {
     return renderImageHtml(finalUrl, alt);
   });
 
+  // Numbered lists
+  html = html.replace(/^\d+\.\s+(.*?)$/gm, "<li data-ol=\"1\">$1</li>");
+
   // Bullet items
   html = html.replace(/^\* (.*?)$/gm, "<li>$1</li>");
   html = html.replace(/^- (.*?)$/gm, "<li>$1</li>");
 
-  // Wrap consecutive <li> into <ul> blocks
-  html = html.replace(/(<li>.*?<\/li>)+/g, "<ul>$&</ul>");
+  // Wrap consecutive <li> into <ul>/<ol> blocks
+  html = html.replace(/(<li data-ol="1">.*?<\/li>\n?)+/g, (m) =>
+    `<ol class="list-decimal pl-5 my-3 space-y-1">${m.replace(/ data-ol="1"/g, "")}</ol>`
+  );
+  html = html.replace(/(<li>.*?<\/li>\n?)+/g, (m) =>
+    `<ul class="list-disc pl-5 my-3 space-y-1">${m}</ul>`
+  );
+
+  // Simple GFM tables
+  html = html.replace(
+    /(?:^|\n)((?:\|.+\|\n)+)/g,
+    (_match, tableBlock: string) => {
+      const rows = tableBlock
+        .trim()
+        .split("\n")
+        .filter((r) => r.trim().startsWith("|"));
+      if (rows.length < 2) return tableBlock;
+      const parseRow = (row: string) =>
+        row
+          .replace(/^\|/, "")
+          .replace(/\|$/, "")
+          .split("|")
+          .map((c) => c.trim());
+      const isSep = (row: string) => /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?$/.test(row);
+      const header = parseRow(rows[0]);
+      let bodyStart = 1;
+      if (rows[1] && isSep(rows[1])) bodyStart = 2;
+      const body = rows.slice(bodyStart).map(parseRow);
+      const thead = `<thead><tr>${header.map((h) => `<th class="border border-slate-200 bg-slate-50 px-3 py-2 text-left text-xs font-bold text-slate-700">${h}</th>`).join("")}</tr></thead>`;
+      const tbody = `<tbody>${body
+        .map(
+          (cells) =>
+            `<tr>${cells
+              .map((c) => `<td class="border border-slate-200 px-3 py-2 text-sm text-slate-700">${c}</td>`)
+              .join("")}</tr>`
+        )
+        .join("")}</tbody>`;
+      return `\n<table class="w-full border-collapse my-4 text-left rounded-lg overflow-hidden">${thead}${tbody}</table>\n`;
+    }
+  );
 
   // Paragraph separator (double newlines)
   const blocks = html.split(/\n\n+/);
   const formattedBlocks = blocks.map((block) => {
     const trimmed = block.trim();
     if (!trimmed) return "";
-    if (trimmed.startsWith("<h") || trimmed.startsWith("<ul") || trimmed.startsWith("<li") || trimmed.includes("rounded-2xl")) {
+    if (
+      trimmed.startsWith("<h") ||
+      trimmed.startsWith("<ul") ||
+      trimmed.startsWith("<ol") ||
+      trimmed.startsWith("<li") ||
+      trimmed.startsWith("<table") ||
+      trimmed.includes("rounded-2xl")
+    ) {
       return trimmed;
     }
-    return `<p>${trimmed.replace(/\n/g, "<br />")}</p>`;
+    return `<p class="my-3 leading-relaxed">${trimmed.replace(/\n/g, "<br />")}</p>`;
   });
 
   return formattedBlocks.join("");
