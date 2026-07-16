@@ -648,7 +648,17 @@ export default function ContentHub({
             "Draft recovered after an AI issue. Edit freely, or check your API key in Settings and regenerate for a deeper rewrite."
         );
       } else {
-        setGenerationError(null);
+        const qs = (data as { qualityScore?: { words?: number; ok?: boolean }; researchUsed?: boolean; aiGenerated?: boolean })
+          .qualityScore;
+        const researchUsed = (data as { researchUsed?: boolean }).researchUsed;
+        const aiGenerated = (data as { aiGenerated?: boolean }).aiGenerated;
+        if (aiGenerated && qs && !qs.ok && (qs.words || 0) > 0) {
+          setGenerationError(
+            `AI article generated (${qs.words || "?"} words)${researchUsed ? " with research brief" : ""}. Some quality checks were soft — review structure before publishing.`
+          );
+        } else {
+          setGenerationError(null);
+        }
       }
     } catch (err: unknown) {
       console.error("Final error in generateBlogContent:", err);
