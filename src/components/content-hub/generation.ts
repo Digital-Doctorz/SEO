@@ -1,5 +1,6 @@
 import type { AiProviderConfig, BlogPost, SocialPost } from "../../types";
 import { postApi } from "../../lib/api";
+import { sanitizeDeep, sanitizeText } from "../../lib/text";
 
 export interface MetaSnippet {
   type: string;
@@ -55,16 +56,20 @@ export async function generateBlogPost(params: {
   targetDomain: string;
   aiConfig?: AiProviderConfig;
 }): Promise<BlogPost & { isFallback?: boolean; fallbackReason?: string; errorMsg?: string }> {
-  return postApi("/api/generate-blog", {
-    topic: params.topic,
-    keyword: params.keyword,
-    secondaryKeywords: params.secondaryKeywords,
-    wordCount: params.wordCount,
-    audience: params.audience,
-    tone: params.tone,
-    targetDomain: params.targetDomain,
-    aiConfig: params.aiConfig,
-  });
+  const data = await postApi<BlogPost & { isFallback?: boolean; fallbackReason?: string; errorMsg?: string }>(
+    "/api/generate-blog",
+    {
+      topic: params.topic,
+      keyword: params.keyword,
+      secondaryKeywords: params.secondaryKeywords,
+      wordCount: params.wordCount,
+      audience: params.audience,
+      tone: params.tone,
+      targetDomain: params.targetDomain,
+      aiConfig: params.aiConfig,
+    }
+  );
+  return sanitizeDeep(data);
 }
 
 export async function analyzeKeywordDeep(params: {
@@ -98,32 +103,53 @@ export function ensureSchemaString(data: BlogPost & { schemaMarkup?: unknown }):
 
 export function validateBlogResponse(data: BlogPost): void {
   if (!data) throw new Error("Server returned an empty response.");
+  data.title = sanitizeText(data.title);
+  data.content = sanitizeText(data.content);
+  data.metaDescription = sanitizeText(data.metaDescription);
   if (typeof data.title !== "string" || !data.title.trim()) {
     throw new Error("Invalid article response: Title is missing or blank.");
   }
   if (typeof data.content !== "string" || !data.content.trim()) {
     throw new Error("Invalid article response: Article content is missing or blank.");
   }
-  if (data.content.trim().length < 200) {
+  // Server now normalizes short content; allow shorter drafts after recovery
+  if (data.content.trim().length < 120) {
     throw new Error(
       `Invalid article response: Article content is too short (${data.content.trim().length} chars).`
     );
   }
-  if (typeof data.schemaMarkup !== "string" || !data.schemaMarkup.trim()) {
-    throw new Error(
-      "Invalid article response: Schema.org structured data (JSON-LD) is missing or blank."
-    );
+  if (data.schemaMarkup && typeof data.schemaMarkup === "object") {
+    data.schemaMarkup = JSON.stringify(data.schemaMarkup, null, 2);
   }
-  try {
-    const parsedSchema = JSON.parse(data.schemaMarkup);
-    if (typeof parsedSchema !== "object" || parsedSchema === null) {
-      throw new Error("Schema markup parsed value is not an object.");
-    }
-  } catch (schemaErr: unknown) {
-    const schemaMsg = schemaErr instanceof Error ? schemaErr.message : String(schemaErr);
-    if (schemaMsg.startsWith("Invalid article")) throw schemaErr;
-    throw new Error(
-      `Invalid article response: Schema.org structured data contains invalid JSON-LD markup: ${schemaMsg}`
+  if (typeof data.schemaMarkup !== "string" || !data.schemaMarkup.trim()) {
+    // Non-fatal: client can still show the article
+    data.schemaMarkup = JSON.stringify(
+      {
+        "@context": "https://schema.org",
+        "@type": "Article",
+        headline: data.title,
+        description: data.metaDescription || "",
+      },
+      null,
+      2
     );
+  } else {
+    try {
+      const parsedSchema = JSON.parse(data.schemaMarkup);
+      if (typeof parsedSchema !== "object" || parsedSchema === null) {
+        throw new Error("not object");
+      }
+    } catch {
+      data.schemaMarkup = JSON.stringify(
+        {
+          "@context": "https://schema.org",
+          "@type": "Article",
+          headline: data.title,
+          description: data.metaDescription || "",
+        },
+        null,
+        2
+      );
+    }
   }
 }

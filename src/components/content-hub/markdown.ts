@@ -1,6 +1,9 @@
+import { sanitizeText } from "../../lib/text";
+
 export function formatMarkdownToHtml(markdown?: string | null): string {
   if (!markdown) return "";
-  let html = markdown;
+  // Fix broken unicode from AI or corrupted sources before rendering
+  let html = sanitizeText(markdown);
 
   // Escape HTML tags to prevent XSS (but we will insert raw img tags later)
   html = html

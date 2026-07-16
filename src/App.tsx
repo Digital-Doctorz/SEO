@@ -11,6 +11,7 @@ import { AnalysisResult, AiProviderConfig } from "./types";
 import SettingsModal from "./components/SettingsModal";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { postApi } from "./lib/api";
+import { sanitizeDeep } from "./lib/text";
 const DashboardOverview = lazy(() => import("./components/DashboardOverview"));
 const KeywordLandscape = lazy(() => import("./components/KeywordLandscape"));
 const ContentGapAnalysis = lazy(() => import("./components/ContentGapAnalysis"));
@@ -114,22 +115,25 @@ export default function App() {
         aiConfig,
       });
 
-      // Fallback data is still useful — show it with a notice
-      if (data.isFallback) {
-        setAnalysisResult(data);
+      // Sanitize text fields so mojibake never reaches the UI
+      const clean = sanitizeDeep(data);
+
+      // Fallback data is still useful - show it with a notice
+      if (clean.isFallback) {
+        setAnalysisResult(clean);
         setErrorMsg(
-          data.needsApiKey
+          clean.needsApiKey
             ? "No API key configured. Open Settings to enter your key or review pre-compiled fallback analysis."
-            : data.errorMsg || data.fallbackReason || ""
+            : clean.errorMsg || clean.fallbackReason || ""
         );
         setActiveTab("overview");
         return;
       }
 
-      if (data.error) throw new Error(data.error);
-      if (data.errorMsg) throw new Error(data.errorMsg);
+      if (clean.error) throw new Error(String(clean.error));
+      if (clean.errorMsg) throw new Error(String(clean.errorMsg));
 
-      setAnalysisResult(data);
+      setAnalysisResult(clean);
       setActiveTab("overview");
     } catch (err: unknown) {
       console.error("Analysis request failed:", err);

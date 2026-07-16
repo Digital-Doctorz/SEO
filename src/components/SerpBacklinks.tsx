@@ -226,7 +226,7 @@ export default function SerpBacklinks({
               : "border-transparent text-slate-400 hover:text-slate-700"
           }`}
         >
-          🔍 SERP Features Detection
+           SERP Features Detection
         </button>
         <button
           onClick={() => setActiveSubTab("backlinks")}
@@ -236,7 +236,7 @@ export default function SerpBacklinks({
               : "border-transparent text-slate-400 hover:text-slate-700"
           }`}
         >
-          ⛓️ Backlink Intelligence & Outreach
+           Backlink Intelligence & Outreach
         </button>
       </div>
 
