@@ -2965,7 +2965,17 @@ Return ONLY the JSON object defined in the system prompt.`;
  parsed.variationSeed = seed;
  let normalized = normalizeBlogPayload(parsed, domain, kw, seed);
  if (!normalized.content || normalized.content.length < 300) {
- const unique = buildUniqueArticle({ domain, kw, topic: topic || kw, seed: seed + 17, audience, tone });
+ const unique = buildUniqueArticle({
+  domain,
+  kw,
+  topic: topic || kw,
+  seed: seed + 17,
+  audience,
+  tone,
+  siteBrief,
+  enhance: isEnhance,
+  previousTitle: String(previousTitle || ""),
+ });
  normalized = {
  ...normalizeBlogPayload(unique, domain, kw, seed + 17),
  isFallback: true,
