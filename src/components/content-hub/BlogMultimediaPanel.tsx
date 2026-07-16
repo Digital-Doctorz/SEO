@@ -24,8 +24,22 @@ export default function BlogMultimediaPanel({ blogPost, targetDomain, blogKeywor
                         </span>
                       </div>
 
-                      {/* Display rendered Interactive Tables from the backend JSON-LD */}
-                      {blogPost.tables && blogPost.tables.map((tbl, idx) => (
+                      {/* Display tables from draft or a helpful default */}
+                      {(blogPost.tables && blogPost.tables.length > 0
+                        ? blogPost.tables
+                        : [
+                            {
+                              title: `${blogKeyword || "Topic"} comparison`,
+                              type: "Decision table",
+                              headers: ["Approach", "Best for", "Effort", "Time to signal"],
+                              rows: [
+                                ["Focused plan", "Clear weekly goals", "Medium", "4-8 weeks"],
+                                ["Ad-hoc posting", "Quick tests", "Low", "Unclear"],
+                                ["Full rebuild", "Large teams", "High", "8-16 weeks"],
+                              ],
+                            },
+                          ]
+                      ).map((tbl, idx) => (
                         <div key={idx} className="space-y-3">
                           <div className="flex items-center gap-2">
                             <Table className="h-4 w-4 text-blue-500 shrink-0" />
@@ -35,15 +49,15 @@ export default function BlogMultimediaPanel({ blogPost, targetDomain, blogKeywor
                             <table className="w-full text-left text-xs border-collapse">
                               <thead>
                                 <tr className="bg-slate-50 text-slate-500 border-b border-slate-100 font-bold uppercase tracking-wider">
-                                  {tbl.headers.map((hdr, hIdx) => (
+                                  {(tbl.headers || []).map((hdr, hIdx) => (
                                     <th key={hIdx} className="p-3">{hdr}</th>
                                   ))}
                                 </tr>
                               </thead>
                               <tbody>
-                                {tbl.rows.map((row, rIdx) => (
+                                {(tbl.rows || []).map((row, rIdx) => (
                                   <tr key={rIdx} className="border-b border-slate-100 hover:bg-slate-50/20 font-semibold text-slate-600 transition-colors">
-                                    {row.map((cell, cIdx) => (
+                                    {(row || []).map((cell, cIdx) => (
                                       <td key={cIdx} className="p-3">{cell}</td>
                                     ))}
                                   </tr>

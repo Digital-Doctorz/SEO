@@ -121,7 +121,7 @@ export default function LocalSeoSection({
               </div>
 
               <div className="divide-y divide-slate-100 border border-slate-200 rounded-2xl overflow-hidden bg-slate-50/20">
-                {localLocation.primaryLocalCompetitors.map((comp, idx) => (
+                {(localLocation.primaryLocalCompetitors || []).map((comp, idx) => (
                   <div key={idx} className="p-4 bg-white hover:bg-slate-50/50 transition-all flex items-center justify-between gap-4">
                     <div className="space-y-1">
                       <p className="font-bold text-slate-800 text-sm">{comp.name}</p>
@@ -150,7 +150,7 @@ export default function LocalSeoSection({
               </div>
 
               <div className="divide-y divide-slate-100 border border-slate-200 rounded-2xl overflow-hidden bg-slate-50/20">
-                {localLocation.localKeywordOpportunities.map((kw, idx) => (
+                {(localLocation.localKeywordOpportunities || []).map((kw, idx) => (
                   <div key={idx} className="p-4 bg-white hover:bg-slate-50/50 transition-all flex items-center justify-between gap-4">
                     <div className="space-y-1">
                       <p className="font-bold text-slate-800 text-xs font-mono bg-slate-100 px-2 py-0.5 rounded-md inline-block">
@@ -189,7 +189,7 @@ export default function LocalSeoSection({
             </h4>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {localLocation.localOptimizationsNeeded.map((opt, i) => (
+              {(localLocation.localOptimizationsNeeded || []).map((opt, i) => (
                 <div key={i} className="bg-white p-4 rounded-xl border border-slate-200/80 flex items-start gap-3 shadow-3xs">
                   <CheckCircle2 className="h-5 w-5 text-emerald-500 mt-0.5 shrink-0" />
                   <p className="text-xs text-slate-600 font-medium leading-relaxed">{opt}</p>

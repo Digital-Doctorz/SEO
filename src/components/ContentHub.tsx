@@ -23,6 +23,7 @@ import BlogSeoPanel from "./content-hub/BlogSeoPanel";
 import BlogMultimediaPanel from "./content-hub/BlogMultimediaPanel";
 import BlogLinksPanel from "./content-hub/BlogLinksPanel";
 import BlogTechnicalPanel from "./content-hub/BlogTechnicalPanel";
+import ErrorBoundary from "./ErrorBoundary";
 
 export type { LinkSuggestion } from "./content-hub/types";
 
@@ -993,46 +994,52 @@ export default function ContentHub({
                   )}
 
                   {blogViewTab === "links" && blogPost && (
-                    <BlogLinksPanel
-                      blogPost={ensureBlogEnrichment(blogPost, targetDomain, blogKeyword || blogTopic)}
-                      targetDomain={targetDomain}
-                      linkSuggestions={linkSuggestions}
-                      isScanningLinks={isScanningLinks}
-                      hasScannedLinks={hasScannedLinks}
-                      isCustomLinkOpen={isCustomLinkOpen}
-                      customAnchor={customAnchor}
-                      customTargetUrl={customTargetUrl}
-                      pagesToScan={pagesToScan}
-                      onInsertLink={handleInsertLink}
-                      onIgnoreLink={handleIgnoreLink}
-                      onAddCustomLink={handleAddCustomLink}
-                      setIsCustomLinkOpen={setIsCustomLinkOpen}
-                      setCustomAnchor={setCustomAnchor}
-                      setCustomTargetUrl={setCustomTargetUrl}
-                      setIsScanningLinks={setIsScanningLinks}
-                      setHasScannedLinks={setHasScannedLinks}
-                      setLinkSuggestions={setLinkSuggestions}
-                      scanForInternalLinks={scanForInternalLinks}
-                    />
+                    <ErrorBoundary>
+                      <BlogLinksPanel
+                        blogPost={ensureBlogEnrichment(blogPost, targetDomain, blogKeyword || blogTopic)}
+                        targetDomain={targetDomain}
+                        linkSuggestions={linkSuggestions}
+                        isScanningLinks={isScanningLinks}
+                        hasScannedLinks={hasScannedLinks}
+                        isCustomLinkOpen={isCustomLinkOpen}
+                        customAnchor={customAnchor}
+                        customTargetUrl={customTargetUrl}
+                        pagesToScan={pagesToScan}
+                        onInsertLink={handleInsertLink}
+                        onIgnoreLink={handleIgnoreLink}
+                        onAddCustomLink={handleAddCustomLink}
+                        setIsCustomLinkOpen={setIsCustomLinkOpen}
+                        setCustomAnchor={setCustomAnchor}
+                        setCustomTargetUrl={setCustomTargetUrl}
+                        setIsScanningLinks={setIsScanningLinks}
+                        setHasScannedLinks={setHasScannedLinks}
+                        setLinkSuggestions={setLinkSuggestions}
+                        scanForInternalLinks={scanForInternalLinks}
+                      />
+                    </ErrorBoundary>
                   )}
 
                   {blogViewTab === "technical" && blogPost && (
-                    <BlogTechnicalPanel
-                      blogPost={ensureBlogEnrichment(blogPost, targetDomain, blogKeyword || blogTopic)}
-                      targetDomain={targetDomain}
-                      headerTagsCopied={headerTagsCopied}
-                      setHeaderTagsCopied={setHeaderTagsCopied}
-                      onCopy={handleCopy}
-                    />
+                    <ErrorBoundary>
+                      <BlogTechnicalPanel
+                        blogPost={ensureBlogEnrichment(blogPost, targetDomain, blogKeyword || blogTopic)}
+                        targetDomain={targetDomain}
+                        headerTagsCopied={headerTagsCopied}
+                        setHeaderTagsCopied={setHeaderTagsCopied}
+                        onCopy={handleCopy}
+                      />
+                    </ErrorBoundary>
                   )}
 
                   {blogViewTab === "schema" && blogPost && (
-                    <BlogSchemaPanel
-                      blogPost={blogPost}
-                      schemaCopied={schemaCopied}
-                      targetDomain={targetDomain}
-                      onCopy={(text) => handleCopy(text, setSchemaCopied)}
-                    />
+                    <ErrorBoundary>
+                      <BlogSchemaPanel
+                        blogPost={blogPost}
+                        schemaCopied={schemaCopied}
+                        targetDomain={targetDomain}
+                        onCopy={(text) => handleCopy(text, setSchemaCopied)}
+                      />
+                    </ErrorBoundary>
                   )}
 
                 </div>
