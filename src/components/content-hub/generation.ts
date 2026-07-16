@@ -57,12 +57,31 @@ export async function generateBlogPost(params: {
   aiConfig?: AiProviderConfig;
   /** Unique per click so every regenerate is a new strategy/angle */
   variationSeed?: number;
-}): Promise<BlogPost & { isFallback?: boolean; fallbackReason?: string; errorMsg?: string; strategyId?: string }> {
+  /** When re-drafting, pass prior article so the API can fully enhance it */
+  previousTitle?: string;
+  previousContent?: string;
+  previousOutline?: string[];
+  enhanceMode?: boolean;
+}): Promise<
+  BlogPost & {
+    isFallback?: boolean;
+    fallbackReason?: string;
+    errorMsg?: string;
+    strategyId?: string;
+    enhanceMode?: boolean;
+  }
+> {
   const variationSeed =
     params.variationSeed ??
     (Date.now() ^ Math.floor(Math.random() * 1_000_000_000));
   const data = await postApi<
-    BlogPost & { isFallback?: boolean; fallbackReason?: string; errorMsg?: string; strategyId?: string }
+    BlogPost & {
+      isFallback?: boolean;
+      fallbackReason?: string;
+      errorMsg?: string;
+      strategyId?: string;
+      enhanceMode?: boolean;
+    }
   >("/api/generate-blog", {
     topic: params.topic,
     keyword: params.keyword,
@@ -74,6 +93,10 @@ export async function generateBlogPost(params: {
     aiConfig: params.aiConfig,
     variationSeed,
     regenerateToken: variationSeed,
+    previousTitle: params.previousTitle || "",
+    previousContent: params.previousContent || "",
+    previousOutline: params.previousOutline || [],
+    enhanceMode: Boolean(params.enhanceMode),
   });
   return sanitizeDeep(data);
 }

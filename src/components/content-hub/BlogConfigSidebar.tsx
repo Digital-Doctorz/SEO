@@ -134,7 +134,7 @@ export default function BlogConfigSidebar(props: BlogConfigSidebarProps) {
  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer text-xs shadow-sm shadow-blue-600/10"
  >
  <RefreshCw className="h-4 w-4" />
- <span>Re-draft Article with Same Setup</span>
+ <span>Re-draft &amp; Enhance Full Article</span>
  </button>
  )}
  </div>
