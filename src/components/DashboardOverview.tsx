@@ -16,14 +16,14 @@ import {
   Tooltip,
   Legend
 } from "recharts";
-import { DomainMetrics, DiscoveredCompetitor, TargetAnalysis, ContentGap, SerpFeature, LocalLocation, RankingBlueprint, AiProviderConfig } from "../types";
+import { DomainMetrics, DiscoveredCompetitor, TargetAnalysis, ContentGap, SerpFeature, LocalLocation, RankingBlueprint, AiProviderConfig, BlogPost } from "../types";
 
 interface DashboardOverviewProps {
   target: DomainMetrics;
   competitor: DomainMetrics | null;
   discoveredCompetitors?: DiscoveredCompetitor[];
   targetAnalysis?: TargetAnalysis;
-  autonomousBlog?: any;
+  autonomousBlog?: BlogPost;
   contentGaps?: ContentGap[];
   serpFeatures?: SerpFeature[];
   localLocation?: LocalLocation;
@@ -132,7 +132,7 @@ export default function DashboardOverview({
             </div>
             
             <button 
-              onClick={onViewAutonomousBlog}
+              onClick={() => onViewAutonomousBlog?.()}
               className="shrink-0 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm px-5 py-3 rounded-xl shadow-lg transition-all duration-200 flex items-center gap-2 group border border-blue-500/20 active:scale-95 cursor-pointer"
               id="view-article-btn"
             >
@@ -956,7 +956,7 @@ export default function DashboardOverview({
                         </p>
                       </div>
                       <button 
-                        onClick={onViewAutonomousBlog}
+                        onClick={() => onViewAutonomousBlog?.()}
                         className="shrink-0 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs py-3 px-5 rounded-xl transition-all flex items-center gap-2 border border-blue-500/30 hover:scale-101 cursor-pointer"
                       >
                         <span>Examine Publication-Ready Article</span>

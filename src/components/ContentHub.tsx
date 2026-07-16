@@ -1745,7 +1745,7 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
                 <div className="space-y-6">
 
                   {/* TAB A: PUBLISHED DRAFT */}
-                  {blogViewTab === "draft" && (
+                  {blogViewTab === "draft" && blogPost && (
                     <div className="space-y-6">
                       {/* Interactive SERP Preview Simulator */}
                       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
@@ -2546,8 +2546,9 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
                   )}
 
                   {/* TAB C: SEO REAL-TIME AUDITOR & DENSITY METER */}
-                  {blogViewTab === "seo" && (() => {
-                    const seoReport = blogPost.seoAuditorReport || {
+                  {blogViewTab === "seo" && blogPost && (() => {
+                    const wordCount = blogPost.content ? blogPost.content.split(/\s+/).filter(Boolean).length : 2200;
+                    const seoReport = {
                       seoScoreBreakdown: {
                         keywordOptimization: 18,
                         contentStructure: 14,
@@ -2557,16 +2558,18 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
                         internalLinking: 9,
                         schemaMarkup: 10,
                         mobileOptimization: 9,
-                        total: 96
+                        total: 96,
+                        ...(blogPost.seoAuditorReport?.seoScoreBreakdown || {})
                       },
                       contentQualityMetrics: {
-                        wordCount: blogPost.content ? blogPost.content.split(/\s+/).filter(Boolean).length : 2200,
-                        readingTime: Math.max(1, Math.ceil((blogPost.content ? blogPost.content.split(/\s+/).filter(Boolean).length : 2200) / 220)),
+                        wordCount,
+                        readingTime: Math.max(1, Math.ceil(wordCount / 220)),
                         fleschReadingEase: 68,
                         gradeLevel: 8,
                         passiveVoicePercent: 8,
                         transitionWordsPercent: 34,
-                        sentenceVarietyScore: 85
+                        sentenceVarietyScore: 85,
+                        ...(blogPost.seoAuditorReport?.contentQualityMetrics || {})
                       },
                       keywordDensityReport: {
                         primaryKeywordDensity: 1.8,
@@ -2575,10 +2578,11 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
                           { keyword: "organic optimization strategy", density: 0.8 }
                         ],
                         lsiKeywordsCount: 14,
-                        longTailKeywordsCount: 8
+                        longTailKeywordsCount: 8,
+                        ...(blogPost.seoAuditorReport?.keywordDensityReport || {})
                       },
                       competitiveComparison: {
-                        contentLengthComparison: `Your article is ${blogPost.content ? blogPost.content.split(/\s+/).filter(Boolean).length : 2200} words, which is 15% more comprehensive than the competitor average of 1900 words.`,
+                        contentLengthComparison: `Your article is ${wordCount} words, which is 15% more comprehensive than the competitor average of 1900 words.`,
                         keywordCoverageAnalysis: `Covered 95% of primary and secondary entities identified in search results, including 4 high-value topic clusters overlooked by top organic performers.`,
                         uniqueValuePropositions: [
                           "Interactive comparison data tables detailing quantitative metrics",
@@ -2589,7 +2593,8 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
                           "Fills the competitor gap in detailed developer instructions",
                           "Solves missing FAQ markup schemas in search results",
                           "Corrects improper canonical structures found in top-ranking search pages"
-                        ]
+                        ],
+                        ...(blogPost.seoAuditorReport?.competitiveComparison || {})
                       }
                     };
 
@@ -2803,7 +2808,7 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
                               <div className="space-y-2">
                                 <span className="text-xs font-bold text-slate-500 block">Secondary Keywords Density</span>
                                 <div className="flex flex-wrap gap-2">
-                                  {seoReport.keywordDensityReport.secondaryKeywords.map((sk, idx) => (
+                                  {seoReport.keywordDensityReport.secondaryKeywords?.map((sk, idx) => (
                                     <span key={idx} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 shadow-xs">
                                       <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />
                                       <span>{sk.keyword}</span>
@@ -2854,7 +2859,7 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
                               <div className="space-y-2">
                                 <span className="text-xs font-bold text-slate-700 block">Unique Value Propositions (UVPs)</span>
                                 <div className="space-y-1.5">
-                                  {seoReport.competitiveComparison.uniqueValuePropositions.map((uvp, i) => (
+                                  {seoReport.competitiveComparison.uniqueValuePropositions?.map((uvp, i) => (
                                     <div key={i} className="flex gap-2 p-2 bg-emerald-50 border border-emerald-100 rounded-xl text-xs font-bold text-emerald-800">
                                       <Check className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
                                       <span>{uvp}</span>
@@ -2865,7 +2870,7 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
                               <div className="space-y-2">
                                 <span className="text-xs font-bold text-slate-700 block">Content Gaps Successfully Filled</span>
                                 <div className="space-y-1.5">
-                                  {seoReport.competitiveComparison.contentGapsFilled.map((gap, i) => (
+                                  {seoReport.competitiveComparison.contentGapsFilled?.map((gap, i) => (
                                     <div key={i} className="flex gap-2 p-2 bg-blue-50 border border-blue-100 rounded-xl text-xs font-bold text-blue-800">
                                       <CheckCircle className="h-3.5 w-3.5 text-blue-600 shrink-0 mt-0.5" />
                                       <span>{gap}</span>
@@ -2889,7 +2894,7 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
                             </div>
                             
                             <div className="space-y-2.5 pl-6 border-l-2 border-slate-200">
-                              {blogPost.outline.map((h, i) => (
+                              {blogPost.outline?.map((h, i) => (
                                 <div key={i} className="space-y-1">
                                   <div className="text-slate-800 font-bold flex items-center gap-2">
                                     <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-bold">H2</span>
@@ -2919,7 +2924,7 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
                   })()}
 
                   {/* TAB D: INTERACTIVE MULTIMEDIA, TABLES, AND SVG CHARTS */}
-                  {blogViewTab === "multimedia" && (
+                  {blogViewTab === "multimedia" && blogPost && (
                     <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-6">
                       <div className="flex justify-between items-center border-b border-slate-100 pb-4">
                         <div>
@@ -3142,7 +3147,7 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
                   )}
 
                   {/* TAB E: INTERNAL & EXTERNAL LINKING RECOMMENDATIONS */}
-                  {blogViewTab === "links" && blogPost.linkingRecommendations && (
+                  {blogViewTab === "links" && blogPost && blogPost.linkingRecommendations && (
                     <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-6">
                       <div className="flex justify-between items-center border-b border-slate-100 pb-4">
                         <div>
@@ -3436,7 +3441,7 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
                   )}
 
                   {/* TAB F: TECHNICAL SEO, META TAGS, AND OG SHARING SIMULATORS */}
-                  {blogViewTab === "technical" && blogPost.technicalSeo && (
+                  {blogViewTab === "technical" && blogPost && blogPost.technicalSeo && (
                     <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-6">
                       <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b border-slate-100 pb-4">
                         <div>
@@ -3882,7 +3887,7 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
                   )}
 
                   {/* TAB G: SCHEMA.ORG CRAWLER INSPECTOR PLAYGROUND */}
-                  {blogViewTab === "schema" && (
+                  {blogViewTab === "schema" && blogPost && (
                     <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-6">
                       <div className="flex justify-between items-center border-b border-slate-100 pb-4">
                         <div>
@@ -4479,7 +4484,8 @@ export default function ContentHub({ initialKeyword = "", initialTopic = "", tar
 }
 
 // Custom parser to format Markdown headers, bold text, bullet points into clean visual HTML blocks
-function formatMarkdownToHtml(markdown: string): string {
+function formatMarkdownToHtml(markdown?: string | null): string {
+  if (!markdown) return "";
   let html = markdown;
 
   // Escape HTML tags to prevent XSS (but we will insert raw img tags later)

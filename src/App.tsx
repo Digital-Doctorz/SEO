@@ -9,6 +9,7 @@ import {
 
 import { AnalysisResult, AiProviderConfig } from "./types";
 import SettingsModal from "./components/SettingsModal";
+import ErrorBoundary from "./components/ErrorBoundary";
 const DashboardOverview = lazy(() => import("./components/DashboardOverview"));
 const KeywordLandscape = lazy(() => import("./components/KeywordLandscape"));
 const ContentGapAnalysis = lazy(() => import("./components/ContentGapAnalysis"));
@@ -106,17 +107,19 @@ export default function App() {
       } catch {
         throw new Error(`Server returned ${response.status}: Expected JSON response`);
       }
-      if (data.needsApiKey) {
-        throw new Error("No API key configured. Open Settings and enter your Gemini or OpenRouter API key.");
-      }
-      if (data.errorMsg) throw new Error(data.errorMsg);
-      if (data.error) throw new Error(data.error);
-
+      // If fallback data, always display it (even with errors)
       if (data.isFallback) {
         setAnalysisResult(data);
-        setErrorMsg(data.errorMsg || data.fallbackReason || "AI engine unavailable. Check your API key in Settings.");
+        const fallbackMsg = data.needsApiKey
+          ? "No API key configured. Open Settings to enter your key or see pre-compiled fallback analysis."
+          : data.errorMsg || data.fallbackReason || "";
+        setErrorMsg(fallbackMsg);
+        setActiveTab("overview");
         return;
       }
+
+      if (data.error) throw new Error(data.error);
+      if (data.errorMsg) throw new Error(data.errorMsg);
       
       setAnalysisResult(data);
       setActiveTab("overview");
@@ -530,6 +533,7 @@ export default function App() {
                 {/* Component Workspace Switchboard */}
                 <div className="min-h-[500px]">
                   <div className={activeTab === "overview" ? "block" : "hidden"}>
+                    <ErrorBoundary>
                     <Suspense fallback={<div className="text-center py-16 text-slate-400 font-semibold">Loading...</div>}>
                     <DashboardOverview 
                       target={analysisResult.target} 
@@ -549,8 +553,10 @@ export default function App() {
                       }}
                     />
                     </Suspense>
+                    </ErrorBoundary>
                   </div>
                   <div className={activeTab === "keywords" ? "block" : "hidden"}>
+                    <ErrorBoundary>
                     <Suspense fallback={<div className="text-center py-16 text-slate-400 font-semibold">Loading...</div>}>
                     <KeywordLandscape 
                       keywords={analysisResult.keywords} 
@@ -567,8 +573,10 @@ export default function App() {
                       }}
                     />
                     </Suspense>
+                    </ErrorBoundary>
                   </div>
                   <div className={activeTab === "gaps" ? "block" : "hidden"}>
+                    <ErrorBoundary>
                     <Suspense fallback={<div className="text-center py-16 text-slate-400 font-semibold">Loading...</div>}>
                     <ContentGapAnalysis 
                       gaps={analysisResult.contentGaps} 
@@ -577,8 +585,10 @@ export default function App() {
                       onSelectTopic={handleSelectTopicForBlog}
                     />
                     </Suspense>
+                    </ErrorBoundary>
                   </div>
                   <div className={activeTab === "serp" ? "block" : "hidden"}>
+                    <ErrorBoundary>
                     <Suspense fallback={<div className="text-center py-16 text-slate-400 font-semibold">Loading...</div>}>
                     <SerpBacklinks 
                       serpFeatures={analysisResult.serpFeatures}
@@ -591,8 +601,10 @@ export default function App() {
                       discoveredCompetitors={analysisResult.discoveredCompetitors}
                     />
                     </Suspense>
+                    </ErrorBoundary>
                   </div>
                   <div className={activeTab === "hub" ? "block" : "hidden"}>
+                    <ErrorBoundary>
                     <Suspense fallback={<div className="text-center py-16 text-slate-400 font-semibold">Loading...</div>}>
                     <ContentHub 
                       initialKeyword={selectedKeyword}
@@ -603,6 +615,7 @@ export default function App() {
                       aiConfig={aiConfig}
                     />
                     </Suspense>
+                    </ErrorBoundary>
                   </div>
                 </div>
               </div>

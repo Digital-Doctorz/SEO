@@ -357,11 +357,22 @@ async function generateFallbackData(targetRaw: string, competitorRaw?: string) {
   const brandName = target.split(".")[0];
   const services = targetPageInfo.services;
   const nicheKeywords = targetPageInfo.keywords;
-  const targetMetrics = { domain: target, domainRating: Math.min(85, 30 + (targetSeed * 3) % 55), backlinksCount: 1500 + (targetSeed * 423) % 25000, referringDomains: 250 + (targetSeed * 89) % 4500, organicTraffic: 12000 + (targetSeed * 3120) % 350000, organicKeywords: 1800 + (targetSeed * 450) % 25000, publishingFrequency: targetSeed % 2 === 0 ? "3-5 articles / week" : "1-2 articles / week" };
+  const targetMetrics = { domain: target, domainRating: Math.min(85, 30 + (targetSeed * 3) % 55), backlinksCount: 1500 + (targetSeed * 423) % 25000, referringDomains: 250 + (targetSeed * 89) % 4500, organicTraffic: 12000 + (targetSeed * 3120) % 350000, organicKeywords: 1800 + (targetSeed * 450) % 25000, publishingFrequency: targetSeed % 2 === 0 ? "3-5 articles / week" : "1-2 articles / week", topPages: targetPageInfo.services.map((s, i) => ({
+    url: `https://${target}/${s.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+    title: s,
+    estTraffic: Math.round((12000 + (targetSeed * 3120) % 350000) * (0.15 - i * 0.015)),
+    keywordsCount: Math.max(10, (1800 + (targetSeed * 450) % 25000) - i * 500),
+  })) };
   const competitorDomainToUse = competitor || `${target.split(".")[0]}-alternative.com`;
   const compSeedToUse = competitorDomainToUse.length;
   const compServices = compPageInfo ? compPageInfo.services : ["Standard Consultation", "Basic Services", "Advanced Support"];
-  const competitorMetrics = { domain: competitorDomainToUse, domainRating: Math.min(92, 35 + (compSeedToUse * 4) % 55), backlinksCount: 3000 + (compSeedToUse * 650) % 45000, referringDomains: 450 + (compSeedToUse * 120) % 8500, organicTraffic: 25000 + (compSeedToUse * 5430) % 650000, organicKeywords: 3500 + (compSeedToUse * 850) % 45000, publishingFrequency: compSeedToUse % 2 === 0 ? "4-6 articles / week" : "2-3 articles / week" };
+  const compTopPages = compPageInfo ? compPageInfo.services.map((s, i) => ({
+    url: `https://${cleanDomain(competitorDomainToUse)}/${s.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+    title: s,
+    estTraffic: Math.round(25000 * (0.15 - i * 0.015)),
+    keywordsCount: Math.max(10, 3500 - i * 500),
+  })) : [];
+  const competitorMetrics = { domain: competitorDomainToUse, domainRating: Math.min(92, 35 + (compSeedToUse * 4) % 55), backlinksCount: 3000 + (compSeedToUse * 650) % 45000, referringDomains: 450 + (compSeedToUse * 120) % 8500, organicTraffic: 25000 + (compSeedToUse * 5430) % 650000, organicKeywords: 3500 + (compSeedToUse * 850) % 45000, publishingFrequency: compSeedToUse % 2 === 0 ? "4-6 articles / week" : "2-3 articles / week", topPages: compTopPages };
   const baseCompDomains = [
     { prefix: "direct-comp-", suffix: ".com", sim: 96, focus: `Direct primary challenger` }, { prefix: "local-", suffix: "-expert.com", sim: 85, focus: `Localized specialty provider` },
     { prefix: "global-scale-", suffix: ".com", sim: 78, focus: `Enterprise scale leader` }, { prefix: "smart-", suffix: "-hub.org", sim: 70, focus: `Information aggregator` },
@@ -376,7 +387,75 @@ async function generateFallbackData(targetRaw: string, competitorRaw?: string) {
     const kw1 = nicheKeywords[0] || "services";
     return { domain: `${c.prefix}${target.split(".")[0]}${c.suffix}`, similarityScore: c.sim, focusArea: c.focus, trafficEstimate: Math.round((targetMetrics.organicTraffic || 50000) * (0.3 + index * 0.05)), targetKeywords: [`${kw1} solutions`, `best ${nicheKeywords[1] || "benefits"} in 2026`, `affordable ${nicheKeywords[2] || "near me"}`, `${nicheKeywords[3] || "cost"} analysis`] };
   });
-  return { target: targetMetrics, competitor: competitorMetrics, discoveredCompetitors };
+  const keywordList = nicheKeywords.slice(0, 8).map((kw, i) => ({
+    keyword: kw,
+    volume: 1200 - i * 120,
+    difficulty: Math.min(85, 30 + i * 6),
+    cpc: parseFloat((1.5 + i * 0.4).toFixed(2)),
+    intent: i < 3 ? "Commercial" as const : i < 6 ? "Informational" as const : "Transactional" as const,
+    type: (kw.length < 15 ? "Short-tail" : "Long-tail") as "Short-tail" | "Long-tail",
+    competition: (i < 3 ? "High" : i < 6 ? "Medium" : "Low") as "Low" | "Medium" | "High",
+    trend: (i < 3 ? "rising" : "stable") as "rising" | "stable" | "declining",
+    serpRankings: [{ rank: 1, title: `${kw} - ${target.split(".")[0]}`, url: `https://${target}` }],
+    relatedKeywords: nicheKeywords.filter((_, j) => j !== i).slice(0, 4),
+    parentTopic: targetPageInfo.niche.split("&")[0].trim(),
+    buyerJourneyStage: (i < 3 ? "Awareness" : i < 6 ? "Consideration" : "Decision") as "Awareness" | "Consideration" | "Decision",
+    opportunityScore: Math.max(10, 85 - i * 8),
+    isPillarOpportunity: i < 3,
+  }));
+
+  return {
+    target: targetMetrics,
+    competitor: competitorMetrics,
+    discoveredCompetitors,
+    targetAnalysis: {
+      coreNiche: targetPageInfo.niche,
+      audiencePersona: `Business owners and decision-makers searching for ${targetPageInfo.niche} solutions`,
+      contentStrengths: ["Clear service page structure", "Brand authority in niche", "Targeted keyword usage"],
+      contentWeaknesses: ["Limited blog content", "Missing FAQ sections", "Weak internal linking between service pages"],
+      detailedBreakdown: `${target.split(".")[0]} operates in the ${targetPageInfo.niche} space with a focus on ${targetPageInfo.services.slice(0, 3).join(", ")}. The site has a Domain Rating of ${targetMetrics.domainRating} and approximately ${(targetMetrics.organicTraffic / 1000).toFixed(0)}k monthly organic traffic. Primary opportunities include expanding topical authority through a structured blog content strategy and building high-quality backlinks.`,
+    },
+    keywords: keywordList,
+    contentGaps: [],
+    serpFeatures: [],
+    backlinkSources: [],
+    backlinkOpportunities: [],
+    rankingBlueprint: {
+      currentPosition: "Not in top 30 for primary keywords",
+      targetPosition: "Top 10 for 5+ primary keywords within 90 days",
+      summary: `${target.split(".")[0]} has a solid domain authority of ${targetMetrics.domainRating} but needs to close the gap with competitors via structured topical authority, backlink acquisition, and schema implementation.`,
+      technicalSeo: [
+        "Improve LCP below 2.5 seconds",
+        "Add structured data (FAQPage, HowTo, LocalBusiness)",
+        "Ensure mobile responsiveness across all pages",
+      ],
+      localSeo: [
+        "Claim and verify Google Business Profile",
+        "Build local citations on relevant directories",
+        "Collect and respond to customer reviews",
+      ],
+      contentStrategy: [
+        "Build topic clusters around primary service keywords",
+        "Publish pillar pages for each core offering",
+        "Create comparison content vs competitors",
+      ],
+      linkBuilding: [
+        "Guest post on niche health/wellness publications",
+        "Get listed on curated resource pages",
+        "Build broken-link replacements on .edu and .org domains",
+      ],
+      timelineEstimate: "3-6 months for measurable ranking improvements",
+      priorityActions: [
+        { action: "Build topical authority clusters with internal hub pages", impact: "High" as const, effort: "Medium" as const, timeframe: "4-6 weeks" },
+        { action: "Acquire contextual backlinks from niche academic & .org domains", impact: "High" as const, effort: "High" as const, timeframe: "8-12 weeks" },
+        { action: "Optimize Core Web Vitals (LCP < 2.5s, CLS < 0.1)", impact: "Medium" as const, effort: "Low" as const, timeframe: "1-2 weeks" },
+        { action: "Implement FAQPage & HowTo structured data for rich snippets", impact: "Medium" as const, effort: "Low" as const, timeframe: "1 week" },
+        { action: "Publish 2-3 pillar articles targeting bottom-of-funnel commercial intents", impact: "High" as const, effort: "Medium" as const, timeframe: "3-4 weeks" },
+      ],
+      localKeywordsToTarget: [],
+    },
+    autonomousBlog: getAutonomousBlog(target, nicheKeywords[0] || "services"),
+  };
 }
 
 // ============================================================
@@ -488,7 +567,7 @@ app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) return;
   try {
     const template = fs.readFileSync(path.join(distPath, 'index.html'), 'utf-8');
-    res.send(template.replace('<!--ssr-outlet-->', ''));
+    res.send(template);
   } catch { res.status(500).send('Server error'); }
 });
 
