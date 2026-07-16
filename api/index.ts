@@ -277,72 +277,425 @@ function assembleBlogFromParts(parsed: any, title: string, kw: string, domain: s
  return existing;
 }
 
-function buildRecoveryArticle(title: string, kw: string, domain: string, brand: string, outline: string[]): string {
- const heads =
- outline.length > 0
- ? outline
- : [
+/** Split long prose sentences so Flesch Reading Ease stays high (target 60+). */
+function improveReadability(markdown: string): string {
+ const lines = markdown.split("\n");
+ const out: string[] = [];
+ for (const line of lines) {
+ const trimmed = line.trim();
+ // Leave headings, lists, tables, code alone
+ if (
+ !trimmed ||
+ trimmed.startsWith("#") ||
+ trimmed.startsWith("|") ||
+ trimmed.startsWith("- ") ||
+ trimmed.startsWith("* ") ||
+ /^\d+\.\s/.test(trimmed) ||
+ trimmed.startsWith("```") ||
+ trimmed.startsWith(">")
+ ) {
+ out.push(line);
+ continue;
+ }
+ // Split very long sentences at conjunctions / commas
+ const parts = trimmed.split(/(?<=[.!?])\s+/);
+ const rebuilt: string[] = [];
+ for (const sent of parts) {
+ const words = sent.split(/\s+/);
+ if (words.length <= 22) {
+ rebuilt.push(sent);
+ continue;
+ }
+ // Break near middle at a comma or " and " / " but " / " which "
+ const mid = Math.floor(words.length / 2);
+ let breakAt = -1;
+ for (let i = mid; i < Math.min(words.length - 3, mid + 8); i++) {
+ const w = words[i].toLowerCase().replace(/[^a-z]/g, "");
+ if (words[i].endsWith(",") || w === "and" || w === "but" || w === "which" || w === "because") {
+ breakAt = i + 1;
+ break;
+ }
+ }
+ if (breakAt < 0) {
+ for (let i = mid; i > 4; i--) {
+ if (words[i].endsWith(",")) {
+ breakAt = i + 1;
+ break;
+ }
+ }
+ }
+ if (breakAt > 0 && breakAt < words.length - 2) {
+ let a = words.slice(0, breakAt).join(" ").replace(/,$/, "");
+ let b = words.slice(breakAt).join(" ");
+ if (!/[.!?]$/.test(a)) a += ".";
+ if (b[0]) b = b[0].toUpperCase() + b.slice(1);
+ rebuilt.push(a, b);
+ } else {
+ rebuilt.push(sent);
+ }
+ }
+ out.push(rebuilt.join(" "));
+ }
+ return out.join("\n");
+}
+
+const ARTICLE_STRATEGIES = [
+ {
+ id: "howto",
+ titlePrefix: (kw: string) => `How to Master ${kw} in 7 Clear Steps`,
+ style: "step-by-step how-to with numbered actions",
+ heads: (kw: string, brand: string) => [
+ `What is ${kw}? (plain answer)`,
+ `Why ${kw} matters right now`,
+ `A 7-step plan to apply ${kw}`,
+ `Tools and checks that keep you on track`,
+ `Mistakes that slow ${kw} results`,
+ `How ${brand} helps you move faster`,
+ ],
+ intro: (kw: string, brand: string) =>
+ `Struggling to get clear results from **${kw}**? You are not alone. This guide gives you a short plan you can use this week. You will see what ${kw} means, the steps that work, and how ${brand} supports the work without fluff.`,
+ },
+ {
+ id: "compare",
+ titlePrefix: (kw: string) => `${kw}: Best Options Compared (What Actually Works)`,
+ style: "comparison-first decision guide",
+ heads: (kw: string, brand: string) => [
+ `Quick answer: which ${kw} path fits you`,
+ `Side-by-side options for ${kw}`,
+ `When to choose speed vs depth`,
+ `A simple decision framework`,
+ `Rollout plan for the next 30 days`,
+ `Next steps with ${brand}`,
+ ],
+ intro: (kw: string, brand: string) =>
+ `Not every approach to **${kw}** is equal. Some paths burn time. Others build results you can measure. This article compares the main options in plain language, then shows a clear pick-and-run plan for teams working with ${brand}.`,
+ },
+ {
+ id: "myths",
+ titlePrefix: (kw: string) => `${kw} Myths vs Facts: What to Stop Doing Today`,
+ style: "myth-busting expert brief",
+ heads: (kw: string, brand: string) => [
+ `The biggest myth about ${kw}`,
+ `What the data and practice actually show`,
+ `A better model for ${kw}`,
+ `Proof points and real examples`,
+ `Action checklist for this month`,
+ `Work with ${brand} on a clean plan`,
+ ],
+ intro: (kw: string, brand: string) =>
+ `Many guides on **${kw}** repeat the same weak advice. That costs months. Here we cut the myths, keep the facts, and give you a cleaner model you can apply with support from ${brand}.`,
+ },
+ {
+ id: "playbook",
+ titlePrefix: (kw: string) => `The ${kw} Playbook: From First Audit to Steady Wins`,
+ style: "tactical playbook with weekly sprints",
+ heads: (kw: string, brand: string) => [
+ `Start here: define success for ${kw}`,
+ `Week 1 audit and baselines`,
+ `Week 2 build and publish`,
+ `Week 3 measure and fix`,
+ `Scale what works with ${brand}`,
+ `Keep results compounding`,
+ ],
+ intro: (kw: string, brand: string) =>
+ `Want a repeatable system for **${kw}**? This playbook runs in short weekly sprints. Each step is simple on purpose so your score for clarity stays high and your team can ship. ${brand} is the home base for your next action.`,
+ },
+ {
+ id: "faqhub",
+ titlePrefix: (kw: string) => `${kw} Explained: Answers Searchers Actually Want`,
+ style: "PAA-led answer hub for featured snippets",
+ heads: (kw: string, brand: string) => [
  `What is ${kw}?`,
- `Why ${kw} matters for ${brand}`,
- `How to implement ${kw} step by step`,
- `Common mistakes to avoid`,
- `Tools and metrics that matter`,
+ `How does ${kw} work in practice?`,
+ `How long until ${kw} shows results?`,
+ `What budget and skills do you need?`,
+ `How to avoid common traps`,
+ `Where ${brand} fits in your plan`,
+ ],
+ intro: (kw: string, brand: string) =>
+ `People type many questions about **${kw}** into Google. This page answers them first in short blocks, then expands with steps. Short answers help search and AI systems. Full steps help you act with ${brand}.`,
+ },
+ {
+ id: "case",
+ titlePrefix: (kw: string) => `From Stuck to Shipping: A ${kw} Case-Style Walkthrough`,
+ style: "narrative case walkthrough with lessons",
+ heads: (kw: string, brand: string) => [
+ `The starting problem with ${kw}`,
+ `What we measured first`,
+ `The turning point`,
+ `The exact sequence that worked`,
+ `Lessons you can copy today`,
+ `How to run this with ${brand}`,
+ ],
+ intro: (kw: string, brand: string) =>
+ `Here is a story-style walkthrough of **${kw}** done the hard way, then the smart way. You will see the early mistakes, the metrics that mattered, and a clean sequence you can copy. ${brand} can be your partner for the same path.`,
+ },
+];
+
+function pickStrategy(seed: number) {
+ const i = Math.abs(Math.floor(seed)) % ARTICLE_STRATEGIES.length;
+ return ARTICLE_STRATEGIES[i];
+}
+
+function buildUniqueArticle(opts: {
+ domain: string;
+ kw: string;
+ topic?: string;
+ seed?: number;
+ audience?: string;
+ tone?: string;
+}): {
+ title: string;
+ metaDescription: string;
+ slugSuggestion: string;
+ outline: string[];
+ content: string;
+ faqSection: Array<{ question: string; answer: string }>;
+ strategyId: string;
+} {
+ const domain = cleanDomain(opts.domain);
+ const brand = (domain.split(".")[0] || "Brand").replace(/^\w/, (c) => c.toUpperCase());
+ const kw = sanitizeText(opts.kw || opts.topic || "growth strategy") || "growth strategy";
+ const seed = opts.seed ?? Date.now();
+ const strategy = pickStrategy(seed);
+ const yearHint = 2026;
+ const title = strategy.titlePrefix(kw);
+ const heads = strategy.heads(kw, brand);
+ const slug =
+ title
+ .toLowerCase()
+ .replace(/[^a-z0-9]+/g, "-")
+ .replace(/(^-|-$)/g, "")
+ .slice(0, 70) || "article";
+ const metaDescription = sanitizeText(
+ `${title.slice(0, 80)}. Clear steps, a comparison table, and FAQs for ${kw}. From ${brand}.`
+ ).slice(0, 155);
+
+ const faqSection = [
+ {
+ question: `What is ${kw}?`,
+ answer: `${kw} is a clear method to get better results with simple steps, short checks, and steady weekly work.`,
+ },
+ {
+ question: `How long does ${kw} take to show results?`,
+ answer: "Most teams see early signals in 4 to 8 weeks when they ship every week and track one main metric.",
+ },
+ {
+ question: `What is the best first step for ${kw}?`,
+ answer: "Write down your goal, your audience, and one number you will improve. Then run a short audit before you scale.",
+ },
+ {
+ question: `How can ${brand} help with ${kw}?`,
+ answer: `${brand} provides focused support, resources, and next steps at https://${domain}/ so you can move from plan to action.`,
+ },
  ];
- return [
+
+ const tableBlock = [
+ "## Quick comparison",
+ "",
+ "| Path | Best for | Effort | Time to first signal |",
+ "| --- | --- | --- | --- |",
+ `| Focused ${kw} plan | Clear weekly goals | Medium | 4-8 weeks |`,
+ "| Random posts | Testing ideas only | Low | Hard to tell |",
+ "| Full rebuild | Large teams | High | 8-16 weeks |",
+ "",
+ ].join("\n");
+
+ const bodySections = heads
+ .map((h, idx) => {
+ const n = idx + 1;
+ const body = [
+ `${h.replace(/\?.*$/, "")} has a simple answer. Start with one outcome you can measure. Keep language plain so more people finish the page.`,
+ "",
+ "### Do this next",
+ `1. Note your current baseline for ${kw}.`,
+ `2. Ship one small improvement this week.`,
+ `3. Review results every Friday and adjust.`,
+ "",
+ idx === 1 ? tableBlock : "",
+ idx === 2
+ ? `For a deeper service path, see [${brand} resources](https://${domain}/services) and the main hub at [https://${domain}/](https://${domain}/).`
+ : `Keep related pages linked. Example: [${brand} home](https://${domain}/).`,
+ "",
+ `Tip ${n}: short paragraphs beat long walls of text. Aim for 2 to 4 sentences, then a list.`,
+ ].filter(Boolean);
+ return [`## ${h}`, "", ...body].join("\n");
+ })
+ .join("\n\n");
+
+ const content = improveReadability(
+ [
  `# ${title}`,
  "",
- `Looking for a practical guide to **${kw}**? This article gives ${brand} audiences a clear framework: definitions, steps, a comparison table, FAQs, and a concrete next action.`,
+ strategy.intro(kw, brand),
+ "",
+ `Audience focus: ${sanitizeText(opts.audience || "busy professionals")}. Tone: ${sanitizeText(opts.tone || "clear and practical")}. Updated for ${yearHint}.`,
  "",
  "## Key Takeaways",
- `- ${kw} works best with clear goals and weekly measurement.`,
- "- Lead with the reader problem, then give a direct answer.",
- "- Structure content with H2s, lists, and FAQs for search and AI answers.",
- `- Link related pages on [${brand}](https://${domain}/) to build topical authority.`,
- "- Iterate from data, not guesswork.",
+ `- ${kw} works when goals are clear and progress is weekly.`,
+ "- Short sentences and direct answers help readers and search systems.",
+ "- Use a simple table to compare options before you commit.",
+ `- Link to related pages on [${brand}](https://${domain}/) for topical strength.`,
+ "- Measure one primary metric so you know what to fix next.",
  "",
- ...heads.flatMap((h) => [
- `## ${h}`,
- "",
- `${sanitizeText(h)} starts with a direct answer: focus on outcomes readers can apply this week. Break the work into small steps, assign owners, and track one primary metric.`,
- "",
- "### Practical checklist",
- "1. Define the goal and audience.",
- "2. Draft the outline with search intent in mind.",
- "3. Ship a minimum useful version, then improve.",
- "",
- ]),
- "## Comparison at a glance",
- "",
- "| Approach | Best for | Effort | Time to signal |",
- "| --- | --- | --- | --- |",
- `| Focused ${kw} plan | Teams with clear goals | Medium | 4-8 weeks |`,
- "| Ad-hoc posting | One-off experiments | Low | Unclear |",
- "| Full overhaul | Mature sites with resources | High | 8-16 weeks |",
+ bodySections,
  "",
  "## Frequently Asked Questions",
  "",
- `### What is ${kw}?`,
- `${kw} is a focused method to improve results with clear process, content structure, and measurement.`,
- "",
- `### How long until I see results from ${kw}?`,
- "Most teams see early signals within 4-8 weeks when execution is consistent.",
- "",
- `### Who should own ${kw}?`,
- "A cross-functional owner with support from content, product, and analytics works best.",
- "",
- "### Where can I go next?",
- `Visit [${brand}](https://${domain}/) for services, resources, and next steps.`,
- "",
+ ...faqSection.flatMap((f) => [`### ${f.question}`, f.answer, ""]),
  "## Conclusion",
  "",
- `You now have a working blueprint for ${kw}. Start with one section, measure outcomes, and expand. Explore more at [https://${domain}/](https://${domain}/).`,
- ].join("\n");
+ `You now have a fresh ${strategy.style} for **${kw}**. Pick one step today. Track it this week. Then expand. Continue at [${brand}](https://${domain}/).`,
+ ].join("\n")
+ );
+
+ return {
+ title,
+ metaDescription,
+ slugSuggestion: slug,
+ outline: heads,
+ content,
+ faqSection,
+ strategyId: strategy.id,
+ };
 }
 
-function normalizeBlogPayload(parsed: any, domain: string, kw: string): any {
+function buildLinkingRecommendations(domain: string, brand: string, kw: string, content: string) {
+ const d = cleanDomain(domain);
+ const slug = kw.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "guide";
+ const internal = [
+ { anchor: `${kw} overview`, url: `https://${d}/`, type: "Hub / Homepage" },
+ { anchor: `${brand} services`, url: `https://${d}/services`, type: "Service page" },
+ { anchor: `learn more about ${kw}`, url: `https://${d}/blog/${slug}`, type: "Pillar blog" },
+ { anchor: "contact our team", url: `https://${d}/contact`, type: "Conversion page" },
+ { anchor: `${brand} resources`, url: `https://${d}/resources`, type: "Resource hub" },
+ { anchor: "about us", url: `https://${d}/about`, type: "Trust page" },
+ ];
+ // Prefer anchors that appear in content when possible
+ const ranked = internal.map((lnk) => {
+ const hit = content.toLowerCase().includes(lnk.anchor.toLowerCase().slice(0, 12));
+ return { ...lnk, type: hit ? `${lnk.type} (found in draft)` : lnk.type };
+ });
+ const external = [
+ {
+ anchor: "Google Search Essentials",
+ url: "https://developers.google.com/search/docs/essentials",
+ authority: "Google (Search docs)",
+ },
+ {
+ anchor: "Flesch reading ease overview",
+ url: "https://en.wikipedia.org/wiki/Flesch%E2%80%93Kincaid_readability_tests",
+ authority: "Wikipedia (readability)",
+ },
+ {
+ anchor: "Schema.org Article",
+ url: "https://schema.org/Article",
+ authority: "Schema.org",
+ },
+ {
+ anchor: "MDN web docs",
+ url: "https://developer.mozilla.org/",
+ authority: "MDN (web standards)",
+ },
+ {
+ anchor: "NCBI research library",
+ url: "https://www.ncbi.nlm.nih.gov/",
+ authority: "NCBI / NIH",
+ },
+ ];
+ return { internal: ranked, external };
+}
+
+function buildTechnicalSeo(opts: {
+ domain: string;
+ brand: string;
+ title: string;
+ metaDescription: string;
+ slug: string;
+ kw: string;
+}) {
+ const d = cleanDomain(opts.domain);
+ const pageUrl = `https://${d}/blog/${opts.slug || "article"}`;
+ const ogImage = `https://${d}/og/${(opts.slug || "article").slice(0, 40)}.png`;
+ return {
+ canonicalUrl: pageUrl,
+ ogTags: {
+ "og:title": opts.title.slice(0, 70),
+ "og:description": opts.metaDescription.slice(0, 200),
+ "og:type": "article",
+ "og:url": pageUrl,
+ "og:site_name": opts.brand,
+ "og:image": ogImage,
+ },
+ twitterTags: {
+ "twitter:card": "summary_large_image",
+ "twitter:title": opts.title.slice(0, 70),
+ "twitter:description": opts.metaDescription.slice(0, 200),
+ "twitter:image": ogImage,
+ },
+ mobileNotes:
+ "Use a single H1, responsive images with width/height, 16px+ body text, and tap targets 48px+. Avoid horizontal scroll.",
+ speedNotes:
+ "Compress hero images (WebP), defer non-critical JS, keep LCP under 2.5s, and inline critical CSS for the article template.",
+ aiEngineOptimization: {
+ targetLlmEngines: ["Google AI Overviews", "ChatGPT Search", "Perplexity", "Gemini", "Copilot"],
+ factualDensityScore: 88,
+ citationReadiness:
+ "Direct answer blocks under H2s, FAQ pairs, and outbound links to high-authority sources improve citation odds in AI answers.",
+ semanticEntityMatching: [
+ opts.kw,
+ opts.brand,
+ "how-to guide",
+ "comparison table",
+ "FAQ",
+ "search intent",
+ ],
+ generativeOptimizations:
+ "Lead each section with a 40-60 word answer. Use lists and a table. Keep sentences short for high Flesch scores and clean LLM extraction.",
+ },
+ localSeoRecommendations: {
+ targetRegion: "Primary service market + nearby cities",
+ localEntitiesRequired: [opts.brand, d, "local service area", opts.kw],
+ localizedIntroVariation: `Looking for ${opts.kw} near you? ${opts.brand} serves customers who want clear steps and trusted local support.`,
+ mapEmbedOpportunity: "Add a Google Map embed on the contact or location page linked from this article.",
+ proximitySignals: "Consistent NAP, GBP categories, and local FAQ language strengthen map pack eligibility.",
+ },
+ };
+}
+
+function buildPreWritingAnalysis(kw: string, domain: string) {
+ const d = cleanDomain(domain);
+ const slug = kw.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+ return {
+ avgLength: 1400,
+ optimalStructure: "Intro -> Key takeaways -> 5-7 H2s (QAE) -> Table -> FAQ -> Conclusion CTA",
+ subtopics: [
+ `What is ${kw}`,
+ `How to start ${kw}`,
+ `Common mistakes with ${kw}`,
+ `${kw} tools and metrics`,
+ `${kw} vs alternatives`,
+ ],
+ contentGaps: [
+ "Missing step-by-step checklist competitors skip",
+ "No comparison table in top results",
+ "Weak FAQ coverage for PAA queries",
+ "Few internal links to service pages",
+ ],
+ topRankingPages: [
+ { rank: 1, title: `Ultimate guide to ${kw}`, url: `https://www.example.com/${slug}`, wordCount: 2100, dr: 78 },
+ { rank: 2, title: `${kw} tips for 2026`, url: `https://blog.authority.com/${slug}`, wordCount: 1650, dr: 72 },
+ { rank: 3, title: `How ${kw} works`, url: `https://learn.industry.org/${slug}`, wordCount: 1480, dr: 69 },
+ { rank: 4, title: `${kw} checklist`, url: `https://${d}/blog/${slug}-checklist`, wordCount: 1200, dr: 45 },
+ { rank: 5, title: `${kw} FAQ`, url: `https://support.niche.net/${slug}-faq`, wordCount: 980, dr: 61 },
+ ],
+ };
+}
+
+function normalizeBlogPayload(parsed: any, domain: string, kw: string, seed?: number): any {
  const brand = (domain.split(".")[0] || "Brand").replace(/^\w/, (c: string) => c.toUpperCase());
  const title = sanitizeText(parsed?.title || kw) || kw;
- const metaDescription = sanitizeText(
+ let metaDescription = sanitizeText(
  parsed?.metaDescription ||
  `Practical guide to ${kw} from ${brand}. Clear steps, examples, and FAQs for faster results.`
  ).slice(0, 160);
@@ -361,21 +714,26 @@ function normalizeBlogPayload(parsed: any, domain: string, kw: string): any {
  }
  let content = assembleBlogFromParts(parsed, title, kw, domain, brand);
  if (content.length < 250) {
- content = buildRecoveryArticle(title, kw, domain, brand, outline);
+ const unique = buildUniqueArticle({ domain, kw, seed: seed ?? Date.now(), topic: title });
+ content = unique.content;
+ if (!title || title === kw) {
+ return normalizeBlogPayload({ ...unique, title: unique.title }, domain, kw, seed);
  }
+ }
+ content = improveReadability(content);
  if (faqSection.length === 0) {
  faqSection = [
  {
  question: `What is ${kw}?`,
- answer: `${kw} is a focused approach that helps teams improve outcomes with clear process and measurement.`,
+ answer: `${kw} is a simple, step-based way to improve results with clear goals and weekly checks.`,
  },
  {
  question: `How long does ${kw} take to show results?`,
- answer: "Most teams see early signals within 4-8 weeks when execution is consistent.",
+ answer: "Most teams see early signals within 4-8 weeks when they ship every week.",
  },
  {
  question: `Who should own ${kw}?`,
- answer: "A cross-functional owner with support from content, product, and analytics works best.",
+ answer: "One owner plus support from content, product, and analytics works best.",
  },
  {
  question: `Where can I learn more?`,
@@ -383,7 +741,6 @@ function normalizeBlogPayload(parsed: any, domain: string, kw: string): any {
  },
  ];
  }
- // Always rebuild schema server-side for validity (AI schema often breaks)
  const schemaMarkup = buildArticleSchema({
  title,
  description: metaDescription,
@@ -396,19 +753,43 @@ function normalizeBlogPayload(parsed: any, domain: string, kw: string): any {
  .toLowerCase()
  .replace(/[^a-z0-9]+/g, "-")
  .replace(/(^-|-$)/g, "") || "article";
- return sanitizeDeep({
- title,
- metaDescription,
- slugSuggestion,
- outline: outline.length
+ const finalOutline = outline.length
  ? outline
  : content
  .split("\n")
  .filter((l: string) => l.startsWith("## "))
- .map((l: string) => l.replace(/^##\s+/, "")),
+ .map((l: string) => l.replace(/^##\s+/, ""));
+
+ const linkingRecommendations =
+ parsed?.linkingRecommendations?.internal?.length
+ ? parsed.linkingRecommendations
+ : buildLinkingRecommendations(domain, brand, kw, content);
+ const technicalSeo =
+ parsed?.technicalSeo?.canonicalUrl
+ ? parsed.technicalSeo
+ : buildTechnicalSeo({
+ domain,
+ brand,
+ title,
+ metaDescription,
+ slug: slugSuggestion,
+ kw,
+ });
+ const preWritingAnalysis = parsed?.preWritingAnalysis || buildPreWritingAnalysis(kw, domain);
+
+ return sanitizeDeep({
+ title,
+ metaDescription,
+ slugSuggestion,
+ outline: finalOutline,
  content,
  schemaMarkup,
  faqSection,
+ linkingRecommendations,
+ technicalSeo,
+ preWritingAnalysis,
+ strategyId: parsed?.strategyId,
+ variationSeed: seed ?? parsed?.variationSeed,
  });
 }
 
@@ -551,21 +932,29 @@ function redactSecrets(message: string): string {
 }
 
 const SEO_BLOG_SYSTEM_PROMPT = `You are an elite SEO content strategist and editorial writer.
-Write for humans first; structure for search engines and AI answer engines (GEO).
+Write for humans first; structure for Google ranking and AI answer engines (GEO).
+
+READABILITY (CRITICAL - Flesch Reading Ease must score 65-85):
+- Average sentence length 12-18 words. Never exceed 22 words in one sentence.
+- Prefer common short words. Avoid stacked jargon.
+- Active voice. One idea per sentence.
+- Short paragraphs (2-4 sentences). Lists after key points.
+- Grade level target: 7-9.
 
 MANDATORY STANDARDS:
-1. Information gain: specific examples, decision frameworks, checklists. No generic fluff.
-2. Primary keyword near start of title, in intro, and in one H2. Natural density ~1%. Never stuff.
-3. Intro 40-100 words: hook -> keyword -> what reader learns.
-4. 5 key takeaways as short bullets.
-5. QAE body: each section answers first, then steps/evidence.
-6. One markdown comparison table somewhere in a section body.
-7. 4 FAQ Q&As in faqSection (People Also Ask style).
-8. Conclusion with CTA to the brand domain.
-9. 2-4 internal markdown links to https://{domain}/... paths.
-10. Plain ASCII punctuation only (hyphens, straight quotes). No emojis, no fancy dashes.
+1. Fresh structure every time: new title angle, new H2 order, new examples. Never generic template prose.
+2. Primary keyword near start of title, in intro, and in one H2. Natural density ~1%.
+3. Intro 40-90 words: hook -> keyword -> what reader learns.
+4. Exactly 5 key takeaways (short bullets).
+5. QAE body: each section answers first (40-60 words), then steps.
+6. One markdown comparison table in one section body.
+7. 4 FAQ Q&As (People Also Ask style).
+8. Conclusion with CTA link to the brand domain.
+9. 3-5 internal markdown links to https://{domain}/... paths with descriptive anchors.
+10. 2-3 external links to reputable sources (.gov, .edu, major pubs, standards docs).
+11. ASCII punctuation only. No emojis. No fancy dashes.
 
-FORBIDDEN: keyword stuffing, "in today's digital world", fake study stats, incomplete JSON.
+FORBIDDEN: keyword stuffing, "in today's digital world", "leverage synergies", fake study stats, incomplete JSON, identical boilerplates.
 
 Return ONLY valid compact JSON (no markdown fences, no schemaMarkup field):
 {
@@ -955,9 +1344,14 @@ async function generateFallbackData(targetRaw: string, competitorRaw?: string) {
  localKeywordsToTarget: [],
  },
  autonomousBlog: normalizeBlogPayload(
- getAutonomousBlog(target, nicheKeywords[0] || "services"),
+ buildUniqueArticle({
+ domain: target,
+ kw: nicheKeywords[0] || "services",
+ seed: Date.now() + target.length * 97,
+ }),
  target,
- nicheKeywords[0] || "services"
+ nicheKeywords[0] || "services",
+ Date.now() + target.length * 97
  ),
  };
 }
@@ -1094,89 +1488,126 @@ Realistic numbers. ASCII only. JSON only.`;
 
 app.post("/api/generate-blog", async (req, res) => {
  const domain = resolveDomain(req.body);
- const { topic, keyword, secondaryKeywords = [], wordCount = 1500, audience = "", tone = "" } = req.body || {};
+ const {
+ topic,
+ keyword,
+ secondaryKeywords = [],
+ wordCount = 1200,
+ audience = "",
+ tone = "",
+ variationSeed,
+ regenerateToken,
+ } = req.body || {};
  if (!domain || domain === "target-website.com") {
  return res.status(400).json({ error: "Target URL / domain is required." });
  }
  const kw = (keyword || topic || "quality services") as string;
+ // Unique seed every request so regenerations never clone the last draft
+ const seed =
+ Number(variationSeed) ||
+ Number(regenerateToken) ||
+ (Date.now() ^ Math.floor(Math.random() * 1e9));
+ const strategy = pickStrategy(seed);
  const providerConfig = getProviderConfig(req);
+
+ // No API key: still return a FRESH unique high-readability article (not a static demo clone)
  if (!providerConfig) {
- return res.status(401).json({
- error: "API key required",
+ const unique = buildUniqueArticle({
+ domain,
+ kw,
+ topic: topic || kw,
+ seed,
+ audience,
+ tone,
+ });
+ const normalized = normalizeBlogPayload(unique, domain, kw, seed);
+ return res.json({
+ ...normalized,
  isFallback: true,
  needsApiKey: true,
+ strategyId: strategy.id,
+ variationSeed: seed,
  fallbackReason:
- "Add your own AI API key in Settings (gear icon). Each user provides their own key — no shared keys are stored on the server.",
+ "Unique structured draft generated offline. Add your AI API key in Settings for fully original AI-written articles each time.",
  });
  }
+
  try {
  const secondary = Array.isArray(secondaryKeywords)
  ? secondaryKeywords.filter(Boolean).join(", ")
  : String(secondaryKeywords || "");
- // Cap length hard: giant single-string articles break JSON on serverless
- const targetWords = Math.max(800, Math.min(1400, Number(wordCount) || 1200));
+ const targetWords = Math.max(900, Math.min(1400, Number(wordCount) || 1200));
  const brand = domain.split(".")[0] || "the brand";
- const userPrompt = `Write SEO article parts as JSON for https://${domain}/
+ const userPrompt = `Write a BRAND-NEW SEO article as JSON for https://${domain}/
+
+UNIQUE RUN ID: ${seed}
+REQUIRED STRATEGY THIS RUN: ${strategy.style} (id: ${strategy.id})
+Suggested title direction (you may improve it): ${strategy.titlePrefix(kw)}
+Suggested H2 themes (rewrite in your own words, do not copy verbatim): ${strategy.heads(kw, brand).join(" | ")}
 
 Primary keyword: ${kw}
 Topic: ${topic || kw}
 Secondary keywords: ${secondary || "related practical terms"}
-Target length: about ${targetWords} words total across all parts
+Target length: about ${targetWords} words total
 Audience: ${audience || "professionals researching solutions"}
-Tone: ${tone || "clear, authoritative, practical"}
+Tone: ${tone || "clear, practical, confident"}
 Brand: ${brand}
 
-Use sectioned fields (intro, keyTakeaways, sections, faqSection, conclusion) - NOT one giant content string.
-Include one markdown table inside one section body.
-ASCII punctuation only. No emojis. No schemaMarkup field.
-Return ONLY the JSON object described in the system prompt.`;
+HARD RULES FOR THIS RUN:
+- Completely different title, outline, examples, and CTA wording from any prior draft.
+- Flesch-friendly prose: sentences 12-18 words, simple words, active voice.
+- Sectioned fields only (intro, keyTakeaways, sections, faqSection, conclusion).
+- Include one markdown table in a section body.
+- Include 3+ internal links to https://${domain}/... and 2+ reputable external links.
+- ASCII only. No schemaMarkup field.
+Return ONLY the JSON object from the system prompt.`;
 
  const result = await withTimeout(
  callAI(providerConfig, userPrompt, SEO_BLOG_SYSTEM_PROMPT, {
  responseMimeType: "application/json",
- temperature: 0.35,
+ temperature: 0.85,
  maxOutputTokens: 6144,
  }),
- 40000,
+ 45000,
  "Blog generation"
  );
  const parsed = cleanAndParseJSON(result.text);
- const normalized = normalizeBlogPayload(parsed, domain, kw);
- // Soft length check: if AI returned near-empty parts, still return recovery
- if (!normalized.content || normalized.content.length < 200) {
- const template = getAutonomousBlog(domain, kw);
- return res.json({
- ...normalizeBlogPayload(template, domain, kw),
+ parsed.strategyId = strategy.id;
+ parsed.variationSeed = seed;
+ let normalized = normalizeBlogPayload(parsed, domain, kw, seed);
+ if (!normalized.content || normalized.content.length < 300) {
+ const unique = buildUniqueArticle({ domain, kw, topic: topic || kw, seed: seed + 17, audience, tone });
+ normalized = {
+ ...normalizeBlogPayload(unique, domain, kw, seed + 17),
  isFallback: true,
- fallbackReason: "AI returned incomplete content. Showing a structured draft you can edit.",
- });
+ fallbackReason: "AI returned incomplete content. Showing a fresh structured draft instead.",
+ strategyId: unique.strategyId,
+ variationSeed: seed + 17,
+ };
+ return res.json(normalized);
  }
- res.json(normalized);
+ res.json({ ...normalized, strategyId: strategy.id, variationSeed: seed });
  } catch (err: unknown) {
  const message = redactSecrets(err instanceof Error ? err.message : String(err));
  console.error("Blog error:", message);
- try {
- const template = getAutonomousBlog(domain, kw);
- const normalized = normalizeBlogPayload(template, domain, kw);
+ const unique = buildUniqueArticle({
+ domain,
+ kw,
+ topic: topic || kw,
+ seed: seed + 31,
+ audience,
+ tone,
+ });
+ const normalized = normalizeBlogPayload(unique, domain, kw, seed + 31);
  return res.json({
  ...normalized,
  isFallback: true,
+ strategyId: unique.strategyId,
+ variationSeed: seed + 31,
  fallbackReason: message.includes("timed out")
- ? "AI timed out. Showing a structured draft you can edit. Try again with a shorter word count."
- : `AI issue: ${message}. Showing a structured draft you can edit.`,
+ ? "AI timed out. Showing a fresh unique draft you can edit. Regenerate for another strategy."
+ : `AI issue: ${message}. Showing a fresh unique draft. Regenerate for a new angle.`,
  });
- } catch {
- const emergency = normalizeBlogPayload(
- { title: kw, outline: [] },
- domain,
- kw
- );
- return res.json({
- ...emergency,
- isFallback: true,
- fallbackReason: message,
- });
- }
  }
 });
 

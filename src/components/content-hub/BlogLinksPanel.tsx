@@ -76,7 +76,14 @@ export default function BlogLinksPanel({
                               </tr>
                             </thead>
                             <tbody>
-                              {blogPost.linkingRecommendations.internal.map((lnk, i) => (
+                              {(blogPost.linkingRecommendations?.internal || []).length === 0 ? (
+                                <tr>
+                                  <td colSpan={4} className="p-4 text-slate-500 text-center">
+                                    No internal link map yet. Regenerate the article or run the scanner below.
+                                  </td>
+                                </tr>
+                              ) : (
+                                (blogPost.linkingRecommendations?.internal || []).map((lnk, i) => (
                                 <tr key={i} className="border-b border-slate-100 hover:bg-slate-50/20 font-semibold text-slate-700 transition-colors">
                                   <td className="p-3 text-blue-600 underline">"{lnk.anchor}"</td>
                                   <td className="p-3 font-mono text-[11px] text-slate-500">{lnk.url}</td>
@@ -87,7 +94,8 @@ export default function BlogLinksPanel({
                                   </td>
                                   <td className="p-3 text-center text-green-600 font-bold">100% Safe (Local)</td>
                                 </tr>
-                              ))}
+                              ))
+                              )}
                             </tbody>
                           </table>
                         </div>
@@ -321,7 +329,14 @@ export default function BlogLinksPanel({
                               </tr>
                             </thead>
                             <tbody>
-                              {blogPost.linkingRecommendations.external.map((lnk, i) => (
+                              {(blogPost.linkingRecommendations?.external || []).length === 0 ? (
+                                <tr>
+                                  <td colSpan={4} className="p-4 text-slate-500 text-center">
+                                    No external authority links yet. Regenerate the article to rebuild recommendations.
+                                  </td>
+                                </tr>
+                              ) : (
+                                (blogPost.linkingRecommendations?.external || []).map((lnk, i) => (
                                 <tr key={i} className="border-b border-slate-100 hover:bg-slate-50/20 font-semibold text-slate-700 transition-colors">
                                   <td className="p-3 text-slate-900 font-bold">"{lnk.anchor}"</td>
                                   <td className="p-3 font-mono text-[11px] text-blue-500 underline truncate max-w-xs">{lnk.url}</td>
@@ -332,7 +347,8 @@ export default function BlogLinksPanel({
                                     </span>
                                   </td>
                                 </tr>
-                              ))}
+                              ))
+                              )}
                             </tbody>
                           </table>
                         </div>

@@ -21,7 +21,14 @@ export default function BlogTechnicalPanel({
 }: BlogTechnicalPanelProps) {
  const [technicalSubTab, setTechnicalSubTab] = useState<"ai" | "local" | "og" | "code">("ai");
 
- if (!blogPost.technicalSeo) return null;
+ const tech = blogPost.technicalSeo;
+ if (!tech) {
+ return (
+ <div className="bg-white p-6 rounded-2xl border border-slate-200 text-sm text-slate-600">
+ Technical SEO metadata is not available for this draft. Regenerate the article to rebuild OG tags, GEO notes, and head tags.
+ </div>
+ );
+ }
 
  return (
  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-6">
@@ -92,7 +99,7 @@ export default function BlogTechnicalPanel({
  >
  {(() => {
  // Retrieve or fallback values
- const aiOpt = blogPost.technicalSeo.aiEngineOptimization || {
+ const aiOpt = tech.aiEngineOptimization || {
  targetLlmEngines: ["Google Gemini", "OpenAI SearchGPT", "Perplexity AI", "Claude/Anthropic"],
  factualDensityScore: 94,
  citationReadiness: "Includes precise clinical or expert claims backed immediately by inline links to reputable sources (NCBI, Nature), providing clear signals for retrieval-augmented generation.",
@@ -188,7 +195,7 @@ export default function BlogTechnicalPanel({
  >
  {(() => {
  // Retrieve or fallback local SEO values
- const locOpt = blogPost.technicalSeo.localSeoRecommendations || {
+ const locOpt = tech.localSeoRecommendations || {
  targetRegion: targetDomain ? `${targetDomain.replace(/\.[a-z]+$/, "")} Regional Hubs` : "Global & Region specific locations",
  localEntitiesRequired: [
  "Regional healthcare clinics",
@@ -311,10 +318,10 @@ export default function BlogTechnicalPanel({
  <div className="p-3 bg-slate-50 space-y-1 border-t border-slate-100">
  <div className="text-[9px] text-slate-400 font-bold uppercase tracking-wider font-mono">https://{targetDomain || "example.com"}</div>
  <h5 className="font-extrabold text-slate-800 text-xs leading-snug line-clamp-1">
- {blogPost.technicalSeo.ogTags["og:title"] || blogPost.title}
+ {tech.ogTags?.["og:title"] || blogPost.title}
  </h5>
  <p className="text-[10px] text-slate-500 leading-normal line-clamp-2">
- {blogPost.technicalSeo.ogTags["og:description"] || blogPost.metaDescription}
+ {tech.ogTags?.["og:description"] || blogPost.metaDescription}
  </p>
  </div>
  </div>
@@ -348,10 +355,10 @@ export default function BlogTechnicalPanel({
  <div className="p-2.5 border-t border-slate-800">
  <span className="text-[9px] text-slate-500 font-semibold block uppercase">{targetDomain || "example.com"}</span>
  <h5 className="font-extrabold text-slate-100 text-xs leading-snug line-clamp-1 mt-0.5">
- {blogPost.technicalSeo.twitterTags?.["twitter:title"] || blogPost.technicalSeo.ogTags["og:title"] || blogPost.title}
+ {tech.twitterTags?.["twitter:title"] || tech.ogTags?.["og:title"] || blogPost.title}
  </h5>
  <p className="text-[10px] text-slate-400 leading-normal line-clamp-2 mt-0.5">
- {blogPost.technicalSeo.twitterTags?.["twitter:description"] || blogPost.technicalSeo.ogTags["og:description"] || blogPost.metaDescription}
+ {tech.twitterTags?.["twitter:description"] || tech.ogTags?.["og:description"] || blogPost.metaDescription}
  </p>
  </div>
  </div>
@@ -373,7 +380,7 @@ export default function BlogTechnicalPanel({
  {(() => {
  const titleVal = blogPost.title;
  const descVal = blogPost.metaDescription;
- const canonicalVal = blogPost.technicalSeo.canonicalUrl;
+ const canonicalVal = tech.canonicalUrl;
  const imageVal = getAppropriateImgSrc(blogPost.title, blogPost.metaDescription);
  const domainVal = targetDomain || "example.com";
 
@@ -386,16 +393,16 @@ export default function BlogTechnicalPanel({
 <!-- Open Graph / Facebook -->
 <meta property="og:type" content="article" />
 <meta property="og:url" content="${canonicalVal}" />
-<meta property="og:title" content="${blogPost.technicalSeo.ogTags["og:title"] || titleVal}" />
-<meta property="og:description" content="${blogPost.technicalSeo.ogTags["og:description"] || descVal}" />
+<meta property="og:title" content="${tech.ogTags?.["og:title"] || titleVal}" />
+<meta property="og:description" content="${tech.ogTags?.["og:description"] || descVal}" />
 <meta property="og:image" content="${imageVal}" />
 <meta property="og:site_name" content="${domainVal.replace(/\.[a-z]+$/, "").toUpperCase()}" />
 
 <!-- Twitter / X -->
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:url" content="${canonicalVal}" />
-<meta name="twitter:title" content="${blogPost.technicalSeo.twitterTags?.["twitter:title"] || titleVal}" />
-<meta name="twitter:description" content="${blogPost.technicalSeo.twitterTags?.["twitter:description"] || descVal}" />
+<meta name="twitter:title" content="${tech.twitterTags?.["twitter:title"] || titleVal}" />
+<meta name="twitter:description" content="${tech.twitterTags?.["twitter:description"] || descVal}" />
 <meta name="twitter:image" content="${imageVal}" />`;
 
  return (
@@ -452,7 +459,7 @@ export default function BlogTechnicalPanel({
  <span>Mobile-Friendliness & Accessibility</span>
  </span>
  <p className="text-xs text-slate-600 leading-relaxed font-medium bg-slate-50 p-3 rounded-xl border border-slate-150">
- {blogPost.technicalSeo.mobileNotes}
+ {tech.mobileNotes}
  </p>
  </div>
  <div className="space-y-1.5">
@@ -461,7 +468,7 @@ export default function BlogTechnicalPanel({
  <span>Core Web Vitals & Loading Metrics</span>
  </span>
  <p className="text-xs text-slate-600 leading-relaxed font-medium bg-slate-50 p-3 rounded-xl border border-slate-150">
- {blogPost.technicalSeo.speedNotes}
+ {tech.speedNotes}
  </p>
  </div>
  </div>

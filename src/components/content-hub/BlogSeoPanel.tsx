@@ -4,31 +4,46 @@ import { Activity, Award, Check, CheckCircle, Cpu, ShieldCheck, TrendingUp } fro
 export interface BlogSeoPanelProps {
  blogPost: BlogPost;
  blogKeyword: string;
+ /** Live Flesch Reading Ease from linguistics (target 60+) */
+ readingEase?: number;
+ gradeLevel?: number;
+ passiveVoicePercent?: number;
+ transitionPercent?: number;
 }
 
-export default function BlogSeoPanel({ blogPost, blogKeyword }: BlogSeoPanelProps) {
+export default function BlogSeoPanel({
+ blogPost,
+ blogKeyword,
+ readingEase = 68,
+ gradeLevel = 8,
+ passiveVoicePercent = 8,
+ transitionPercent = 30,
+}: BlogSeoPanelProps) {
  const wordCount = blogPost.content ? blogPost.content.split(/\s+/).filter(Boolean).length : 2200;
+ // Map Flesch (0-100) into the SEO readability subscore (max 15) with floor at 60 ease
+ const ease = Math.max(0, Math.min(100, readingEase));
+ const readabilitySub = Math.max(9, Math.min(15, Math.round((ease / 100) * 15)));
  const seoReport = {
  seoScoreBreakdown: {
  keywordOptimization: 18,
  contentStructure: 14,
- readability: 13,
+ readability: readabilitySub,
  technicalSeo: 14,
  multimediaUsage: 9,
- internalLinking: 9,
- schemaMarkup: 10,
+ internalLinking: blogPost.linkingRecommendations?.internal?.length ? 9 : 6,
+ schemaMarkup: blogPost.schemaMarkup ? 10 : 6,
  mobileOptimization: 9,
- total: 96,
+ total: 0,
  ...(blogPost.seoAuditorReport?.seoScoreBreakdown || {})
  },
  contentQualityMetrics: {
  wordCount,
  readingTime: Math.max(1, Math.ceil(wordCount / 220)),
- fleschReadingEase: 68,
- gradeLevel: 8,
- passiveVoicePercent: 8,
- transitionWordsPercent: 34,
- sentenceVarietyScore: 85,
+ fleschReadingEase: ease,
+ gradeLevel: gradeLevel,
+ passiveVoicePercent,
+ transitionWordsPercent: transitionPercent,
+ sentenceVarietyScore: Math.max(60, Math.min(95, ease + 10)),
  ...(blogPost.seoAuditorReport?.contentQualityMetrics || {})
  },
  keywordDensityReport: {
@@ -57,6 +72,17 @@ export default function BlogSeoPanel({ blogPost, blogKeyword }: BlogSeoPanelProp
  ...(blogPost.seoAuditorReport?.competitiveComparison || {})
  }
  };
+ // Recompute total from breakdown so readability is reflected
+ const bd = seoReport.seoScoreBreakdown;
+ bd.total =
+ (bd.keywordOptimization || 0) +
+ (bd.contentStructure || 0) +
+ (bd.readability || 0) +
+ (bd.technicalSeo || 0) +
+ (bd.multimediaUsage || 0) +
+ (bd.internalLinking || 0) +
+ (bd.schemaMarkup || 0) +
+ (bd.mobileOptimization || 0);
 
  return (
  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-8 animate-fadeIn">
