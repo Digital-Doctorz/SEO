@@ -24,6 +24,8 @@ export interface BlogConfigSidebarProps {
  onTargetAudience: (v: string) => void;
  toneOfVoice: string;
  onToneOfVoice: (v: string) => void;
+ competitorUrl?: string;
+ onCompetitorUrl?: (v: string) => void;
  audienceOptions: string[];
  toneOptions: string[];
  isBlogGenerating: boolean;
@@ -46,6 +48,7 @@ export default function BlogConfigSidebar(props: BlogConfigSidebarProps) {
  wordCount, onWordCount,
  targetAudience, onTargetAudience,
  toneOfVoice, onToneOfVoice,
+ competitorUrl = "", onCompetitorUrl,
  audienceOptions, toneOptions,
  isBlogGenerating, onGenerate,
  savedArticles, blogPost,
@@ -223,7 +226,7 @@ export default function BlogConfigSidebar(props: BlogConfigSidebarProps) {
  </div>
  </div>
 
- {/* Target Word Count */}
+ {/* Target Word Count — master prompt minimum 2000 */}
  <div className="space-y-1.5">
  <div className="flex justify-between items-center text-xs font-bold text-slate-700 uppercase tracking-wider">
  <span>Target Word Count</span>
@@ -231,19 +234,36 @@ export default function BlogConfigSidebar(props: BlogConfigSidebarProps) {
  </div>
  <input
  type="range"
- min={400}
- max={1400}
+ min={2000}
+ max={2800}
  step={100}
- value={wordCount}
+ value={Math.max(2000, wordCount)}
  onChange={(e) => onWordCount(Number(e.target.value))}
  className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-blue-600"
  />
  <div className="flex justify-between text-[10px] text-slate-400 font-bold">
- <span>400w (Short Post)</span>
- <span>1,200w (Standard)</span>
- <span>2,500w (Authority Pillar)</span>
+ <span>2,000w (Master min)</span>
+ <span>2,400w</span>
+ <span>2,800w (Deep pillar)</span>
  </div>
  </div>
+
+ {/* Competitor URL to outrank (master COMPETITOR_URL) */}
+ {onCompetitorUrl && (
+ <div className="space-y-1.5">
+ <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+ Competitor URL to outrank
+ </label>
+ <input
+ type="url"
+ value={competitorUrl}
+ onChange={(e) => onCompetitorUrl(e.target.value)}
+ placeholder="https://competitor.com/page-to-beat"
+ className="w-full text-xs rounded-xl border border-slate-200 bg-white px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+ />
+ <p className="text-[10px] text-slate-400">Optional. Used for gap analysis vs their page.</p>
+ </div>
+ )}
 
  {/* Target Audience Selector */}
  <div className="space-y-1.5">

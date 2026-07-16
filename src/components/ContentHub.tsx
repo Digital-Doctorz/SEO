@@ -43,9 +43,10 @@ export default function ContentHub({
   const [blogKeyword, setBlogKeyword] = useState(autonomousBlog?.slugSuggestion || "");
   const [secondaryKeywords, setSecondaryKeywords] = useState<string[]>([]);
   const [secKeywordInput, setSecKeywordInput] = useState("");
-  const [wordCount, setWordCount] = useState<number>(1500);
+  const [wordCount, setWordCount] = useState<number>(2000);
   const [targetAudience, setTargetAudience] = useState("Marketing Managers & SEOs");
-  const [toneOfVoice, setToneOfVoice] = useState("Authoritative & Analytical");
+  const [toneOfVoice, setToneOfVoice] = useState("Professional");
+  const [competitorForBlog, setCompetitorForBlog] = useState("");
   
   const [blogPost, setBlogPost] = useState<BlogPost | null>(autonomousBlog || null);
   // All remaining hooks declared before effects/memos that depend on them (stable hook order)
@@ -443,32 +444,33 @@ export default function ContentHub({
       keywordLower.includes("knowledge");
 
     // Cap word counts: oversized generations often truncate JSON and fail on serverless
+    // Master prompt: WORDCOUNT minimum 2000; TONE = Conversational | Professional | Academic
     if (isMedical) {
       return {
-        wordCount: 1600,
+        wordCount: 2000,
         targetAudience: "Patients seeking natural joint pain relief without surgery",
-        toneOfVoice: "Empathetic & Warm",
+        toneOfVoice: "Conversational",
         secondaryKeywords: ["joint restoration", "knee pain relief", "phytomedicine", "osteoarthritis natural treatment"]
       };
     } else if (isPayments) {
       return {
-        wordCount: 1500,
+        wordCount: 2000,
         targetAudience: "Technical Engineers & Developers",
-        toneOfVoice: "Technical & Precise",
+        toneOfVoice: "Professional",
         secondaryKeywords: ["payment gateway integration", "multi-currency processing", "checkout workflows", "api security"]
       };
     } else if (isNotes) {
       return {
-        wordCount: 1400,
+        wordCount: 2000,
         targetAudience: "General Professionals",
-        toneOfVoice: "Educational & Conversational",
+        toneOfVoice: "Conversational",
         secondaryKeywords: ["productivity templates", "knowledge base workflows", "structured workspaces", "notion template"]
       };
     } else {
       return {
-        wordCount: 1500,
+        wordCount: 2000,
         targetAudience: "Marketing Managers & SEOs",
-        toneOfVoice: "Authoritative & Analytical",
+        toneOfVoice: "Professional",
         secondaryKeywords: ["organic traffic growth", "competitor analysis", "content strategy", "topical authority"]
       };
     }
@@ -570,7 +572,8 @@ export default function ContentHub({
 
     try {
       // Deeper default length for research-grade articles
-      const cappedWords = Math.min(2000, Math.max(1200, Number(wordCountToUse) || 1500));
+      // Master prompt minimum 2000 words
+      const cappedWords = Math.min(2800, Math.max(2000, Number(wordCountToUse) || 2000));
       // New seed every click = new strategy/title/outline (never clone previous draft)
       const variationSeed = Date.now() ^ Math.floor(Math.random() * 1_000_000_000);
       let data = await generateBlogPost({
@@ -581,6 +584,7 @@ export default function ContentHub({
         audience: audienceToUse,
         tone: toneToUse,
         targetDomain,
+        competitorUrl: competitorForBlog || undefined,
         aiConfig,
         variationSeed,
         enhanceMode: isRedraft,
@@ -734,13 +738,11 @@ export default function ContentHub({
     "Healthcare Consumers & Caregivers"
   ];
 
+  // Master prompt TONE values (required)
   const toneOptions = [
-    "Authoritative & Analytical",
-    "Casual & Friendly",
-    "Educational & Conversational",
-    "Bold & Opinionated",
-    "Technical & Precise",
-    "Empathetic & Warm"
+    "Conversational",
+    "Professional",
+    "Academic",
   ];
 
   // Character counter check colors
@@ -817,6 +819,8 @@ export default function ContentHub({
             onTargetAudience={setTargetAudience}
             toneOfVoice={toneOfVoice}
             onToneOfVoice={setToneOfVoice}
+            competitorUrl={competitorForBlog}
+            onCompetitorUrl={setCompetitorForBlog}
             audienceOptions={audienceOptions}
             toneOptions={toneOptions}
             isBlogGenerating={isBlogGenerating}

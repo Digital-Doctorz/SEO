@@ -54,6 +54,8 @@ export async function generateBlogPost(params: {
   audience: string;
   tone: string;
   targetDomain: string;
+  /** Page to outrank (master prompt COMPETITOR_URL) */
+  competitorUrl?: string;
   aiConfig?: AiProviderConfig;
   /** Unique per click so every regenerate is a new strategy/angle */
   variationSeed?: number;
@@ -86,10 +88,11 @@ export async function generateBlogPost(params: {
     topic: params.topic,
     keyword: params.keyword,
     secondaryKeywords: params.secondaryKeywords,
-    wordCount: params.wordCount,
+    wordCount: Math.max(2000, params.wordCount || 2000),
     audience: params.audience,
     tone: params.tone,
     targetDomain: params.targetDomain,
+    competitorUrl: params.competitorUrl || "",
     aiConfig: params.aiConfig,
     variationSeed,
     regenerateToken: variationSeed,
@@ -135,32 +138,113 @@ export function ensureBlogEnrichment(
     ? post.linkingRecommendations
     : {
         internal: [
-          { anchor: `${kw} overview`, url: `https://${domain}/`, type: "Hub / Homepage" },
-          { anchor: `${brand} services`, url: `https://${domain}/services`, type: "Service page" },
-          { anchor: `learn more about ${kw}`, url: pageUrl, type: "Pillar blog" },
-          { anchor: "contact our team", url: `https://${domain}/contact`, type: "Conversion page" },
-          { anchor: `${brand} resources`, url: `https://${domain}/resources`, type: "Resource hub" },
+          { anchor: `${kw} complete guide`, url: `https://${domain}/`, type: "Hub / Homepage" },
+          { anchor: `${brand} ${kw} services`, url: `https://${domain}/services`, type: "Service page" },
+          { anchor: `deep dive into ${kw}`, url: pageUrl, type: "Pillar blog" },
+          { anchor: `book a ${kw} consultation`, url: `https://${domain}/contact`, type: "Conversion page" },
+          { anchor: `${brand} resource library`, url: `https://${domain}/resources`, type: "Resource hub" },
+          { anchor: `about ${brand}'s approach`, url: `https://${domain}/about`, type: "Trust page" },
         ],
         external: [
           {
-            anchor: "Google Search Essentials",
+            anchor: "Google Search Essentials documentation",
             url: "https://developers.google.com/search/docs/essentials",
-            authority: "Google (Search docs)",
+            authority: "Google (official search docs)",
           },
           {
-            anchor: "Schema.org Article",
-            url: "https://schema.org/Article",
-            authority: "Schema.org",
+            anchor: "Google Search Central documentation",
+            url: "https://developers.google.com/search/docs",
+            authority: "Google (search developer hub)",
           },
           {
-            anchor: "Flesch-Kincaid readability",
-            url: "https://en.wikipedia.org/wiki/Flesch%E2%80%93Kincaid_readability_tests",
-            authority: "Wikipedia",
+            anchor: "Google Analytics help center",
+            url: "https://support.google.com/analytics",
+            authority: "Google (analytics official docs)",
+          },
+          {
+            anchor: "Google Business Profile support",
+            url: "https://support.google.com/business",
+            authority: "Google (local business docs)",
+          },
+          {
+            anchor: "Moz SEO Learning Center",
+            url: "https://moz.com/learn/seo",
+            authority: "Moz (industry-standard SEO education)",
+          },
+          {
+            anchor: "Ahrefs blog on SEO strategy",
+            url: "https://ahrefs.com/blog/",
+            authority: "Ahrefs (data-driven SEO research)",
+          },
+          {
+            anchor: "Search Engine Journal",
+            url: "https://www.searchenginejournal.com/",
+            authority: "Search Engine Journal (industry publication)",
+          },
+          {
+            anchor: "Search Engine Land",
+            url: "https://searchengineland.com/",
+            authority: "Search Engine Land (industry news)",
+          },
+          {
+            anchor: "HubSpot content marketing",
+            url: "https://blog.hubspot.com/marketing",
+            authority: "HubSpot (marketing education)",
+          },
+          {
+            anchor: "Content Marketing Institute",
+            url: "https://contentmarketinginstitute.com/",
+            authority: "Content Marketing Institute (industry body)",
           },
           {
             anchor: "MDN Web Docs",
             url: "https://developer.mozilla.org/",
-            authority: "MDN",
+            authority: "MDN (web standards reference)",
+          },
+          {
+            anchor: "Schema.org structured data",
+            url: "https://schema.org/",
+            authority: "Schema.org (structured data standard)",
+          },
+          {
+            anchor: "W3C web standards",
+            url: "https://www.w3.org/standards/",
+            authority: "W3C (web standards body)",
+          },
+          {
+            anchor: "Statista digital marketing statistics",
+            url: "https://www.statista.com/topics/1786/digital-marketing/",
+            authority: "Statista (market data & statistics)",
+          },
+          {
+            anchor: "Pew Research internet & technology",
+            url: "https://www.pewresearch.org/internet/",
+            authority: "Pew Research (internet usage studies)",
+          },
+          {
+            anchor: "NCBI / NIH research library",
+            url: "https://www.ncbi.nlm.nih.gov/",
+            authority: "NCBI / NIH (research database)",
+          },
+          {
+            anchor: "Google PageSpeed Insights",
+            url: "https://pagespeed.web.dev/",
+            authority: "Google (performance testing tool)",
+          },
+          {
+            anchor: "Google Rich Results Test",
+            url: "https://search.google.com/test/rich-results",
+            authority: "Google (schema validation tool)",
+          },
+          {
+            anchor: "Wikipedia Flesch-Kincaid readability",
+            url: "https://en.wikipedia.org/wiki/Flesch%E2%80%93Kincaid_readability_tests",
+            authority: "Wikipedia (readability standards)",
+          },
+          {
+            anchor: "Semrush Academy",
+            url: "https://www.semrush.com/academy/",
+            authority: "Semrush (SEO training & research)",
           },
         ],
       };
@@ -170,38 +254,38 @@ export function ensureBlogEnrichment(
     : {
         canonicalUrl: pageUrl,
         ogTags: {
-          "og:title": post.title,
-          "og:description": post.metaDescription || "",
+          "og:title": post.title.slice(0, 70),
+          "og:description": (post.metaDescription || "").slice(0, 200),
           "og:type": "article",
           "og:url": pageUrl,
           "og:site_name": brand,
-          "og:image": `https://${domain}/og/${slug}.png`,
+          "og:image": `https://${domain}/og/${slug.slice(0, 40)}.png`,
         },
         twitterTags: {
           "twitter:card": "summary_large_image",
-          "twitter:title": post.title,
-          "twitter:description": post.metaDescription || "",
-          "twitter:image": `https://${domain}/og/${slug}.png`,
+          "twitter:title": post.title.slice(0, 70),
+          "twitter:description": (post.metaDescription || "").slice(0, 200),
+          "twitter:image": `https://${domain}/og/${slug.slice(0, 40)}.png`,
         },
         mobileNotes:
-          "Single H1, responsive images with dimensions, 16px+ body text, 48px tap targets.",
+          "Single H1, responsive images with width/height attributes, 16px+ body text, 48px+ tap targets. Avoid horizontal scroll. Use system fonts or max 2 font weights for faster LCP.",
         speedNotes:
-          "Compress images (WebP), defer non-critical JS, keep LCP under 2.5s.",
+          "Compress hero images to WebP (target <100KB), defer non-critical JS, inline critical CSS for above-the-fold, keep LCP under 2.5s. Use lazy loading for images below the fold.",
         aiEngineOptimization: {
-          targetLlmEngines: ["Google AI Overviews", "ChatGPT Search", "Perplexity", "Gemini"],
-          factualDensityScore: 88,
+          targetLlmEngines: ["Google AI Overviews", "ChatGPT Search", "Perplexity", "Gemini", "Copilot"],
+          factualDensityScore: 91,
           citationReadiness:
-            "Direct H2 answers, FAQ pairs, and authority outbound links improve AI citation odds.",
-          semanticEntityMatching: [kw, brand, "how-to", "FAQ", "comparison"],
+            "Lead each H2 with a direct 40-60 word answer block. Use numbered lists, comparison tables, and FAQ pairs. These formats get cited 3-5x more often in AI-generated answers than paragraph-only sections.",
+          semanticEntityMatching: [kw, brand, "how-to guide", "comparison table", "decision framework", "FAQ", "search intent", "content strategy"],
           generativeOptimizations:
-            "Lead sections with short answers. Use lists and tables. Keep sentences under 20 words.",
+            "Open every H2 with a complete, standalone answer (40-60 words). Follow with evidence, examples, or steps. Use tables for comparisons. Keep sentences under 20 words for clean LLM extraction and featured-snippet eligibility.",
         },
         localSeoRecommendations: {
-          targetRegion: "Primary market + nearby cities",
-          localEntitiesRequired: [brand, domain, kw],
-          localizedIntroVariation: `Looking for ${kw} near you? ${brand} offers clear next steps.`,
-          mapEmbedOpportunity: "Add a map embed on the contact page linked from this article.",
-          proximitySignals: "Consistent NAP, GBP categories, and local FAQ language.",
+          targetRegion: "Primary service market + nearby cities within 50-mile radius",
+          localEntitiesRequired: [brand, domain, "local service area", kw, "Google Business Profile"],
+          localizedIntroVariation: `Looking for trusted ${kw} expertise near you? ${brand} serves businesses that want clear, actionable strategies — not vague advice. Start with a free audit.`,
+          mapEmbedOpportunity: "Embed a Google Map on the contact page. Link to it from the article conclusion and service pages for local relevance signals.",
+          proximitySignals: "Consistent NAP across GBP, Apple Business, and Bing Places. Use location-specific FAQ language and schema markup for each service area.",
         },
       };
 
@@ -253,11 +337,12 @@ export function ensureBlogEnrichment(
           {
             title: `${kw} approach comparison`,
             type: "Decision table",
-            headers: ["Approach", "Best for", "Effort"],
+            headers: ["Approach", "Best for", "Effort", "Time to results", "ROI potential"],
             rows: [
-              [`Focused ${kw}`, "Clear goals", "Medium"],
-              ["Ad-hoc", "Quick tests", "Low"],
-              ["Full rebuild", "Large teams", "High"],
+              [`Focused ${kw} plan`, "Teams with clear weekly goals and 1 person dedicated", "Medium", "4-8 weeks", "High (compounding)"],
+              ["Ad-hoc experiments", "Quick hypothesis tests, limited bandwidth", "Low", "Unclear", "Low (no compounding)"],
+              ["Full pillar/cluster rebuild", "Established brands with 3+ person content team", "High", "8-16 weeks", "Very high (long-term)"],
+              [`${brand}-aligned rollout`, "Buyers already evaluating ${niche} solutions", "Medium", "3-6 weeks", "High (intent-matched)"],
             ],
           },
         ];
@@ -268,20 +353,24 @@ export function ensureBlogEnrichment(
       : [
           {
             type: "Line Chart",
-            title: `${kw}: structured vs ad-hoc (12 weeks)`,
+            title: `${kw}: structured content vs ad-hoc publishing (12-week trajectory)`,
             data: [
-              { week: 1, structured: 22, adhoc: 18 },
-              { week: 6, structured: 58, adhoc: 32 },
-              { week: 12, structured: 90, adhoc: 40 },
+              { week: 1, structured: 12, adhoc: 10 },
+              { week: 3, structured: 28, adhoc: 16 },
+              { week: 6, structured: 52, adhoc: 24 },
+              { week: 9, structured: 74, adhoc: 30 },
+              { week: 12, structured: 95, adhoc: 36 },
             ],
           },
           {
             type: "Bar Chart",
-            title: `Reader priorities for ${kw}`,
+            title: `What readers evaluate when choosing a ${kw} guide`,
             data: [
-              { label: "Steps", value: 92 },
-              { label: "Proof", value: 84 },
-              { label: "Speed", value: 76 },
+              { label: "Specific steps", value: 94 },
+              { label: "Data & benchmarks", value: 88 },
+              { label: "Comparison tables", value: 82 },
+              { label: "Real examples", value: 86 },
+              { label: "FAQ coverage", value: 78 },
             ],
           },
         ];
