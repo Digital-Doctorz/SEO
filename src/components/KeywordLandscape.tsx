@@ -32,7 +32,8 @@ type TabType = "explorer" | "clustering";
 type SortField = "volume" | "difficulty" | "cpc" | "keyword" | "opportunityScore";
 type SortOrder = "asc" | "desc";
 
-export default function KeywordLandscape({ keywords, targetDomain, aiConfig, onSelectKeyword }: KeywordLandscapeProps) {
+export default function KeywordLandscape({ keywords: keywordsProp, targetDomain, aiConfig, onSelectKeyword }: KeywordLandscapeProps) {
+ const keywords = Array.isArray(keywordsProp) ? keywordsProp : [];
  const [activeTab, setActiveTab] = useState<TabType>("explorer");
  const [searchTerm, setSearchTerm] = useState("");
  const [typeFilter, setTypeFilter] = useState<"All" | "Short-tail" | "Long-tail" | "Question">("All");

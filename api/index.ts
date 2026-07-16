@@ -3,20 +3,230 @@ import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
-import {
-  fetchSerp,
-  fetchKeywordVolumes,
-  fetchDomainOverview,
-  fetchBacklinks,
-  fetchPageSpeed,
-  fetchFullBundle,
-  type DataForSeoBundle,
-} from "./lib/dataforseo";
 
 dotenv.config();
 dotenv.config({ path: ".env.local", override: true });
 
 const HAS_DFSEO = Boolean(process.env.DATAFORSEO_LOGIN && process.env.DATAFORSEO_PASSWORD);
+
+// ============================================================
+// DataForSEO helpers (inlined — Vercel serverless cannot import ./lib/* reliably)
+// ============================================================
+const DFSEO_BASE = "https://api.dataforseo.com/v3";
+
+interface DfSerpItem {
+  se_domain?: string;
+  rank_group?: number;
+  rank_absolute?: number;
+  domain?: string;
+  title?: string;
+  description?: string;
+  url?: string;
+  snippet?: string;
+  breadcrumb?: string;
+}
+interface DfKeywordData {
+  keyword: string;
+  search_volume?: number;
+  cpc?: number;
+  competition?: number;
+  trend?: number[];
+}
+interface DfDomainBacklinksResult {
+  domain?: string;
+  backlinks?: number;
+  dofollow?: number;
+  referring_domains?: number;
+  referring_domains_change?: number;
+  domain_rank?: number;
+}
+interface DfBacklinkItem {
+  referring_domain?: string;
+  referring_url?: string;
+  target_url?: string;
+  anchor?: string;
+  domain_rank?: number;
+  first_seen?: string;
+}
+interface DataForSeoBundle {
+  serp: {
+    organic: Array<{ position: number; title: string; url: string; snippet: string; domain: string }>;
+    featured_snippet?: string;
+    local_pack: unknown[];
+    people_also_ask: unknown[];
+    related_searches: unknown[];
+  };
+  keywordLandscape: Array<{
+    keyword: string;
+    volume: number;
+    difficulty: number;
+    cpc: number;
+    trend: number[];
+    opportunity: "high" | "medium" | "low";
+  }>;
+  backlinks: {
+    total_backlinks: number;
+    referring_domains: number;
+    domain_rating: number;
+    dofollow_ratio: number;
+    link_growth: number;
+    top_referring_domains: Array<{
+      source_url: string;
+      source_domain: string;
+      anchor: string;
+      domain_rating: number;
+      first_seen: string;
+    }>;
+  };
+  pageSpeed?: {
+    performance: number;
+    accessibility: number;
+    best_practices: number;
+    seo: number;
+  };
+  rawSerpItems: DfSerpItem[];
+  rawBacklinkItems: DfBacklinkItem[];
+  rawKeywordData: DfKeywordData[];
+}
+
+function dfseoAuthHeaders(): Record<string, string> {
+  const login = process.env.DATAFORSEO_LOGIN ?? "";
+  const password = process.env.DATAFORSEO_PASSWORD ?? "";
+  const token = Buffer.from(`${login}:${password}`).toString("base64");
+  return { Authorization: `Basic ${token}`, "Content-Type": "application/json" };
+}
+
+async function dfseoPost<T>(endpoint: string, body: unknown[]): Promise<T> {
+  const res = await fetch(`${DFSEO_BASE}${endpoint}`, {
+    method: "POST",
+    headers: dfseoAuthHeaders(),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`DataForSEO ${endpoint} failed (${res.status}): ${text}`);
+  }
+  const json = (await res.json()) as { tasks?: Array<{ result?: T[] }>; status_code?: number; status_message?: string };
+  if (json.status_code && json.status_code !== 20000) {
+    throw new Error(`DataForSEO error ${json.status_code}: ${json.status_message}`);
+  }
+  return json.tasks?.[0]?.result?.[0] as T;
+}
+
+async function fetchSerp(keyword: string, locationCode = 2840): Promise<DfSerpItem[]> {
+  const result = await dfseoPost<{ items?: DfSerpItem[]; search_dataframe?: DfSerpItem[] }>(
+    "/serp/google/organic/live/advanced",
+    [{ keyword, location_code: locationCode, language_code: "en", device: "desktop", os: "windows", depth: 10 }]
+  );
+  return result.items ?? result.search_dataframe ?? [];
+}
+
+async function fetchKeywordVolumes(keywords: string[], locationCode = 2840): Promise<DfKeywordData[]> {
+  if (!keywords.length) return [];
+  const tasks = keywords.map((kw) => ({ keyword: kw, location_code: locationCode, language_code: "en" }));
+  const result = await dfseoPost<{ keywords?: DfKeywordData[] }>(
+    "/keywords_data/google/keywords/search_volume",
+    tasks
+  );
+  return result.keywords ?? [];
+}
+
+async function fetchDomainOverview(domain: string): Promise<DfDomainBacklinksResult> {
+  return dfseoPost<DfDomainBacklinksResult>("/backlinks/domain/overview", [
+    { target: domain, location_code: 2840, language_code: "en" },
+  ]);
+}
+
+async function fetchBacklinks(domain: string, limit = 100): Promise<DfBacklinkItem[]> {
+  const result = await dfseoPost<{ backlinks?: DfBacklinkItem[] }>("/backlinks/domain/backlinks", [
+    { target: domain, limit, location_code: 2840, language_code: "en" },
+  ]);
+  return result.backlinks ?? [];
+}
+
+async function fetchPageSpeed(url: string): Promise<
+  | {
+      categories?: Record<string, { score?: number }>;
+      audits?: Record<string, { numericValue?: number }>;
+    }
+  | undefined
+> {
+  const result = await dfseoPost<{ lighthouse_result?: { categories?: Record<string, { score?: number }>; audits?: Record<string, { numericValue?: number }> } }>(
+    "/page_speed/google/lighthouse/summary",
+    [{ target: url, settings: { device: "desktop", locale: "en" } }]
+  );
+  return result.lighthouse_result;
+}
+
+async function fetchFullBundle(domain: string, seedKeywords: string[]): Promise<DataForSeoBundle> {
+  const primaryKeyword =
+    seedKeywords[0] ?? domain.replace(/\.(com|in|org|net|co\.in)$/i, "").replace(/-/g, " ");
+  const [serpItems, domainOverview, backlinks, pageSpeedResult, ...keywordResults] = await Promise.all([
+    fetchSerp(primaryKeyword).catch(() => [] as DfSerpItem[]),
+    fetchDomainOverview(domain).catch(() => ({} as DfDomainBacklinksResult)),
+    fetchBacklinks(domain, 200).catch(() => [] as DfBacklinkItem[]),
+    fetchPageSpeed(`https://${domain}`).catch(() => undefined),
+    ...seedKeywords.slice(0, 10).map((kw) => fetchKeywordVolumes([kw]).catch(() => [] as DfKeywordData[])),
+  ]);
+  const allKeywordData: DfKeywordData[] = keywordResults.flat().filter(Boolean);
+  const organic = (serpItems || [])
+    .filter((r) => r.rank_group !== undefined)
+    .map((r) => ({
+      position: r.rank_group ?? 0,
+      title: r.title ?? "",
+      url: r.url ?? "",
+      snippet: r.snippet ?? r.description ?? "",
+      domain: r.domain ?? "",
+    }));
+  const keywordLandscape = allKeywordData.map((kd) => ({
+    keyword: kd.keyword,
+    volume: kd.search_volume ?? 0,
+    difficulty: kd.competition ? Math.round(kd.competition * 100) : 50,
+    cpc: kd.cpc ?? 0,
+    trend: kd.trend ?? [],
+    opportunity: ((kd.search_volume ?? 0) > 100 && (kd.competition ?? 0) < 0.5
+      ? "high"
+      : "medium") as "high" | "medium" | "low",
+  }));
+  const cats = pageSpeedResult?.categories ?? {};
+  return {
+    serp: {
+      organic,
+      featured_snippet: organic[0]?.title,
+      local_pack: [],
+      people_also_ask: [],
+      related_searches: [],
+    },
+    keywordLandscape,
+    backlinks: {
+      total_backlinks: domainOverview.backlinks ?? 0,
+      referring_domains: domainOverview.referring_domains ?? 0,
+      domain_rating: domainOverview.domain_rank ?? 0,
+      dofollow_ratio: domainOverview.dofollow
+        ? domainOverview.dofollow / (domainOverview.backlinks || 1)
+        : 0.7,
+      link_growth: domainOverview.referring_domains_change ?? 0,
+      top_referring_domains: (backlinks || []).slice(0, 20).map((b) => ({
+        source_url: b.referring_url ?? "",
+        source_domain: b.referring_domain ?? "",
+        anchor: b.anchor ?? "",
+        domain_rating: b.domain_rank ?? 0,
+        first_seen: b.first_seen ?? "",
+      })),
+    },
+    pageSpeed: pageSpeedResult
+      ? {
+          performance: Math.round((cats.performance?.score ?? 0) * 100),
+          accessibility: Math.round((cats.accessibility?.score ?? 0) * 100),
+          best_practices: Math.round((cats["best-practices"]?.score ?? 0) * 100),
+          seo: Math.round((cats.seo?.score ?? 0) * 100),
+        }
+      : undefined,
+    rawSerpItems: serpItems || [],
+    rawBacklinkItems: backlinks || [],
+    rawKeywordData: allKeywordData,
+  };
+}
 
 function cleanDomain(url: string): string {
  let domain = url.trim();
@@ -1539,26 +1749,19 @@ app.post("/api/analyze", async (req, res) => {
             opportunityScore: kw.opportunity === "high" ? 85 : 62,
           }))
         : base.keywords,
-      // Real SERP data
-      serpFeatures: dfseoData.serp.organic.length > 0
-        ? dfseoData.serp.organic.slice(0, 10).map((r) => ({
-            type: "organic",
-            position: r.position,
-            title: r.title,
-            url: r.url,
-            domain: r.domain,
-            snippet: r.snippet,
-          }))
-        : base.serpFeatures,
-      // Real backlinks
+      // Keep structured SERP feature opportunities (organic list is not the same schema)
+      serpFeatures: base.serpFeatures,
+      // Real backlinks mapped to UI BacklinkSource shape
       backlinkSources: dfseoData.backlinks.top_referring_domains.length > 0
-        ? dfseoData.backlinks.top_referring_domains.slice(0, 5).map((b) => ({
-            domain: b.source_domain,
-            url: b.source_url,
-            dr: b.domain_rating,
-            anchor: b.anchor,
+        ? dfseoData.backlinks.top_referring_domains.slice(0, 8).map((b) => ({
+            sourceUrl: b.source_url || `https://${b.source_domain}/`,
+            domainRating: b.domain_rating || 40,
+            targetUrl: `https://${domain}/`,
+            anchorText: b.anchor || domain,
+            linkType: "Follow" as const,
           }))
         : base.backlinkSources,
+      contentGaps: normalizeContentGaps(base.contentGaps),
       // Update target with real metrics
       target: {
         ...base.target,

@@ -1,7 +1,9 @@
-export function formatNum(num: number): string {
-  if (num >= 1000000) return (num / 1000000).toFixed(1) + "M";
-  if (num >= 1000) return (num / 1000).toFixed(1) + "k";
-  return num.toString();
+export function formatNum(num: number | null | undefined): string {
+  const n = Number(num);
+  if (!Number.isFinite(n)) return "0";
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+  if (n >= 1000) return (n / 1000).toFixed(1) + "k";
+  return Math.round(n).toString();
 }
 
 export function getComparePercent(val1: number, val2: number): number {
