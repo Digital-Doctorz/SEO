@@ -1,9 +1,14 @@
-import { useState, useEffect, ErrorInfo, ReactNode } from "react";
+import React from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 
 interface ErrorBoundaryProps {
-  children: ReactNode;
-  fallback?: ReactNode;
+  children: React.ReactNode;
+  fallback?: React.ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  errorMessage: string;
 }
 
 function FallbackUI({ message, onRetry }: { message: string; onRetry: () => void }) {
@@ -23,37 +28,22 @@ function FallbackUI({ message, onRetry }: { message: string; onRetry: () => void
   );
 }
 
-export default function ErrorBoundary({ children, fallback }: ErrorBoundaryProps) {
-  const [hasError, setHasError] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
+export default class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { hasError: false, errorMessage: "" };
 
-  useEffect(() => {
-    const errorHandler = (event: ErrorEvent) => {
-      setHasError(true);
-      setErrorMessage(event.message || "An unexpected error occurred.");
-      event.preventDefault();
-    };
-    const rejectionHandler = (event: PromiseRejectionEvent) => {
-      setHasError(true);
-      setErrorMessage(String(event.reason) || "An unexpected error occurred.");
-      event.preventDefault();
-    };
-    window.addEventListener("error", errorHandler);
-    window.addEventListener("unhandledrejection", rejectionHandler);
-    return () => {
-      window.removeEventListener("error", errorHandler);
-      window.removeEventListener("unhandledrejection", rejectionHandler);
-    };
-  }, []);
-
-  if (hasError) {
-    if (fallback) return fallback;
-    return <FallbackUI message={errorMessage} onRetry={() => { setHasError(false); setErrorMessage(""); }} />;
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, errorMessage: error.message || "An unexpected error occurred." };
   }
 
-  try {
-    return <>{children}</>;
-  } catch (err: any) {
-    return <FallbackUI message={err?.message || "An unexpected error occurred."} onRetry={() => {}} />;
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
+    console.error("ErrorBoundary caught:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      if (this.props.fallback) return this.props.fallback;
+      return <FallbackUI message={this.state.errorMessage} onRetry={() => this.setState({ hasError: false, errorMessage: "" })} />;
+    }
+    return this.props.children;
   }
 }

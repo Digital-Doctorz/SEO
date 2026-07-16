@@ -259,7 +259,18 @@ function getAutonomousBlog(targetDomain: string, primaryKeyword: string): any {
 
   content += `\n\n---\n\n## Frequently Asked Questions (PAA)\n\n### Q1: ${faq1_q}\n${faq1_a}\n\n### Q2: ${faq2_q}\n${faq2_a}\n\n### Q3: ${faq3_q}\n${faq3_a}\n\n### Q4: Can I use automated calculators to audit our progress?\nAbsolutely! Utilizing specialized online tracking tools is highly recommended to monitor metric compliance, track visitor sessions, and identify areas requiring optimization.`;
 
-  return { title, metaDescription, slugSuggestion: slug, outline, content };
+  const schemaMarkup = JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "Article",
+    "headline": title,
+    "description": metaDescription,
+    "author": { "@type": "Organization", "name": formattedBrand },
+    "publisher": { "@type": "Organization", "name": formattedBrand },
+    "datePublished": new Date().toISOString(),
+    "dateModified": new Date().toISOString()
+  }, null, 2);
+
+  return { title, metaDescription, slugSuggestion: slug, outline, content, schemaMarkup };
 }
 
 // ============================================================
@@ -339,10 +350,19 @@ async function generateDeepKeywordFallback(keyword: string, targetDomain: string
     const rank = index + 1;
     const wordCount = 1200 + Math.round(Math.abs(Math.sin(index + 3)) * 2600);
     const dr = 95 - index * 4 + (keyword.length % 3);
-    return { rank, title: titles[index], url: `https://www.${domain}/${index % 2 === 0 ? "blog" : "resources"}/${kwSlug}`, contentLength: wordCount, contentType: index === 5 && isTech ? "Interactive Tool" : "Blog Post", domainRating: Math.max(20, Math.min(99, dr)) };
+    const freshnessScores: Array<"Fresh" | "Stable" | "Legacy"> = ["Fresh", "Fresh", "Stable", "Stable", "Stable", "Legacy", "Legacy", "Legacy", "Legacy", "Legacy"];
+    return { rank, title: titles[index], url: `https://www.${domain}/${index % 2 === 0 ? "blog" : "resources"}/${kwSlug}`, contentLength: wordCount, contentType: index === 5 && isTech ? "Interactive Tool" : "Blog Post", domainRating: Math.max(20, Math.min(99, dr)), freshnessScore: freshnessScores[index] || "Stable" };
   });
 
-  return { keyword, topResults, averageContentLength: Math.round(topResults.reduce((a: number, c: any) => a + c.contentLength, 0) / topResults.length), commonSubtopics, featuredSnippet: { format: selectedFormat, extractedText: extractedSnippet.text, optimizedOpportunity: extractedSnippet.opportunity }, peopleAlsoAsk, relatedSearches, contentTypeAnalysis: { dominantType, percentageBreakdown } };
+  const freshnessRequirements = {
+    level: isMedical ? "High" : isFinance ? "Medium" : "Medium" as "Low" | "Medium" | "High",
+    explanation: isMedical
+      ? "Health and medical content requires frequent updates as new research emerges. Google prioritizes YMYL content with recent citations."
+      : "This topic benefits from periodic content refreshes to maintain ranking signals.",
+    recommendedUpdateFrequency: isMedical ? "Every 3 months" : "Every 6 months"
+  };
+
+  return { keyword, topResults, averageContentLength: Math.round(topResults.reduce((a: number, c: any) => a + c.contentLength, 0) / topResults.length), commonSubtopics, featuredSnippet: { format: selectedFormat, extractedText: extractedSnippet.text, optimizedOpportunity: extractedSnippet.opportunity }, peopleAlsoAsk, relatedSearches, contentTypeAnalysis: { dominantType, percentageBreakdown }, freshnessRequirements };
 }
 
 // ============================================================
@@ -385,7 +405,21 @@ async function generateFallbackData(targetRaw: string, competitorRaw?: string) {
   ];
   const discoveredCompetitors = baseCompDomains.map((c, index) => {
     const kw1 = nicheKeywords[0] || "services";
-    return { domain: `${c.prefix}${target.split(".")[0]}${c.suffix}`, similarityScore: c.sim, focusArea: c.focus, trafficEstimate: Math.round((targetMetrics.organicTraffic || 50000) * (0.3 + index * 0.05)), targetKeywords: [`${kw1} solutions`, `best ${nicheKeywords[1] || "benefits"} in 2026`, `affordable ${nicheKeywords[2] || "near me"}`, `${nicheKeywords[3] || "cost"} analysis`] };
+    const compDomain = `${c.prefix}${target.split(".")[0]}${c.suffix}`;
+    return {
+      domain: compDomain,
+      nicheSimilarity: c.sim,
+      nicheFocus: c.focus,
+      estimatedMonthlyTraffic: Math.round((targetMetrics.organicTraffic || 50000) * (0.3 + index * 0.05)),
+      popularBlogUrl: `https://${compDomain}/blog`,
+      latestArticleTitle: `Top ${kw1} Strategies for 2026 - ${c.focus}`,
+      latestArticleUrl: `https://${compDomain}/blog/${kw1.replace(/\s+/g, "-")}-strategies-2026`,
+      analyzedTakeaway: `${compDomain} focuses on ${c.focus.toLowerCase()} with strong organic visibility. Key strategy: topical authority clusters targeting long-tail commercial intent keywords.`,
+      targetKeywords: [`${kw1} solutions`, `best ${nicheKeywords[1] || "benefits"} in 2026`, `affordable ${nicheKeywords[2] || "near me"}`, `${nicheKeywords[3] || "cost"} analysis`],
+      seoStrategy: "Content-led SEO with topical authority, FAQ schema, and internal linking hubs.",
+      aiRankStrategy: "Optimize for AI Overviews by structuring content with clear definitions, comparison tables, and authoritative citations.",
+      schemaRecommendation: "Implement FAQPage, HowTo, and Article JSON-LD schemas for rich snippet eligibility."
+    };
   });
   const keywordList = nicheKeywords.slice(0, 8).map((kw, i) => ({
     keyword: kw,

@@ -2,9 +2,9 @@ import { useState, useEffect, FormEvent, lazy, Suspense } from "react";
 import { motion } from "motion/react";
 import { 
   Search, Globe, TrendingUp, Link, BarChart2, Calendar, 
-  Sparkles, FileText, ArrowRight, BookOpen, AlertCircle, 
-  HelpCircle, ChevronRight, Zap, RefreshCw, Mail, Menu, X,
-  Stethoscope, Settings, Key
+  Sparkles, ArrowRight, AlertCircle, 
+  ChevronRight, Zap, RefreshCw, Menu, X,
+  Stethoscope, Settings
 } from "lucide-react";
 
 import { AnalysisResult, AiProviderConfig } from "./types";
