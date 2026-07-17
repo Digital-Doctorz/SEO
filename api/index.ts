@@ -1635,6 +1635,167 @@ function buildTechnicalSeo(opts: {
  };
 }
 
+/**
+ * Seo-Promt-Master style 9-point checklist — computed from generated article so every
+ * draft ships with audit-ready signals (generation-phase, not site crawl only).
+ * Source methodology: public-page-checklist (Metadata, Canonical/hreflang, Robots,
+ * Structured data, Headings, Images, Internal links, Rendering, Sitemap).
+ */
+function buildSeoMasterNinePointChecklist(opts: {
+ title: string;
+ metaDescription: string;
+ content: string;
+ domain: string;
+ brand: string;
+ kw: string;
+ slug: string;
+ schemaMarkup?: string;
+ linking?: { internal?: any[]; external?: any[] };
+ technicalSeo?: any;
+ imageAssets?: Array<{ alt?: string; placement?: string }>;
+ targetKeywords?: string[];
+ hreflang?: string;
+}): {
+ score: number;
+ passed: number;
+ total: number;
+ items: Array<{
+  id: string;
+  label: string;
+  status: "pass" | "warn" | "fail";
+  detail: string;
+  recommendation: string;
+ }>;
+ source: string;
+} {
+ const d = cleanDomain(opts.domain);
+ const pageUrl = `https://${d}/blog/${opts.slug || "article"}`;
+ const content = opts.content || "";
+ const h1Count = (content.match(/^#\s+/gm) || []).length;
+ const h2Count = (content.match(/^##\s+/gm) || []).length;
+ const h3Count = (content.match(/^###\s+/gm) || []).length;
+ const hasImages = /\[IMAGE:/i.test(content) || (opts.imageAssets?.length || 0) > 0;
+ const imageAlts =
+  (content.match(/Alt Text:\s*"[^"]+"/gi) || []).length +
+  (opts.imageAssets || []).filter((i) => i.alt).length;
+ const internalLinks = (content.match(new RegExp(`https?://${d.replace(/\./g, "\\.")}[^\\s)\\]]*`, "gi")) || [])
+  .length;
+ const mdInternal = (content.match(/\]\(https?:\/\/[^)]+\)/g) || []).length;
+ const linkCount = Math.max(internalLinks, (opts.linking?.internal?.length || 0));
+ const hasSchema = Boolean(opts.schemaMarkup && String(opts.schemaMarkup).includes("@type"));
+ const titleOk = opts.title.length >= 20 && opts.title.length <= 70;
+ const metaOk = opts.metaDescription.length >= 120 && opts.metaDescription.length <= 160;
+ const kwEarly =
+  !opts.kw ||
+  content.slice(0, 500).toLowerCase().includes(opts.kw.toLowerCase().slice(0, 40)) ||
+  opts.title.toLowerCase().includes(opts.kw.toLowerCase().slice(0, 40));
+ const hasChart = /\[CHART:/i.test(content);
+ const hasTable = /\|.+\|/.test(content);
+ const robots = opts.technicalSeo?.robots || "index,follow";
+ const canonical = opts.technicalSeo?.canonicalUrl || pageUrl;
+ const sitemapUrl = `https://${d}/sitemap.xml`;
+ const ogOk = Boolean(opts.technicalSeo?.ogTags?.["og:title"]);
+
+ const items: Array<{
+  id: string;
+  label: string;
+  status: "pass" | "warn" | "fail";
+  detail: string;
+  recommendation: string;
+ }> = [
+  {
+   id: "metadata",
+   label: "1. Metadata & head",
+   status: titleOk && metaOk && ogOk && kwEarly ? "pass" : titleOk && metaOk ? "warn" : "fail",
+   detail: `Title ${opts.title.length} chars; meta ${opts.metaDescription.length} chars; OG ${ogOk ? "set" : "missing"}; keyword early ${kwEarly ? "yes" : "no"}. Keywords: ${(opts.targetKeywords || []).slice(0, 5).join(", ") || opts.kw}`,
+   recommendation:
+    "Keep unique title ≤60–70 chars, meta 120–155 chars, OG/Twitter filled, primary keyword in title + intro.",
+  },
+  {
+   id: "canonical_hreflang",
+   label: "2. Canonical + hreflang",
+   status: canonical ? "pass" : "fail",
+   detail: `Canonical: ${canonical}. Hreflang: ${opts.hreflang || opts.technicalSeo?.hreflang || "single-locale (x-default = self)"}`,
+   recommendation:
+    "Publish with self-referential rel=canonical. Add bidirectional hreflang + x-default only if multi-locale.",
+  },
+  {
+   id: "robots_indexing",
+   label: "3. Robots / indexing",
+   status: /noindex/i.test(robots) ? "fail" : "pass",
+   detail: `Robots directive for this article: ${robots}. Intended for public-index ranking.`,
+   recommendation: "Use index,follow on ranking articles. Never noindex money/content pages by default.",
+  },
+  {
+   id: "structured_data",
+   label: "4. Structured data (JSON-LD)",
+   status: hasSchema ? "pass" : "fail",
+   detail: hasSchema
+    ? "Article (+ FAQ if present) JSON-LD prepared for this draft."
+    : "Schema missing — server will inject Article schema on normalize.",
+   recommendation: "Ship Article + FAQPage JSON-LD that mirrors visible H1/body/FAQ only.",
+  },
+  {
+   id: "headings_semantics",
+   label: "5. Headings & semantics",
+   status: h1Count === 1 && h2Count >= 4 ? "pass" : h1Count <= 1 && h2Count >= 2 ? "warn" : "fail",
+   detail: `H1 count=${h1Count}, H2=${h2Count}, H3=${h3Count}. Semantic order expected: one H1 → H2 → H3.`,
+   recommendation: "Exactly one H1; 4–8 H2s; use H3 under H2 only. Answer-first under each H2.",
+  },
+  {
+   id: "images",
+   label: "6. Images (alt / CLS)",
+   status: hasImages && imageAlts >= 1 ? "pass" : hasImages ? "warn" : "warn",
+   detail: hasImages
+    ? `Image placeholders present; alt annotations ≈ ${imageAlts}. Chart: ${hasChart ? "yes" : "no"}.`
+    : "No [IMAGE:] placeholders yet — add 2–3 with Alt Text before publish.",
+   recommendation:
+    "Every content image needs descriptive alt, width/height, real <img src> (not CSS background).",
+  },
+  {
+   id: "internal_links",
+   label: "7. Internal links",
+   status: linkCount >= 3 ? "pass" : linkCount >= 1 ? "warn" : "fail",
+   detail: `Internal recommendations/links ≈ ${linkCount}; markdown links in body ≈ ${mdInternal}. External recs: ${opts.linking?.external?.length || 0}.`,
+   recommendation: "3–6 descriptive internal anchors to hub/service pages; crawlable <a href>.",
+  },
+  {
+   id: "rendering",
+   label: "8. Rendering & CWV notes",
+   status: "pass",
+   detail:
+    opts.technicalSeo?.speedNotes ||
+    "Draft assumes SSR/SSG HTML for primary content; LCP image should be eager on publish template.",
+   recommendation:
+    "Serve article HTML server-side; LCP image fetchpriority=high; lazy-load below-fold images.",
+  },
+  {
+   id: "sitemap",
+   label: "9. Sitemap readiness",
+   status: "pass",
+   detail: `Add ${pageUrl} to ${sitemapUrl} with accurate lastmod on publish.`,
+   recommendation: "Include only public-index URLs in XML sitemap; update lastmod when content changes.",
+  },
+ ];
+
+ // Bonus signals (informational, rolled into notes)
+ if (hasTable) {
+  items[4].detail += " Comparison table detected.";
+ }
+
+ const passed = items.filter((i) => i.status === "pass").length;
+ const warn = items.filter((i) => i.status === "warn").length;
+ const score = Math.round(((passed + warn * 0.5) / items.length) * 100);
+
+ return {
+  score,
+  passed,
+  total: items.length,
+  items,
+  source: "Seo-Promt-Master 9-point public-page checklist (adapted for generation)",
+ };
+}
+
 function buildPreWritingAnalysis(kw: string, domain: string) {
  const d = cleanDomain(domain);
  const slug = kw.toLowerCase().replace(/[^a-z0-9]+/g, "-");
@@ -1767,7 +1928,7 @@ function normalizeBlogPayload(parsed: any, domain: string, kw: string, seed?: nu
  parsed?.linkingRecommendations?.internal?.length
  ? parsed.linkingRecommendations
  : buildLinkingRecommendations(domain, brand, kw, content);
- const technicalSeo =
+ let technicalSeo =
  parsed?.technicalSeo?.canonicalUrl
  ? parsed.technicalSeo
  : buildTechnicalSeo({
@@ -1800,15 +1961,102 @@ function normalizeBlogPayload(parsed: any, domain: string, kw: string, seed?: nu
    ? parsed.visualizations
    : buildDefaultVisualizations(kw);
 
+ // Merge AI-provided image assets + internal link pack (additive)
+ const imageAssets = Array.isArray(parsed?.imageAssets)
+  ? parsed.imageAssets
+  : Array.isArray(parsed?.seoMasterPack?.imageAssets)
+    ? parsed.seoMasterPack.imageAssets
+    : [];
+ const targetKeywords = Array.isArray(parsed?.targetKeywords)
+  ? parsed.targetKeywords
+  : Array.isArray(parsed?.metadata?.targetKeywords)
+    ? parsed.metadata.targetKeywords
+    : Array.isArray(parsed?.keywordStrategy?.secondary)
+      ? [kw, ...parsed.keywordStrategy.secondary].slice(0, 8)
+      : [kw];
+
+ // Prefer AI-provided structuredData if valid; else server Article schema
+ let finalSchema = schemaMarkup;
+ if (parsed?.structuredData || parsed?.seoMasterPack?.structuredData) {
+  const sd = parsed.structuredData || parsed.seoMasterPack.structuredData;
+  try {
+   finalSchema =
+    typeof sd === "string" ? sd : JSON.stringify(sd, null, 2);
+  } catch {
+   finalSchema = schemaMarkup;
+  }
+ }
+
+ // Enrich technical SEO with robots/hreflang from pack if present
+ if (parsed?.seoMasterPack?.robots || parsed?.seoMasterPack?.canonicalUrl) {
+  technicalSeo = {
+   ...technicalSeo,
+   canonicalUrl: parsed.seoMasterPack.canonicalUrl || technicalSeo.canonicalUrl,
+   robots: parsed.seoMasterPack.robots || "index,follow",
+   hreflang: parsed.seoMasterPack.hreflang || technicalSeo.hreflang || "x-default",
+   sitemapNote:
+    parsed.seoMasterPack.sitemapNote ||
+    `Add this URL to https://${cleanDomain(domain)}/sitemap.xml with lastmod on publish.`,
+  };
+ } else if (!technicalSeo.robots) {
+  technicalSeo = {
+   ...technicalSeo,
+   robots: "index,follow",
+   hreflang: "x-default",
+   sitemapNote: `Add this URL to https://${cleanDomain(domain)}/sitemap.xml with lastmod on publish.`,
+  };
+ }
+
+ // Prefer AI internal linking if provided
+ let finalLinking = linkingRecommendations;
+ if (Array.isArray(parsed?.internalLinking) && parsed.internalLinking.length) {
+  finalLinking = {
+   internal: parsed.internalLinking.map((l: any) => ({
+    anchor: sanitizeText(l.anchor || l.text || kw),
+    url: sanitizeText(l.url || `https://${cleanDomain(domain)}/`),
+    type: sanitizeText(l.type || "Internal"),
+   })),
+   external: linkingRecommendations.external || [],
+  };
+ } else if (parsed?.seoMasterPack?.internalLinking?.length) {
+  finalLinking = {
+   internal: parsed.seoMasterPack.internalLinking.map((l: any) => ({
+    anchor: sanitizeText(l.anchor || l.text || kw),
+    url: sanitizeText(l.url || `https://${cleanDomain(domain)}/`),
+    type: sanitizeText(l.type || "Internal"),
+   })),
+   external: linkingRecommendations.external || [],
+  };
+ }
+
+ const seoMasterChecklist =
+  parsed?.seoMasterChecklist?.items?.length
+   ? parsed.seoMasterChecklist
+   : buildSeoMasterNinePointChecklist({
+      title,
+      metaDescription,
+      content,
+      domain,
+      brand,
+      kw,
+      slug: slugSuggestion,
+      schemaMarkup: finalSchema,
+      linking: finalLinking,
+      technicalSeo,
+      imageAssets,
+      targetKeywords,
+      hreflang: technicalSeo?.hreflang,
+     });
+
  return sanitizeDeep({
  title,
  metaDescription,
  slugSuggestion,
  outline: finalOutline,
  content,
- schemaMarkup,
+ schemaMarkup: finalSchema,
  faqSection,
- linkingRecommendations,
+ linkingRecommendations: finalLinking,
  technicalSeo,
  preWritingAnalysis,
  tables,
@@ -1817,6 +2065,11 @@ function normalizeBlogPayload(parsed: any, domain: string, kw: string, seed?: nu
  qualityAudit: parsed?.qualityAudit || null,
  strategyId: parsed?.strategyId,
  variationSeed: seed ?? parsed?.variationSeed,
+ // Additive Seo-Promt-Master generation pack
+ targetKeywords,
+ imageAssets,
+ seoMasterChecklist,
+ seoAnalysis: parsed?.seoAnalysis || null,
  });
 }
 
@@ -2533,7 +2786,8 @@ CRITICAL RULES FOR OUTPUT:
 4. Ensure all internal quotes within string values are properly escaped (e.g., use \\" instead of ").
 5. Do not use literal line breaks inside JSON string values; use \\n instead.
 6. No trailing commas. ASCII punctuation only.
-7. Analyze TARGET_URL first, then write content that only fits that site (not generic SEO fluff).`;
+7. Analyze TARGET_URL first, then write content that only fits that site (not generic SEO fluff).
+8. Satisfy the 9-point SEO pack: Metadata, Canonical/hreflang, Robots, Structured Data, Headings, Images+alt, Internal links, Rendering notes, Sitemap readiness.`;
 
 /** Map strict SEO JSON schema → app blog payload (normalizeBlogPayload). */
 function mapStrictSeoArticleJson(
@@ -2666,6 +2920,29 @@ function mapStrictSeoArticleJson(
   },
   seoAnalysis: analysis,
   targetKeywords: keywords,
+  // Optional pack from AI (normalize will rebuild checklist if missing)
+  imageAssets: Array.isArray(raw?.seoMasterPack?.imageAssets)
+   ? raw.seoMasterPack.imageAssets
+   : Array.isArray(raw?.imageAssets)
+     ? raw.imageAssets
+     : [],
+  internalLinking: Array.isArray(raw?.seoMasterPack?.internalLinking)
+   ? raw.seoMasterPack.internalLinking
+   : Array.isArray(raw?.internalLinking)
+     ? raw.internalLinking
+     : [],
+  structuredData: raw?.seoMasterPack?.structuredData || raw?.structuredData || null,
+  seoMasterPack: raw?.seoMasterPack || {
+   robots: "index,follow",
+   canonicalUrl: `https://${cleanDomain(opts.domain)}/blog/${title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
+    .slice(0, 70)}`,
+   hreflang: "x-default",
+   sitemapNote: `Include article URL in https://${cleanDomain(opts.domain)}/sitemap.xml`,
+   renderingNote: "Serve article body in SSR/SSG HTML; LCP image eager + fetchpriority=high.",
+  },
   qualityAudit: {
    wordCount: countContentWords(content),
    primaryDensityPct: 0,
@@ -4835,31 +5112,48 @@ ${JSON.stringify(researchBrief)}
 Suggested H1 seed: ${titlePick}
 Suggested H2s: ${JSON.stringify(outlinePick)}
 
-OUTPUT SCHEMA (strict — do not add or remove top-level fields):
+OUTPUT SCHEMA (strict top-level keys — include ALL of these):
 {
   "seoAnalysis": {
-    "targetNiche": "Brief description of the target URL's niche",
-    "targetAudience": "Who is the target URL trying to reach?"
+    "targetNiche": "Brief description of the target URL niche",
+    "targetAudience": "Who the target URL is trying to reach"
   },
   "metadata": {
-    "seoTitle": "Highly optimized, click-worthy title (max 60 chars)",
-    "metaDescription": "Compelling meta description including primary keyword (max 155 chars)",
-    "targetKeywords": ["keyword 1", "keyword 2", "keyword 3", "keyword 4", "keyword 5"]
+    "seoTitle": "Click-worthy title max 60 chars with primary keyword",
+    "metaDescription": "Meta description max 155 chars including primary keyword",
+    "targetKeywords": ["5-7 long-tail intent keywords for this URL"]
   },
   "article": {
-    "introduction": "Engaging hook that introduces the topic and includes the primary keyword. Use \\\\n for paragraph breaks.",
+    "introduction": "Hook + primary keyword early. Use \\\\n for paragraph breaks.",
     "sections": [
       {
-        "heading": "H2 Heading (include secondary keyword where natural)",
-        "content": "Detailed multi-paragraph content. Use \\\\n for line breaks. Do not use unescaped quotes. Each section should be substantial."
+        "heading": "H2 with secondary keyword where natural",
+        "content": "Detailed multi-paragraph prose. Use \\\\n for line breaks. Escape quotes as \\\\\\"."
       }
     ],
-    "conclusion": "Strong wrap-up with a call to action relevant to https://${domain}/"
+    "conclusion": "Wrap-up + CTA to https://${domain}/"
+  },
+  "seoMasterPack": {
+    "robots": "index,follow",
+    "canonicalUrl": "https://${domain}/blog/slug-here",
+    "hreflang": "x-default",
+    "structuredData": { "@context": "https://schema.org", "@type": "Article", "headline": "...", "author": { "@type": "Organization", "name": "${brandName}" }, "mainEntityOfPage": "https://${domain}/blog/slug-here" },
+    "imageAssets": [
+      { "placement": "hero", "alt": "Descriptive alt text for primary visual", "caption": "optional" },
+      { "placement": "mid-article", "alt": "Process or comparison visual alt text" }
+    ],
+    "internalLinking": [
+      { "anchor": "descriptive anchor", "url": "https://${domain}/", "type": "Hub" },
+      { "anchor": "service anchor", "url": "https://${domain}/services", "type": "Service" },
+      { "anchor": "contact CTA", "url": "https://${domain}/contact", "type": "Conversion" }
+    ],
+    "renderingNote": "SSR/SSG primary HTML; LCP image eager; lazy-load below-fold images",
+    "sitemapNote": "Add article URL to https://${domain}/sitemap.xml with lastmod on publish"
   }
 }
 
-Include 6-8 objects in article.sections. Optional extra fields allowed only inside values, not new top-level keys.
-Return ONLY the JSON object.`;
+Include 6-8 objects in article.sections. Also place 2-3 [IMAGE: scene. Alt Text: \\"alt\\"] strings inside section content.
+Return ONLY the JSON object. No markdown fences.`;
 
  const writeResult = await withTimeout(
   callAI(providerConfig, strictUserPrompt, STRICT_SEO_ARTICLE_SYSTEM_PROMPT, {

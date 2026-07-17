@@ -84,8 +84,28 @@ export default function BlogSeoPanel({
  (bd.schemaMarkup || 0) +
  (bd.mobileOptimization || 0);
 
+ const masterScore = blogPost.seoMasterChecklist?.score;
+ const masterPassed = blogPost.seoMasterChecklist?.passed;
+ const masterTotal = blogPost.seoMasterChecklist?.total;
+
  return (
  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-8 animate-fadeIn">
+ {/* Additive: 9-point master strip (does not replace auditor) */}
+ {blogPost.seoMasterChecklist?.items?.length ? (
+  <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+   <div>
+    <div className="text-[10px] font-extrabold uppercase tracking-wider text-blue-600">
+     Seo-Promt-Master 9-point pack
+    </div>
+    <p className="text-xs text-slate-600 mt-0.5 font-medium">
+     {masterPassed}/{masterTotal} checks pass · open the <strong>9-Point SEO</strong> tab for full audit
+    </p>
+   </div>
+   <span className="text-sm font-extrabold text-blue-700 bg-white border border-blue-200 px-3 py-1 rounded-full font-mono self-start">
+    {masterScore}/100
+   </span>
+  </div>
+ ) : null}
  {/* Tab header */}
  <div className="flex justify-between items-center border-b border-slate-100 pb-4">
  <div>

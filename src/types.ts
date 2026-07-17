@@ -206,6 +206,23 @@ export interface SocialPost {
   complianceCheck?: string;
 }
 
+/** Seo-Promt-Master style 9-point checklist item (generation-phase audit). */
+export interface SeoMasterChecklistItem {
+  id: string;
+  label: string;
+  status: "pass" | "warn" | "fail";
+  detail: string;
+  recommendation: string;
+}
+
+export interface SeoMasterChecklist {
+  score: number;
+  passed: number;
+  total: number;
+  items: SeoMasterChecklistItem[];
+  source?: string;
+}
+
 export interface BlogPost {
   title: string;
   metaDescription: string;
@@ -217,6 +234,16 @@ export interface BlogPost {
   isFallback?: boolean;
   fallbackReason?: string;
   errorMsg?: string;
+  /** 5–7 long-tail keywords from URL-first generation */
+  targetKeywords?: string[];
+  /** AI-suggested image placements + alt text */
+  imageAssets?: Array<{ placement?: string; alt?: string; caption?: string }>;
+  /** 9-point public-page checklist (Seo-Promt-Master methodology) */
+  seoMasterChecklist?: SeoMasterChecklist;
+  seoAnalysis?: { targetNiche?: string; targetAudience?: string } | null;
+  generationMode?: string;
+  aiGenerated?: boolean;
+  researchUsed?: boolean;
   preWritingAnalysis?: {
     avgLength: number;
     optimalStructure: string;
