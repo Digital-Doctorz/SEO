@@ -554,7 +554,7 @@ async function generateContentWithFallback(
  config: any,
  defaultModel: string = "gemini-2.5-flash"
 ): Promise<any> {
- // Try user's model first, then other Flash variants (avoid dying on one free-tier-exhausted model)
+ // Same systemInstruction/config is reused on every model — critical for strict JSON prompts
  const modelsToTry = Array.from(
  new Set(
  [
@@ -566,11 +566,12 @@ async function generateContentWithFallback(
  "gemini-2.5-flash-lite",
  ].filter(Boolean)
  )
- ).slice(0, 5);
+ ).slice(0, 6);
  let lastError: any = null;
  for (const model of modelsToTry) {
- let retries = 1;
- let delay = 800;
+ // Exponential backoff: up to 2 retries per model on transient 429
+ let retries = 2;
+ let delay = 1000;
  while (retries >= 0) {
  try {
  console.log(`[Gemini] Attempting model: "${model}"`);
@@ -591,21 +592,20 @@ async function generateContentWithFallback(
  /high demand|Spikes in demand|rate limit|retry in/i.test(msg);
  const is503 = err?.status === 503 || /unavailable|overloaded/i.test(msg);
 
- // Daily free-tier exhausted for THIS model -> try next model immediately
+ // Daily free-tier exhausted for THIS model -> try next model immediately (same prompt/config)
  if (isDailyQuota || (/quota exceeded/i.test(msg) && /free_tier|free tier/i.test(msg))) {
- console.warn(`[Gemini] Quota hit for ${model}, trying next model`);
+ console.warn(`[Gemini] Quota hit for ${model}, trying next model with same system prompt`);
  break;
  }
 
- // Short rate-limit: wait once (cap 12s so Vercel stays alive), then retry same model
  const retryMatch = msg.match(/retry in ([\d.]+)\s*s/i);
  if (retries > 0 && (isTransient429 || is503)) {
  const waitMs = retryMatch
- ? Math.min(12000, Math.ceil(parseFloat(retryMatch[1]) * 1000))
+ ? Math.min(15000, Math.ceil(parseFloat(retryMatch[1]) * 1000))
  : delay;
- console.warn(`[Gemini] Transient error on ${model}, retry in ${waitMs}ms`);
+ console.warn(`[Gemini] Transient 429/503 on ${model}, backoff ${waitMs}ms (${retries} left)`);
  await sleep(waitMs);
- delay *= 2;
+ delay = Math.min(12000, delay * 2);
  retries--;
  continue;
  }
@@ -613,7 +613,7 @@ async function generateContentWithFallback(
  }
  }
  }
- throw lastError || new Error("All Gemini models failed (quota or network).");
+ throw lastError || new Error("All Gemini models failed (quota or network). Switch provider/model in Settings or upgrade billing.");
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label = "Request"): Promise<T> {
@@ -1922,27 +1922,67 @@ async function callOpenRouter(
   return { text: String(text) };
  }
 
- try {
-  // Prefer no strict json_object for free models; paid models get json mode first
-  if (wantJson && !/:free$/i.test(safeModel)) {
+ async function withBackoff(): Promise<{ text: string }> {
+  let delay = 1000;
+  let lastErr: any = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
    try {
-    return await once(true);
+    if (wantJson && !/:free$/i.test(safeModel)) {
+     try {
+      return await once(true);
+     } catch (e: any) {
+      const m = String(e?.message || e);
+      if (/response_format|json_object|not supported|400/i.test(m)) {
+       return await once(false);
+      }
+      throw e;
+     }
+    }
+    return await once(false);
    } catch (e: any) {
+    lastErr = e;
     const m = String(e?.message || e);
-    if (/response_format|json_object|not supported|400/i.test(m)) {
-     return await once(false);
+    if (wantJson && /response_format|json_object|not supported/i.test(m) && attempt === 0) {
+     try {
+      return await once(false);
+     } catch (e2) {
+      lastErr = e2;
+     }
+    }
+    // Exponential backoff on 429 / rate limit — keep same system+user messages
+    if (/429|rate.?limit|temporarily/i.test(m) && attempt < 2) {
+     console.warn(`[OpenRouter] 429/rate limit, backoff ${delay}ms (attempt ${attempt + 1})`);
+     await sleep(delay);
+     delay = Math.min(12000, delay * 2);
+     continue;
     }
     throw e;
    }
   }
-  return await once(false);
+  throw lastErr || new Error("OpenRouter failed after retries");
+ }
+
+ try {
+  return await withBackoff();
  } catch (e: any) {
-  // Last resort: retry once without json mode
-  const m = String(e?.message || e);
-  if (wantJson && /response_format|json_object|not supported/i.test(m)) {
-   return await once(false);
+  // Fallback models (same system prompt + user content already in messages)
+  const fallbacks = [
+   safeModel,
+   "meta-llama/llama-3.3-70b-instruct:free",
+   "google/gemini-2.0-flash-exp:free",
+   "qwen/qwen-2.5-7b-instruct:free",
+  ].filter((m, i, a) => m && a.indexOf(m) === i && m !== safeModel);
+  let last = e;
+  for (const fb of fallbacks.slice(0, 2)) {
+   try {
+    console.warn(`[OpenRouter] Trying fallback model ${fb} with same system prompt`);
+    baseBody.model = fb;
+    return await once(false);
+   } catch (e2: any) {
+    last = e2;
+   }
   }
-  throw e;
+  throw last;
  }
 }
 
@@ -2245,18 +2285,16 @@ function scoreBlogArticle(content: string, kw: string): {
  const words = countContentWords(content);
  const h2 = (content.match(/^##\s+/gm) || []).length;
  const reasons: string[] = [];
- if (words < 1400) reasons.push(`thin_words:${words}`);
- if (h2 < 6) reasons.push(`few_h2:${h2}`);
+ if (words < 800) reasons.push(`thin_words:${words}`);
+ if (h2 < 4) reasons.push(`few_h2:${h2}`);
  if (!/key takeaways/i.test(content)) reasons.push("missing_takeaways");
  if (!/frequently asked|##\s+faq/i.test(content)) reasons.push("missing_faq");
- if (!/common mistakes|pitfalls|what to avoid/i.test(content)) reasons.push("missing_mistakes");
- if (!/\|.+\|/.test(content)) reasons.push("missing_table");
  if (kw && !content.slice(0, 900).toLowerCase().includes(kw.toLowerCase().slice(0, 40))) {
   reasons.push("keyword_not_early");
  }
- // Strong article: length + structure; soft checks may warn but still publish AI work
- const hardFail = words < 1400 || h2 < 6;
- const ok = !hardFail && reasons.length <= 2;
+ // Strict-JSON path targets 800+ words; premium aim is higher
+ const hardFail = words < 800 || h2 < 3;
+ const ok = words >= 1000 && h2 >= 4 && !hardFail;
  return { words, h2, ok, reasons };
 }
 
@@ -2480,6 +2518,161 @@ Never produce a generic SEO outline that could apply to any site.
 Return compact valid JSON only (no markdown fences, no commentary before/after).
 Use double quotes. Escape newlines inside strings as \\n. No trailing commas.
 ASCII only.`;
+}
+
+/**
+ * Strict JSON system prompt (Phase 2 article generation).
+ * Enforces raw JSON only — no markdown fences, no chatter, proper escapes.
+ */
+const STRICT_SEO_ARTICLE_SYSTEM_PROMPT = `You are an elite SEO Content Strategist and Technical Writer. Your goal is to generate highly optimized, target-oriented blog articles based on a specific Target URL provided by the user.
+
+CRITICAL RULES FOR OUTPUT:
+1. You must output ONLY valid, raw JSON.
+2. DO NOT wrap the JSON in markdown blocks (no \`\`\`json or \`\`\`).
+3. DO NOT include any conversational text, greetings, or explanations outside the JSON.
+4. Ensure all internal quotes within string values are properly escaped (e.g., use \\" instead of ").
+5. Do not use literal line breaks inside JSON string values; use \\n instead.
+6. No trailing commas. ASCII punctuation only.
+7. Analyze TARGET_URL first, then write content that only fits that site (not generic SEO fluff).`;
+
+/** Map strict SEO JSON schema → app blog payload (normalizeBlogPayload). */
+function mapStrictSeoArticleJson(
+ raw: any,
+ opts: {
+  domain: string;
+  brand: string;
+  kw: string;
+  topic: string;
+  targetWords: number;
+  researchBrief?: any;
+ }
+): any {
+ const meta = raw?.metadata || {};
+ const article = raw?.article || {};
+ const analysis = raw?.seoAnalysis || {};
+ const title =
+  sanitizeText(meta.seoTitle || raw?.title || opts.topic || opts.kw) || opts.kw;
+ const metaDescription = sanitizeText(
+  meta.metaDescription ||
+   raw?.metaDescription ||
+   `${title}. Practical guide for ${opts.brand}.`
+ ).slice(0, 160);
+ const keywords: string[] = Array.isArray(meta.targetKeywords)
+  ? meta.targetKeywords.map((k: unknown) => String(k || "").trim()).filter(Boolean)
+  : [];
+ const intro = sanitizeText(article.introduction || article.intro || raw?.intro || "");
+ const conclusion = sanitizeText(article.conclusion || raw?.conclusion || "");
+ const sections: Array<{ heading: string; body: string }> = Array.isArray(article.sections)
+  ? article.sections
+     .map((s: any) => ({
+      heading: sanitizeText(s?.heading || s?.h2 || s?.title || ""),
+      body: sanitizeText(String(s?.content || s?.body || "").replace(/\\n/g, "\n")),
+     }))
+     .filter((s: { heading: string; body: string }) => s.heading || s.body)
+  : Array.isArray(raw?.sections)
+    ? raw.sections
+    : [];
+
+ // Optional FAQ if model included extras
+ const faqSection: Array<{ question: string; answer: string }> = Array.isArray(raw?.faqSection)
+  ? raw.faqSection
+  : Array.isArray(article.faq)
+    ? article.faq
+    : [];
+
+ const keyTakeaways: string[] = Array.isArray(raw?.keyTakeaways)
+  ? raw.keyTakeaways.map((t: unknown) => sanitizeText(t)).filter(Boolean)
+  : Array.isArray(article.keyTakeaways)
+    ? article.keyTakeaways.map((t: unknown) => sanitizeText(t)).filter(Boolean)
+    : [];
+
+ const outline = sections.map((s) => s.heading).filter(Boolean);
+
+ // Prefer full content if model still provided it
+ let content = sanitizeText(raw?.content || "");
+ if (!content || countContentWords(content) < 200) {
+  // Assemble from structured fields
+  const parts: string[] = [`# ${title}`, ""];
+  if (intro) {
+   if (!/^\*\*Quick answer/i.test(intro)) {
+    parts.push(`**Quick answer:** ${intro.split(/(?<=[.!?])\s+/).slice(0, 2).join(" ")}`, "");
+   }
+   parts.push(intro, "");
+  }
+  if (keyTakeaways.length) {
+   parts.push(
+    "## Key Takeaways",
+    ...keyTakeaways.map((t) => (t.startsWith("-") ? t : `- ${t}`)),
+    ""
+   );
+  } else if (keywords.length) {
+   parts.push(
+    "## Key Takeaways",
+    `- Primary focus: **${opts.kw}** for ${opts.brand} in ${sanitizeText(analysis.targetNiche) || "this niche"}.`,
+    `- Target audience: ${sanitizeText(analysis.targetAudience) || "buyers researching solutions"}.`,
+    `- Use long-tail coverage: ${keywords.slice(0, 3).join(", ")}.`,
+    `- Answer the core query early, then expand with steps and proof.`,
+    `- Link related pages on https://${opts.domain}/ so authority compounds.`,
+    ""
+   );
+  }
+  for (const sec of sections) {
+   if (sec.heading) parts.push(`## ${sec.heading.replace(/^#+\s*/, "")}`, "");
+   if (sec.body) parts.push(sec.body, "");
+  }
+  if (faqSection.length) {
+   parts.push("## Frequently Asked Questions", "");
+   for (const f of faqSection) {
+    if (f.question && f.answer) parts.push(`### ${f.question}`, f.answer, "");
+   }
+  }
+  if (conclusion) {
+   parts.push("## Conclusion", "", conclusion);
+  } else {
+   parts.push(
+    "## Conclusion",
+    "",
+    `Use this guide to improve **${opts.kw}** results for ${opts.brand}. Start at [https://${opts.domain}/](https://${opts.domain}/) or explore [services](https://${opts.domain}/services).`
+   );
+  }
+  content = parts.join("\n").trim();
+ }
+
+ const secondary =
+  keywords.filter((k) => k.toLowerCase() !== opts.kw.toLowerCase()).slice(0, 6) ||
+  (opts.researchBrief?.secondaryKeywords || []).slice(0, 4);
+
+ return {
+  title,
+  metaDescription,
+  slugSuggestion: title
+   .toLowerCase()
+   .replace(/[^a-z0-9]+/g, "-")
+   .replace(/(^-|-$)/g, "")
+   .slice(0, 70),
+  outline: outline.length ? outline : opts.researchBrief?.outline || [],
+  intro,
+  keyTakeaways,
+  sections,
+  faqSection,
+  conclusion,
+  content: polishBlogProse(content),
+  keywordStrategy: {
+   primary: opts.kw,
+   secondary,
+   longTail: Array.isArray(opts.researchBrief?.longTail) ? opts.researchBrief.longTail : keywords.slice(3),
+   intent: opts.researchBrief?.searchIntent || "informational",
+   targetPrimaryCount: "1.0-1.5%",
+  },
+  seoAnalysis: analysis,
+  targetKeywords: keywords,
+  qualityAudit: {
+   wordCount: countContentWords(content),
+   primaryDensityPct: 0,
+   tone: "Professional",
+   checksPassed: countContentWords(content) >= 800,
+  },
+ };
 }
 
 /** @deprecated use buildSeoBlogSystemPrompt(tone) — kept name for call sites */
@@ -4603,72 +4796,75 @@ Rules: Stay on-niche for ${brandName}. No article body. Escape any quotes inside
   };
  }
 
- // PHASE 2: Markdown-first full article (avoids JSON escape/truncation for long content)
- const writerSystem = buildSeoBlogWriterSystemPrompt(masterTone);
+ // PHASE 2: Strict JSON article (URL-first) — primary path with extractAndParseJSON
  const titlePick =
   Array.isArray(researchBrief?.titleOptions) && researchBrief.titleOptions[0]
    ? String(researchBrief.titleOptions[0])
    : strategy.titlePrefix(kw);
  const outlinePick = Array.isArray(researchBrief?.outline)
-  ? researchBrief.outline.slice(0, 8).map((h: unknown, i: number) => `${i + 1}. ${h}`).join("\n")
-  : strategy.heads(kw, brandName).map((h: string, i: number) => `${i + 1}. ${h}`).join("\n");
+  ? researchBrief.outline.slice(0, 8)
+  : strategy.heads(kw, brandName);
 
- const modeBlock = isEnhance
-  ? `MODE: FULL REDRAFT + ENHANCE
-Previous title: ${String(previousTitle || "").slice(0, 120)}
-Previous outline: ${prevOutline.join(" | ") || "(none)"}
-Previous excerpt (upgrade far beyond; do not copy):
-"""${prevClip}"""
-Rewrite as a premium original article. Same primary keyword "${kw}" and brand ${brandName}.`
-  : `MODE: NEW premium article — TARGET_URL researched first, then keyword-optimized.`;
+ const enhanceNote = isEnhance
+  ? `\nMODE: FULL REDRAFT/ENHANCE of prior draft. Previous title: ${String(previousTitle || "").slice(0, 120)}. Outline: ${prevOutline.join(" | ") || "(none)"}. Upgrade depth; keep keyword "${kw}" and brand ${brandName}.\nPrior excerpt (do not copy):\n"""${prevClip}"""\n`
+  : "";
 
- const writePrompt = `${isEnhance ? "Rewrite" : "Write"} the COMPLETE publishable SEO blog post in MARKDOWN only.
+ const strictUserPrompt = `Target URL for SEO Analysis: https://${domain}/
+User's General Topic/Angle: ${topicResolved}
+Primary Keyword: ${kw}
+Brand: ${brandName}
+Audience: ${resolvedAudience}
+Tone: ${masterTone}
+Word count target: ${targetWords} (minimum 800; prefer 1500-2200 of real prose across sections)
+${enhanceNote}
 
-${modeBlock}
+TASK:
+1. Analyze the Target URL (use crawl + research brief below) to understand its core niche, target audience, and primary intent.
+2. Generate a highly relevant, click-worthy SEO Title and Meta Description that align perfectly with the Target URL's niche and primary keyword "${kw}".
+3. Generate 5-7 highly specific, long-tail SEO keywords targeting the intent of the URL.
+4. Write a comprehensive, engaging, well-structured article (minimum 800 words; aim ${targetWords}) that naturally integrates the keywords and provides massive value.
+5. Each section content must be detailed prose (not thin bullets). Use \\n for line breaks inside strings. Escape all internal quotes as \\".
+6. Ground every claim in THIS brand/site — never generic SEO filler that could sit on any blog.
 
-## PHASE ORDER (do not skip)
-1) Internalize TARGET URL analysis (brand, niche, services, gaps) — article must clearly be about THIS site.
-2) Map primary keyword + intent from research brief.
-3) Write full article that could only belong to https://${domain}/ (not a generic SEO essay).
-
-## INPUTS
-TOPIC: ${topicResolved}
-PRIMARY KEYWORD: ${kw} (H1 + first 100 words; density ~1.0-1.5%)
-WORD COUNT: ${targetWords} (minimum 2000 real prose words)
-AUDIENCE: ${resolvedAudience}
-TONE: ${masterTone}
-BRAND: ${brandName}
-TARGET_URL: https://${domain}/
-Suggested H1: ${titlePick}
-Suggested H2 outline:
-${outlinePick}
-
-## RESEARCH BRIEF (from URL analysis)
-${JSON.stringify(researchBrief)}
-
+LIVE URL + KEYWORD CONTEXT:
 ${analysisBlock}
 
-## CRAFT (master SEO blog guidelines)
-- Human editor quality: specific facts, trade-offs, worked examples for ${brandName}'s niche.
-- Intro with **Quick answer:** (2-3 sentences) after hook.
-- ## Key Takeaways — 4-6 complete sentence bullets.
-- 6-8 ## H2s; each opens with a direct answer then ≥220 words of prose.
-- One Common mistakes / pitfalls section with fixes.
-- One markdown comparison table + 2-3 [IMAGE: ... Alt Text: "..."] + 1 [CHART:bar title="..." labels="a,b,c" values="1,2,3"].
-- ## Frequently Asked Questions with ### questions (4-6).
-- ## Conclusion + CTA linking to real paths on https://${domain}/ (and services/contact if relevant).
-- Secondary keywords: ${(researchBrief?.secondaryKeywords || secondaryMerged).slice(0, 5).join(", ") || secondary}.
-- Unique angle: ${researchBrief?.uniqueAngle || `how ${brandName} approaches ${kw}`}.
-- 2+ external links to reputable sources. Zero banned clichés. Zero brand-agnostic filler.
+RESEARCH BRIEF:
+${JSON.stringify(researchBrief)}
 
-## OUTPUT FORMAT (critical — prevents parse failures)
-Return MARKDOWN only. Start with # Title.
-Do NOT return JSON. Do NOT wrap in \`\`\` fences. No preamble ("Here is the article").`;
+Suggested H1 seed: ${titlePick}
+Suggested H2s: ${JSON.stringify(outlinePick)}
+
+OUTPUT SCHEMA (strict — do not add or remove top-level fields):
+{
+  "seoAnalysis": {
+    "targetNiche": "Brief description of the target URL's niche",
+    "targetAudience": "Who is the target URL trying to reach?"
+  },
+  "metadata": {
+    "seoTitle": "Highly optimized, click-worthy title (max 60 chars)",
+    "metaDescription": "Compelling meta description including primary keyword (max 155 chars)",
+    "targetKeywords": ["keyword 1", "keyword 2", "keyword 3", "keyword 4", "keyword 5"]
+  },
+  "article": {
+    "introduction": "Engaging hook that introduces the topic and includes the primary keyword. Use \\\\n for paragraph breaks.",
+    "sections": [
+      {
+        "heading": "H2 Heading (include secondary keyword where natural)",
+        "content": "Detailed multi-paragraph content. Use \\\\n for line breaks. Do not use unescaped quotes. Each section should be substantial."
+      }
+    ],
+    "conclusion": "Strong wrap-up with a call to action relevant to https://${domain}/"
+  }
+}
+
+Include 6-8 objects in article.sections. Optional extra fields allowed only inside values, not new top-level keys.
+Return ONLY the JSON object.`;
 
  const writeResult = await withTimeout(
-  callAI(providerConfig, writePrompt, writerSystem, {
-   // Markdown output — do NOT force JSON (truncates long articles on free models)
-   temperature: isEnhance ? 0.72 : 0.68,
+  callAI(providerConfig, strictUserPrompt, STRICT_SEO_ARTICLE_SYSTEM_PROMPT, {
+   responseMimeType: "application/json",
+   temperature: isEnhance ? 0.55 : 0.45,
    maxOutputTokens: 8192,
   }),
   100000,
@@ -4681,36 +4877,72 @@ Do NOT return JSON. Do NOT wrap in \`\`\` fences. No preamble ("Here is the arti
  }
 
  let parsed: any = null;
- const trimmedRaw = rawText.trim();
- // Prefer pure markdown (primary path). JSON only if model ignored instructions.
- if (trimmedRaw.startsWith("{") || /```json/i.test(trimmedRaw.slice(0, 80))) {
-  const asJson = tryParseJsonLoose(rawText);
-  if (asJson?.content && countContentWords(String(asJson.content)) >= 400) {
+ let generationMode: "strict-json" | "markdown-fallback" | "partial" = "strict-json";
+
+ // Primary: strict JSON schema
+ const asJson = tryParseJsonLoose(rawText);
+ if (asJson && (asJson.article || asJson.metadata || asJson.sections || asJson.content)) {
+  if (asJson.article || asJson.metadata || asJson.seoAnalysis) {
+   parsed = mapStrictSeoArticleJson(asJson, {
+    domain,
+    brand: brandName,
+    kw,
+    topic: topicResolved,
+    targetWords,
+    researchBrief,
+   });
+   generationMode = "strict-json";
+  } else if (asJson.content || asJson.sections || asJson.intro) {
    parsed = asJson;
-   parsed.content = polishBlogProse(String(asJson.content));
-  } else if (asJson?.sections || asJson?.intro) {
-   parsed = asJson;
-  } else if (asJson?.content) {
-   parsed = parseMarkdownArticle(String(asJson.content), kw, domain, brandName, topicResolved);
+   if (asJson.content) parsed.content = polishBlogProse(String(asJson.content));
+   generationMode = "partial";
   }
  }
- if (!parsed) {
-  // Markdown path — also works if JSON wrapper failed but body is readable
-  parsed = parseMarkdownArticle(rawText, kw, domain, brandName, topicResolved);
+
+ // Secondary: markdown recovery if JSON path failed
+ if (!parsed || !parsed.content || countContentWords(String(parsed.content)) < 120) {
+  const mdParsed = parseMarkdownArticle(rawText, kw, domain, brandName, topicResolved);
+  if (mdParsed && countContentWords(String(mdParsed.content || "")) >= 120) {
+   parsed = mdParsed;
+   generationMode = "markdown-fallback";
+  }
  }
- // If model put the article inside a string field only
- if (!parsed && tryParseJsonLoose(rawText)?.article) {
-  parsed = parseMarkdownArticle(
-   String(tryParseJsonLoose(rawText).article),
-   kw,
-   domain,
-   brandName,
-   topicResolved
-  );
+
+ // Tertiary: one markdown rewrite with same URL context (capable fallback, same research)
+ if (!parsed || countContentWords(String(parsed?.content || "")) < 400) {
+  try {
+   console.warn("[Blog] Strict JSON thin/failed — markdown fallback rewrite with same context");
+   const mdSystem = buildSeoBlogWriterSystemPrompt(masterTone);
+   const mdPrompt = `Write a complete SEO blog in MARKDOWN only for TARGET_URL https://${domain}/.
+TOPIC: ${topicResolved}
+KEYWORD: ${kw}
+BRAND: ${brandName}
+TONE: ${masterTone}
+WORD COUNT: ${targetWords}
+RESEARCH: ${JSON.stringify(researchBrief).slice(0, 2500)}
+${analysisBlock}
+Start with # Title. Include Quick answer, Key Takeaways, 6+ H2s, FAQ, Conclusion+CTA.
+No JSON. No fences.`;
+   const mdResult = await withTimeout(
+    callAI(providerConfig, mdPrompt, mdSystem, {
+     temperature: 0.6,
+     maxOutputTokens: 8192,
+    }),
+    90000,
+    "Blog markdown fallback"
+   );
+   const mdText = extractAiText(mdResult);
+   const md2 = parseMarkdownArticle(mdText, kw, domain, brandName, topicResolved);
+   if (md2 && countContentWords(String(md2.content || "")) > countContentWords(String(parsed?.content || ""))) {
+    parsed = md2;
+    generationMode = "markdown-fallback";
+   }
+  } catch (fbErr) {
+   console.warn("[Blog] Markdown fallback failed:", fbErr);
+  }
  }
 
  if (!parsed || !parsed.content || countContentWords(String(parsed.content)) < 80) {
-  // Do not throw — fall through to offline unique article with clear reason
   throw new Error(
    "AI article output could not be recovered as publishable content (parse/structure)."
   );
@@ -4736,72 +4968,64 @@ Do NOT return JSON. Do NOT wrap in \`\`\` fences. No preamble ("Here is the arti
    parsed.keywordStrategy.targetPrimaryCount || `${densityLow}-${densityHigh}`;
  }
 
- // Ensure content is polished markdown
  if (parsed.content) {
   parsed.content = polishBlogProse(String(parsed.content));
  }
 
  parsed.strategyId = strategy.id;
  parsed.variationSeed = seed;
+ parsed.generationMode = generationMode;
 
  let normalized = normalizeBlogPayload(parsed, domain, kw, seed);
- // Final prose polish after assembly/media inject
  if (normalized.content) {
   normalized.content = polishBlogProse(String(normalized.content));
   normalized.content = improveReadability(normalized.content);
  }
  let quality = scoreBlogArticle(String(normalized.content || ""), kw);
 
- // PHASE 3: markdown expansion rewrite if thin or missing structure
- if (!quality.ok || quality.words < 1600) {
+ // PHASE 3: expand if thin (strict JSON repair with same system prompt)
+ if (!quality.ok || quality.words < 900) {
   try {
-   const repairPrompt = `Your previous draft failed quality checks: ${quality.reasons.join(", ")} (${quality.words} words, ${quality.h2} H2s).
-
-Rewrite a COMPLETE, excellent SEO blog post in MARKDOWN only (~${targetWords} words).
-Do not summarize. Do not shorten. Expand with real prose, examples, and decision frameworks.
-
-TOPIC: ${topicResolved}
-KEYWORD: ${kw}
-TONE: ${masterTone}
-BRAND: ${brandName}
-SITE: https://${domain}/
-RESEARCH: ${JSON.stringify(researchBrief).slice(0, 2800)}
-SITE CONTEXT: ${JSON.stringify(siteContext).slice(0, 900)}
-
-Must include: Quick answer intro, Key Takeaways, 6-8 deep H2s, mistakes section, table, 2 images, 1 chart, FAQ, conclusion with CTAs.
-Primary keyword early and natural density 1.0-1.5%.
-Markdown only. Start with # Title.`;
+   const repairPrompt = `The previous JSON draft was too thin (${quality.words} words; issues: ${quality.reasons.join(", ")}).
+Regenerate a STRONGER article for Target URL https://${domain}/ using the SAME schema.
+Topic: ${topicResolved}
+Keyword: ${kw}
+Brand: ${brandName}
+Tone: ${masterTone}
+Minimum 1200 words of prose across introduction + 6-8 section contents + conclusion.
+Each section.content must be detailed (several paragraphs). Escape quotes. Use \\n for line breaks inside strings.
+Research: ${JSON.stringify(researchBrief).slice(0, 2000)}
+${analysisBlock}
+Return ONLY valid raw JSON matching the required schema. No markdown fences.`;
    const repairResult = await withTimeout(
-    callAI(providerConfig, repairPrompt, writerSystem, {
-     temperature: 0.6,
+    callAI(providerConfig, repairPrompt, STRICT_SEO_ARTICLE_SYSTEM_PROMPT, {
+     responseMimeType: "application/json",
+     temperature: 0.5,
      maxOutputTokens: 8192,
     }),
-    100000,
+    95000,
     "Blog repair"
    );
    const repairText = extractAiText(repairResult);
-   if (repairText.trim()) {
-    let repairParsed = parseMarkdownArticle(repairText, kw, domain, brandName, topicResolved);
-    if (!repairParsed) {
-     const asJ = tryParseJsonLoose(repairText);
-     if (asJ?.content) {
-      repairParsed = parseMarkdownArticle(String(asJ.content), kw, domain, brandName, topicResolved) || asJ;
-     } else if (asJ) {
-      repairParsed = asJ;
-     }
+   const repairJson = tryParseJsonLoose(repairText);
+   if (repairJson) {
+    const repairParsed = mapStrictSeoArticleJson(repairJson, {
+     domain,
+     brand: brandName,
+     kw,
+     topic: topicResolved,
+     targetWords,
+     researchBrief,
+    });
+    const repaired = normalizeBlogPayload(repairParsed, domain, kw, seed + 3);
+    if (repaired.content) {
+     repaired.content = polishBlogProse(improveReadability(String(repaired.content)));
     }
-    if (repairParsed) {
-     if (!repairParsed.title) repairParsed.title = parsed.title;
-     if (repairParsed.content) repairParsed.content = polishBlogProse(String(repairParsed.content));
-     const repaired = normalizeBlogPayload(repairParsed, domain, kw, seed + 3);
-     if (repaired.content) {
-      repaired.content = polishBlogProse(improveReadability(String(repaired.content)));
-     }
-     const q2 = scoreBlogArticle(String(repaired.content || ""), kw);
-     if (q2.words > quality.words || (q2.ok && !quality.ok)) {
-      normalized = repaired;
-      quality = q2;
-     }
+    const q2 = scoreBlogArticle(String(repaired.content || ""), kw);
+    if (q2.words > quality.words || (q2.ok && !quality.ok)) {
+     normalized = repaired;
+     quality = q2;
+     generationMode = "strict-json";
     }
    }
   } catch (repairErr) {
@@ -4843,6 +5067,7 @@ Markdown only. Start with # Title.`;
   enhanceMode: isEnhance,
   researchUsed: true,
   aiGenerated: true,
+  generationMode,
   qualityScore: {
    words: quality.words,
    h2: quality.h2,
@@ -4877,6 +5102,7 @@ Markdown only. Start with # Title.`;
  quotaExceeded: /quota|rate limit|429|RESOURCE_EXHAUSTED/i.test(raw),
  fallbackReason: friendly,
  aiGenerated: false,
+ generationMode: "offline-fallback",
  });
  }
 });
