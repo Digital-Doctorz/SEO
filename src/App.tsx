@@ -587,6 +587,7 @@ export default function App() {
                       competitor={analysisResult.competitor} 
                       discoveredCompetitors={analysisResult.discoveredCompetitors}
                       targetAnalysis={analysisResult.targetAnalysis}
+                      marketResearch={analysisResult.marketResearch || analysisResult.targetAnalysis?.marketResearch}
                       autonomousBlog={analysisResult.autonomousBlog}
                       contentGaps={analysisResult.contentGaps}
                       serpFeatures={analysisResult.serpFeatures}

@@ -147,6 +147,8 @@ export interface AnalysisResult {
   backlinkOpportunities: BacklinkOpportunity[];
   discoveredCompetitors?: DiscoveredCompetitor[];
   targetAnalysis?: TargetAnalysis;
+  /** Convenience alias — also nested under targetAnalysis.marketResearch */
+  marketResearch?: MarketResearchReport;
   autonomousBlog?: BlogPost;
   localLocation?: LocalLocation;
   rankingBlueprint?: RankingBlueprint;
@@ -181,6 +183,41 @@ export interface DiscoveredCompetitor {
   seoStrategy?: string; // SEO optimization approach
   aiRankStrategy?: string; // Actionable playbook to rank #1 in AI Search engines
   schemaRecommendation?: string; // Recommended structured data/schemas (JSON-LD)
+  /** Competitive threat: High | Medium | Low */
+  threatLevel?: "High" | "Medium" | "Low";
+  /** Domain rating estimate 0–100 */
+  domainRating?: number;
+  /** Content publishing cadence summary */
+  contentCadence?: string;
+  /** Where they win */
+  strengths?: string[];
+  /** Where they are weak / exploitable */
+  weaknesses?: string[];
+  /** Content angles they dominate */
+  contentAngles?: string[];
+  /** How target can differentiate */
+  counterMove?: string;
+}
+
+/** Structured market research pack for Phase 2 report UI */
+export interface MarketResearchReport {
+  executiveSummary: string;
+  marketOverview: string;
+  demandDrivers: string[];
+  buyerSegments: Array<{ segment: string; intent: string; priority: "Primary" | "Secondary" | "Emerging" }>;
+  competitiveIntensity: "Low" | "Moderate" | "High" | "Very High";
+  intensityRationale: string;
+  categoryLeaders: string[];
+  whitespaceOpportunities: string[];
+  positioningRecommendation: string;
+  channelMix: Array<{ channel: string; role: string; priority: "High" | "Medium" | "Low" }>;
+  ninetyDayPlays: Array<{ play: string; why: string; effort: "Low" | "Medium" | "High" }>;
+  swot: {
+    strengths: string[];
+    weaknesses: string[];
+    opportunities: string[];
+    threats: string[];
+  };
 }
 
 export interface TargetAnalysis {
@@ -192,6 +229,8 @@ export interface TargetAnalysis {
   socialPresenceSummary?: string;
   socialMentionKeywords?: string[];
   competitorSocialInsights?: string;
+  /** Full market research narrative pack (Phase 2) */
+  marketResearch?: MarketResearchReport;
 }
 
 export interface SocialPost {

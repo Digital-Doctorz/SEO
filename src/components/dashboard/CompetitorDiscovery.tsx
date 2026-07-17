@@ -27,10 +27,10 @@ export default function CompetitorDiscovery({
  </span>
  <div>
  <h3 className="text-lg font-bold text-slate-900">
- Auto-Discovered Local & Niche Competitors
+ Competitor Deep-Dive Cards
  </h3>
  <p className="text-xs text-slate-500">
- Real-time competitor websites, blogs, and articles detected in this segment
+ Card view of peers from Phase 2 market research — expand for SEO &amp; AI rank playbooks
  </p>
  </div>
  </div>
@@ -61,11 +61,23 @@ export default function CompetitorDiscovery({
  </h4>
  <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">
  Est. Traffic: {formatNum(comp.estimatedMonthlyTraffic)} / mo
+ {comp.domainRating != null ? ` · DR ${comp.domainRating}` : ""}
  </p>
  </div>
- <span className="text-[10px] font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-100 shrink-0">
+ <div className="flex flex-col items-end gap-1 shrink-0">
+ <span className="text-[10px] font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-100">
  {comp.nicheSimilarity}% Match
  </span>
+ {comp.threatLevel && (
+ <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border ${
+  comp.threatLevel === "High" ? "bg-rose-50 text-rose-700 border-rose-100" :
+  comp.threatLevel === "Low" ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
+  "bg-amber-50 text-amber-700 border-amber-100"
+ }`}>
+  {comp.threatLevel} threat
+ </span>
+ )}
+ </div>
  </div>
 
  <p className="text-xs text-slate-500 font-medium">
@@ -115,6 +127,32 @@ export default function CompetitorDiscovery({
  transition={{ duration: 0.3 }}
  className="space-y-4 pt-3 border-t border-slate-200 text-xs"
  >
+ {comp.counterMove && (
+ <div className="bg-blue-50/50 p-3 rounded-lg border border-blue-100 text-[11px] text-slate-700">
+  <strong className="text-blue-800 block text-[9.5px] uppercase font-bold tracking-wider mb-1">Counter-move</strong>
+  <p className="leading-relaxed">{comp.counterMove}</p>
+ </div>
+ )}
+ {(comp.strengths?.length || comp.weaknesses?.length) ? (
+ <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+  {!!comp.strengths?.length && (
+   <div className="bg-emerald-50/40 p-2.5 rounded-lg border border-emerald-100">
+    <strong className="text-emerald-800 block text-[9.5px] uppercase font-bold tracking-wider mb-1">They win on</strong>
+    <ul className="space-y-1 text-[11px] text-slate-600">
+     {comp.strengths.map((s, i) => <li key={i}>• {s}</li>)}
+    </ul>
+   </div>
+  )}
+  {!!comp.weaknesses?.length && (
+   <div className="bg-amber-50/40 p-2.5 rounded-lg border border-amber-100">
+    <strong className="text-amber-800 block text-[9.5px] uppercase font-bold tracking-wider mb-1">Exploitable gaps</strong>
+    <ul className="space-y-1 text-[11px] text-slate-600">
+     {comp.weaknesses.map((s, i) => <li key={i}>• {s}</li>)}
+    </ul>
+   </div>
+  )}
+ </div>
+ ) : null}
  {/* Targeted Keywords */}
  {comp.targetKeywords && comp.targetKeywords.length > 0 && (
  <div className="space-y-1">

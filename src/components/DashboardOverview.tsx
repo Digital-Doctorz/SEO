@@ -7,7 +7,7 @@ import {
 import { 
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend
 } from "recharts";
-import type { DomainMetrics, DiscoveredCompetitor, TargetAnalysis, ContentGap, SerpFeature, LocalLocation, RankingBlueprint, AiProviderConfig, BlogPost } from "../types";
+import type { DomainMetrics, DiscoveredCompetitor, TargetAnalysis, ContentGap, SerpFeature, LocalLocation, RankingBlueprint, AiProviderConfig, BlogPost, MarketResearchReport } from "../types";
 import { formatNum, getComparePercent, buildTrendData } from "./dashboard/utils";
 import TargetAnalysisSection from "./dashboard/TargetAnalysisSection";
 import LocalSeoSection from "./dashboard/LocalSeoSection";
@@ -19,6 +19,7 @@ interface DashboardOverviewProps {
   competitor: DomainMetrics | null;
   discoveredCompetitors?: DiscoveredCompetitor[];
   targetAnalysis?: TargetAnalysis;
+  marketResearch?: MarketResearchReport;
   autonomousBlog?: BlogPost;
   contentGaps?: ContentGap[];
   serpFeatures?: SerpFeature[];
@@ -34,6 +35,7 @@ export default function DashboardOverview({
   competitor, 
   discoveredCompetitors, 
   targetAnalysis,
+  marketResearch,
   autonomousBlog,
   contentGaps = [],
   serpFeatures = [],
@@ -587,13 +589,18 @@ export default function DashboardOverview({
       </motion.div>
 
       {targetAnalysis && (
-                <TargetAnalysisSection
+        <TargetAnalysisSection
           target={target}
           targetAnalysis={targetAnalysis}
           contentGaps={contentGaps}
           serpFeatures={serpFeatures}
           autonomousBlog={autonomousBlog}
+          discoveredCompetitors={discoveredCompetitors}
+          competitor={competitor}
+          rankingBlueprint={rankingBlueprint}
+          marketResearch={marketResearch || targetAnalysis.marketResearch}
           onViewAutonomousBlog={onViewAutonomousBlog}
+          onSelectCompetitor={onSelectCompetitor}
         />
       )}
 

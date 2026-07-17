@@ -3989,25 +3989,156 @@ function buildIndustryCompetitors(
  ];
 
  const merged = [...curated, ...synthetic].slice(0, 15);
- return merged.map((c, index) => ({
- domain: c.domain,
- nicheSimilarity: c.sim,
- nicheFocus: c.focus,
- estimatedMonthlyTraffic: Math.round(8000 + index * 2200 + brand.length * 400),
- popularBlogUrl: `https://${c.domain}/blog`,
- latestArticleTitle: `${kw1}: What ${c.focus} Teams Changed in 2026`,
- latestArticleUrl: `https://${c.domain}/blog/${kw1.replace(/\s+/g, "-").slice(0, 40)}`,
- analyzedTakeaway: `${c.domain} competes in ${niche} with focus on ${c.focus.toLowerCase()}. Opportunity: outrank them on long-tail queries like "${kw1}" and "${kw2}" with deeper FAQs and comparison pages.`,
- targetKeywords: [
- kw1,
- kw2,
- keywords[2] || `best ${kw1}`,
- keywords[3] || `${kw1} pricing`,
- ].filter(Boolean),
- seoStrategy: "Topical clusters, comparison pages, and FAQ schema around commercial long-tails.",
- aiRankStrategy: "Answer-first H2s, entity-rich definitions, and cited sources for AI Overviews.",
- schemaRecommendation: "Article + FAQPage + Organization JSON-LD on service and blog templates.",
- }));
+ return merged.map((c, index) => {
+  const threatLevel = c.sim >= 88 ? "High" : c.sim >= 75 ? "Medium" : "Low";
+  const kws = [
+   kw1,
+   kw2,
+   keywords[2] || `best ${kw1}`,
+   keywords[3] || `${kw1} pricing`,
+   keywords[4] || `${kw1} vs alternatives`,
+  ].filter(Boolean);
+  return {
+   domain: c.domain,
+   nicheSimilarity: c.sim,
+   nicheFocus: c.focus,
+   estimatedMonthlyTraffic: Math.round(8000 + index * 2200 + brand.length * 400),
+   domainRating: Math.max(28, Math.min(95, 52 + Math.round(c.sim / 3) - index * 2)),
+   threatLevel,
+   contentCadence: index % 2 === 0 ? "2–4 posts / week" : "1–2 posts / week",
+   popularBlogUrl: `https://${c.domain}/blog`,
+   latestArticleTitle: `${kw1}: What ${c.focus} Teams Changed in 2026`,
+   latestArticleUrl: `https://${c.domain}/blog/${kw1.replace(/\s+/g, "-").slice(0, 40)}`,
+   analyzedTakeaway: `${c.domain} competes in ${niche} with a clear focus on ${c.focus.toLowerCase()}. They typically win mid-funnel education and branded trust queries. Opportunity for ${brand}: outrank them on long-tail problem queries like "${kw1}" and commercial intent like "${kw2}" with deeper FAQs, comparison tables, and proof-led case narratives.`,
+   targetKeywords: kws,
+   strengths: [
+    `Established presence in ${c.focus.toLowerCase()}`,
+    "Broad content footprint on core category terms",
+    c.sim >= 85 ? "High keyword overlap with your ICP searches" : "Credible brand signals in SERPs",
+   ],
+   weaknesses: [
+    "Generic treatment of niche long-tails",
+    "Limited brand-specific process transparency",
+    "Comparison pages often thin or sales-led",
+   ],
+   contentAngles: ["How-to / playbooks", "Comparisons & alternatives", "Use-case stories"],
+   counterMove: `Publish a pillar on "${kws[0]}" with original tables, FAQ schema, and a clear next step back to ${brand} services — depth competitors rarely match.`,
+   seoStrategy:
+    "Topical clusters around commercial long-tails, comparison pages, FAQ schema, and internal links from money pages to educational hubs.",
+   aiRankStrategy:
+    "Answer-first H2s, entity-rich definitions, cited sources, and step lists so AI Overviews / ChatGPT / Perplexity can cite the page.",
+   schemaRecommendation:
+    "Article + FAQPage + Organization (plus Service/Product where relevant) JSON-LD on hub and service templates.",
+  };
+ });
+}
+
+/** Build a structured market research pack for Phase 2 UI. */
+function buildMarketResearchPack(opts: {
+ brand: string;
+ domain: string;
+ niche: string;
+ keywords: string[];
+ competitors: Array<{ domain: string; nicheSimilarity?: number }>;
+ strengths?: string[];
+ weaknesses?: string[];
+}): any {
+ const { brand, domain, niche, keywords, competitors } = opts;
+ const topComps = competitors.slice(0, 5).map((c) => c.domain).filter(Boolean);
+ const kw1 = keywords[0] || niche.split(/[&,]/)[0]?.trim() || "services";
+ const kw2 = keywords[1] || `${kw1} pricing`;
+ const intensity =
+  competitors.filter((c) => (c.nicheSimilarity || 0) >= 80).length >= 4
+   ? "High"
+   : competitors.length >= 8
+     ? "Moderate"
+     : "Moderate";
+
+ return {
+  executiveSummary: `${brand} (${domain}) competes in ${niche}. Buyers research online with a mix of how-to, comparison, and commercial queries. Peers such as ${
+   topComps.slice(0, 3).join(", ") || "category specialists"
+  } already own parts of the SERP. Winning path: own 2–3 pillars (including "${kw1}"), close Easy/Medium content gaps, and package proof so both Google and AI answer engines can cite you.`,
+  marketOverview: `The ${niche} market rewards specialists who educate early and convert with trust. Search demand spans awareness (definitions, symptoms/problems, how it works), consideration (best, vs, alternatives, pricing), and decision (near me, reviews, book/demo). Authority publishers and focused operators both rank — operators win when content is deeper, more specific, and tied to a real delivery process.`,
+  demandDrivers: [
+   `Growing research demand around ${kw1} and related long-tails`,
+   "Buyers compare options online before contacting a provider",
+   "Proof, process clarity, and specificity beat generic category pages",
+   "AI answers surface sites with clear definitions, steps, and citations",
+   `Commercial queries like "${kw2}" capture mid-to-late funnel intent`,
+  ],
+  buyerSegments: [
+   {
+    segment: "Problem-aware researchers",
+    intent: `Understand ${niche} options and what good looks like`,
+    priority: "Primary",
+   },
+   {
+    segment: "Solution comparers",
+    intent: "Evaluate approaches, vendors, pricing, and trade-offs",
+    priority: "Primary",
+   },
+   {
+    segment: "Ready-to-act buyers",
+    intent: "Choose a trusted specialist and take the next step",
+    priority: "Secondary",
+   },
+  ],
+  competitiveIntensity: intensity,
+  intensityRationale: topComps.length
+   ? `Tracked peers include ${topComps.join(", ")}. Overlap on educational and commercial queries keeps intensity ${String(intensity).toLowerCase()}.`
+   : `Multiple publishers contest ${niche} SERPs; depth and differentiation matter more than raw publishing volume.`,
+  categoryLeaders: topComps.length ? topComps : ["Category education hubs", "Specialist practitioners", "Comparison sites"],
+  whitespaceOpportunities: [
+   `Deep "${kw1}" pillar with tables, FAQs, and brand-specific proof`,
+   `Comparison / alternatives pages vs ${topComps[0] || "nearest peers"}`,
+   "PAA-style FAQ clusters with FAQPage schema",
+   "Case narratives with metrics, process steps, and CTA to services",
+   "Local + niche long-tails underserved by national publishers",
+  ],
+  positioningRecommendation: `Position ${brand} as the practical specialist in ${niche}: clearer process, stronger proof, and content that answers commercial questions peers skim. Own "${kw1}" and 2 supporting clusters; link every educational page to a relevant service/conversion path on ${domain}.`,
+  channelMix: [
+   { channel: "Organic search (SEO)", role: "Primary demand capture & trust", priority: "High" },
+   { channel: "Content clusters / blog", role: "Topical authority & nurture", priority: "High" },
+   { channel: "Comparison & alternatives", role: "Steal competitor demand", priority: "High" },
+   { channel: "AI search / GEO", role: "Citations in AI Overviews & chat engines", priority: "Medium" },
+   { channel: "Social proof & community", role: "Trust amplification", priority: "Medium" },
+  ],
+  ninetyDayPlays: [
+   {
+    play: `Publish 1 pillar on "${kw1}" + 3 cluster articles`,
+    why: "Builds topical authority where competitors already rank",
+    effort: "Medium",
+   },
+   {
+    play: "Add answer blocks + FAQ schema to top service pages",
+    why: "Improves PAA, featured snippet, and AI citation eligibility",
+    effort: "Low",
+   },
+   {
+    play: `Ship 2 comparison pages (you vs ${topComps[0] || "peer"} / alternatives)`,
+    why: "Captures high-intent mid-funnel commercial searchers",
+    effort: "Medium",
+   },
+  ],
+  swot: {
+   strengths: (opts.strengths || []).slice(0, 5).length
+    ? (opts.strengths || []).slice(0, 5)
+    : [`Live brand presence on ${domain}`, `On-niche focus in ${niche}`, "Room to own long-tail depth"],
+   weaknesses: (opts.weaknesses || []).slice(0, 5).length
+    ? (opts.weaknesses || []).slice(0, 5)
+    : ["Incomplete long-tail coverage", "Fewer comparison assets than peers", "Limited SERP feature ownership"],
+   opportunities: [
+    "Easy/Medium content-gap keywords",
+    "AI Overview / GEO answer formatting",
+    "Service → education internal linking",
+   ],
+   threats: [
+    topComps[0] ? `${topComps[0]} and peers publishing faster` : "Authority sites outranking thin pages",
+    "Generic AI content flooding the SERP",
+    "Paid competitors on brand/category terms",
+   ],
+  },
+ };
 }
 
 // ============================================================
@@ -4331,23 +4462,61 @@ async function generateFallbackData(targetRaw: string, competitorRaw?: string) {
  target: targetMetrics,
  competitor: competitorMetrics,
  discoveredCompetitors,
- targetAnalysis: {
- coreNiche: targetPageInfo.niche,
- audiencePersona: `People actively searching for ${targetPageInfo.niche} solutions related to ${brandLabel}`,
- contentStrengths: [
- targetPageInfo.scrapedPages > 0
- ? `Live crawl covered ${targetPageInfo.scrapedPages} page(s) on ${target}`
- : "Brand domain profile available",
- `Core offerings: ${(targetPageInfo.services || []).slice(0, 3).join(", ") || "primary services"}`,
- "Keyword map grounded in on-site language",
- ],
- contentWeaknesses: [
- "Limited long-tail blog coverage vs competitors",
- "Missing FAQ depth on commercial queries",
- "Internal linking between service and content pages can be stronger",
- ],
- detailedBreakdown: `${brandLabel} (${target}) operates in ${targetPageInfo.niche}. Site profile source: ${targetPageInfo.source}. ${targetPageInfo.description} Top demand themes: ${nicheKeywords.slice(0, 5).join("; ")}. Estimated DR ${targetMetrics.domainRating} with ~${(targetMetrics.organicTraffic / 1000).toFixed(0)}k monthly organic visits. Priority: publish long-tail pillar content and comparison pages that match real service language.`,
- },
+ targetAnalysis: (() => {
+  const contentStrengths = [
+   targetPageInfo.scrapedPages > 0
+    ? `Live crawl covered ${targetPageInfo.scrapedPages} page(s) on ${target}`
+    : "Brand domain profile available",
+   `Core offerings: ${(targetPageInfo.services || []).slice(0, 3).join(", ") || "primary services"}`,
+   "Keyword map grounded in on-site language",
+  ];
+  const contentWeaknesses = [
+   "Limited long-tail blog coverage vs competitors",
+   "Missing FAQ depth on commercial queries",
+   "Internal linking between service and content pages can be stronger",
+  ];
+  const marketResearch = buildMarketResearchPack({
+   brand: brandLabel,
+   domain: target,
+   niche: targetPageInfo.niche,
+   keywords: nicheKeywords,
+   competitors: discoveredCompetitors,
+   strengths: contentStrengths,
+   weaknesses: contentWeaknesses,
+  });
+  return {
+   coreNiche: targetPageInfo.niche,
+   audiencePersona: `People actively searching for ${targetPageInfo.niche} solutions related to ${brandLabel}`,
+   contentStrengths,
+   contentWeaknesses,
+   detailedBreakdown: `${brandLabel} (${target}) operates in ${targetPageInfo.niche}. Site profile source: ${targetPageInfo.source}. ${targetPageInfo.description} Top demand themes: ${nicheKeywords.slice(0, 5).join("; ")}. Estimated DR ${targetMetrics.domainRating} with ~${(targetMetrics.organicTraffic / 1000).toFixed(0)}k monthly organic visits. Priority: publish long-tail pillar content and comparison pages that match real service language. Closest tracked peers: ${discoveredCompetitors
+    .slice(0, 4)
+    .map((c: any) => c.domain)
+    .join(", ")}.`,
+   socialPresenceSummary: `Around ${targetPageInfo.niche}, public conversation clusters on practical how-tos, proof/outcomes, pricing clarity, and peer recommendations. Brands that answer specific questions and show process detail earn more trust than slogan-led posts.`,
+   socialMentionKeywords: [
+    ...(nicheKeywords.slice(0, 4) || []),
+    "how it works",
+    "reviews",
+    "pricing",
+    "alternatives",
+   ].filter(Boolean).slice(0, 8),
+   competitorSocialInsights: `Peers such as ${discoveredCompetitors
+    .slice(0, 4)
+    .map((c: any) => c.domain)
+    .join(
+     ", "
+    )} win attention with educational explainers, comparison posts, and proof snippets. Counter with original data, transparent process, and answer-first posts that link to service pages on ${target}.`,
+   marketResearch,
+  };
+ })(),
+ marketResearch: buildMarketResearchPack({
+  brand: brandLabel,
+  domain: target,
+  niche: targetPageInfo.niche,
+  keywords: nicheKeywords,
+  competitors: discoveredCompetitors,
+ }),
  keywords: keywordList,
  contentGaps,
  siteProfile: {
@@ -4954,8 +5123,15 @@ Real metrics: ${JSON.stringify({
           topKeywords: dfseoData.keywordLandscape.slice(0, 5).map((k) => k.keyword),
           serpTop3: dfseoData.serp.organic.slice(0, 3).map((r) => r.title),
         })}.
-Return compact JSON: { contentGaps[{competitorKeyword,competitorRank,competitorVolume,competitorDifficulty,targetRank,recommendedTopic,recommendedType,difficultyCategory,isQuickWin}], rankingBlueprint{summary,priorityActions[{action,impact,effort,timeframe}],timelineEstimate}, discoveredCompetitors[{domain,overlapScore,threatLevel}] }.
-contentGaps: 5-8 rows. targetRank number or "Not Ranking". difficultyCategory Easy|Medium|Hard. competitorVolume monthly searches. competitorDifficulty 1-100.
+Return compact JSON: {
+  contentGaps[{competitorKeyword,competitorRank,competitorVolume,competitorDifficulty,targetRank,recommendedTopic,recommendedType,difficultyCategory,isQuickWin}],
+  rankingBlueprint{summary,priorityActions[{action,impact,effort,timeframe}],timelineEstimate},
+  discoveredCompetitors[{domain,nicheSimilarity,nicheFocus,estimatedMonthlyTraffic,threatLevel,analyzedTakeaway,targetKeywords[],strengths[],weaknesses[],counterMove,seoStrategy}],
+  marketResearch{executiveSummary,marketOverview,demandDrivers[],competitiveIntensity,intensityRationale,whitespaceOpportunities[],positioningRecommendation,swot{strengths[],weaknesses[],opportunities[],threats[]}},
+  targetAnalysis{socialPresenceSummary,socialMentionKeywords[],competitorSocialInsights}
+}.
+contentGaps: 5-8 rows. targetRank number or "Not Ranking". difficultyCategory Easy|Medium|Hard.
+discoveredCompetitors: 8-12 real industry peer domains (no fake TLDs), nicheSimilarity 1-100, threatLevel High|Medium|Low.
 ASCII only. JSON only.`;
 
         // Use the user's configured model (Settings) — fallbacks handled inside callAI
@@ -4979,10 +5155,39 @@ ASCII only. JSON only.`;
         );
         if (!enriched.contentGaps.length) enriched.contentGaps = base.contentGaps;
         enriched.rankingBlueprint = (parsed as any).rankingBlueprint || base.rankingBlueprint;
-        enriched.discoveredCompetitors =
-          Array.isArray((parsed as any).discoveredCompetitors) && (parsed as any).discoveredCompetitors.length
-            ? (parsed as any).discoveredCompetitors
-            : base.discoveredCompetitors;
+        // Merge thin AI competitor stubs into full research cards (prefer base detail when AI is sparse)
+        if (Array.isArray((parsed as any).discoveredCompetitors) && (parsed as any).discoveredCompetitors.length) {
+          const baseComps = Array.isArray(base.discoveredCompetitors) ? base.discoveredCompetitors : [];
+          const byDomain = new Map(baseComps.map((c: any) => [String(c.domain || "").toLowerCase(), c]));
+          enriched.discoveredCompetitors = (parsed as any).discoveredCompetitors.map((c: any, i: number) => {
+            const key = String(c.domain || "").toLowerCase().replace(/^www\./, "");
+            const prior = byDomain.get(key) || baseComps[i] || {};
+            return {
+              ...prior,
+              ...c,
+              nicheSimilarity: c.nicheSimilarity ?? c.overlapScore ?? prior.nicheSimilarity,
+              analyzedTakeaway: c.analyzedTakeaway || prior.analyzedTakeaway,
+              targetKeywords: c.targetKeywords?.length ? c.targetKeywords : prior.targetKeywords,
+              nicheFocus: c.nicheFocus || prior.nicheFocus,
+              threatLevel: c.threatLevel || prior.threatLevel,
+            };
+          });
+        } else {
+          enriched.discoveredCompetitors = base.discoveredCompetitors;
+        }
+        if ((parsed as any).marketResearch) {
+          enriched.marketResearch = { ...(base.marketResearch || {}), ...(parsed as any).marketResearch };
+        }
+        if ((parsed as any).targetAnalysis) {
+          enriched.targetAnalysis = {
+            ...(base.targetAnalysis || {}),
+            ...(parsed as any).targetAnalysis,
+            marketResearch:
+              (parsed as any).targetAnalysis?.marketResearch ||
+              (parsed as any).marketResearch ||
+              base.targetAnalysis?.marketResearch,
+          };
+        }
         enriched.dataSource = "dataforseo+ai";
         enriched.isFallback = false;
         enriched.aiProvider = providerConfig.provider;
@@ -5033,13 +5238,14 @@ ${JSON.stringify(siteCtx)}
 Return ONLY valid compact JSON (no markdown fences) with:
 - keywords: exactly 15 LONG-TAIL keywords highly relevant to this business (3-7 words each, commercial + informational mix). Each: keyword, volume, difficulty, cpc, intent, type, opportunityScore, relatedKeywords[]
 - contentGaps: 10 items: competitorKeyword, competitorRank, competitorVolume, competitorDifficulty, targetRank, recommendedTopic (click-worthy long-tail title), recommendedType, difficultyCategory, isQuickWin
-- discoveredCompetitors: exactly 12-15 industry peers with domain, nicheSimilarity, nicheFocus, estimatedMonthlyTraffic, analyzedTakeaway, targetKeywords[]
-- targetAnalysis: { coreNiche, audiencePersona, contentStrengths[], contentWeaknesses[], detailedBreakdown }
+- discoveredCompetitors: exactly 12-15 REAL industry peers (prefer real known domains in this niche; no nonsense invented brands). Each MUST include: domain, nicheSimilarity (1-100), nicheFocus, estimatedMonthlyTraffic, domainRating, threatLevel (High|Medium|Low), contentCadence, popularBlogUrl, latestArticleTitle, latestArticleUrl, analyzedTakeaway (2-4 sentences of competitive insight), targetKeywords[4-6], strengths[2-4], weaknesses[2-4], contentAngles[2-4], counterMove, seoStrategy, aiRankStrategy, schemaRecommendation
+- marketResearch: { executiveSummary, marketOverview, demandDrivers[4-6], buyerSegments[{segment,intent,priority}], competitiveIntensity (Low|Moderate|High|Very High), intensityRationale, categoryLeaders[], whitespaceOpportunities[4-6], positioningRecommendation, channelMix[{channel,role,priority}], ninetyDayPlays[{play,why,effort}], swot{strengths[],weaknesses[],opportunities[],threats[]} }
+- targetAnalysis: { coreNiche, audiencePersona, contentStrengths[], contentWeaknesses[], detailedBreakdown, socialPresenceSummary, socialMentionKeywords[], competitorSocialInsights }
 - rankingBlueprint: { summary, priorityActions[{action,impact,effort,timeframe}], timelineEstimate, contentStrategy[] }
 - serpFeatures: 4 items { type, query, opportunity, actionability }
 - backlinkSources: 4 items { sourceUrl, domainRating, targetUrl, anchorText, linkType }
 - backlinkOpportunities: 3 items
-Keep numbers realistic. ASCII only. No off-topic keywords.`;
+Keep numbers realistic. ASCII only. No off-topic keywords. Research-quality competitor insights — not one-line fluff.`;
 
     // Use the user's Settings model (Gemini / OpenRouter) for real-time analysis
     const result = await withTimeout(
@@ -5106,10 +5312,43 @@ Keep numbers realistic. ASCII only. No off-topic keywords.`;
             ? parsed.backlinkOpportunities
             : base.backlinkOpportunities,
         discoveredCompetitors:
-          Array.isArray(parsed.discoveredCompetitors) && parsed.discoveredCompetitors.length >= 8
-            ? parsed.discoveredCompetitors.slice(0, 15)
+          Array.isArray(parsed.discoveredCompetitors) && parsed.discoveredCompetitors.length >= 6
+            ? parsed.discoveredCompetitors.slice(0, 15).map((c: any, i: number) => {
+                const prior = (base.discoveredCompetitors || [])[i] || {};
+                return {
+                  ...prior,
+                  ...c,
+                  nicheSimilarity: c.nicheSimilarity ?? c.overlapScore ?? prior.nicheSimilarity,
+                  analyzedTakeaway: c.analyzedTakeaway || prior.analyzedTakeaway,
+                  targetKeywords: Array.isArray(c.targetKeywords) && c.targetKeywords.length
+                    ? c.targetKeywords
+                    : prior.targetKeywords,
+                };
+              })
             : base.discoveredCompetitors,
-        targetAnalysis: parsed.targetAnalysis || base.targetAnalysis,
+        targetAnalysis: {
+          ...(base.targetAnalysis || {}),
+          ...(parsed.targetAnalysis || {}),
+          marketResearch:
+            parsed.targetAnalysis?.marketResearch ||
+            parsed.marketResearch ||
+            base.targetAnalysis?.marketResearch ||
+            base.marketResearch,
+          socialPresenceSummary:
+            parsed.targetAnalysis?.socialPresenceSummary ||
+            base.targetAnalysis?.socialPresenceSummary,
+          socialMentionKeywords:
+            parsed.targetAnalysis?.socialMentionKeywords ||
+            base.targetAnalysis?.socialMentionKeywords,
+          competitorSocialInsights:
+            parsed.targetAnalysis?.competitorSocialInsights ||
+            base.targetAnalysis?.competitorSocialInsights,
+        },
+        marketResearch:
+          parsed.marketResearch ||
+          parsed.targetAnalysis?.marketResearch ||
+          base.marketResearch ||
+          base.targetAnalysis?.marketResearch,
         rankingBlueprint: parsed.rankingBlueprint || base.rankingBlueprint,
         siteProfile: base.siteProfile,
         autonomousBlog: autonomous,
