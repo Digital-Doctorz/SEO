@@ -487,6 +487,14 @@ function cleanAndParseJSON(text: string): any {
  return extractAndParseJSON(text);
 }
 
+/**
+ * Public alias (TASK 2 naming): sanitizeAndParseJSON
+ * Strips markdown fences, trailing commas, bad escapes, literal newlines.
+ */
+function sanitizeAndParseJSON(rawResponse: unknown): any {
+ return extractAndParseJSON(rawResponse);
+}
+
 /** Never throws — returns null on failure (stable fallbacks). */
 function tryParseJsonLoose(text: unknown): any | null {
  try {
@@ -1403,9 +1411,10 @@ function buildUniqueArticle(opts: {
 /** Ensure article markdown includes images + chart blocks when missing. */
 function ensureMediaInContent(content: string, kw: string, brand: string, _domain: string): string {
  let c = content || "";
+ // Prefer CLS-safe placeholders: explicit width/height + descriptive alt (Seo-Promt-Master images point)
  if (!/\[IMAGE:/i.test(c)) {
-  const hero = `[IMAGE: Hero visual for ${kw} with ${brand}. Alt Text: "${kw} overview for ${brand}"]`;
-  const mid = `[IMAGE: Practical workflow visual for ${kw}. Alt Text: "${kw} process illustration"]`;
+  const hero = `[IMAGE: Hero visual for ${kw} with ${brand}. Alt Text: "${kw} overview for ${brand}" width="1200" height="630"]`;
+  const mid = `[IMAGE: Practical workflow visual for ${kw}. Alt Text: "${kw} process illustration" width="800" height="450"]`;
   const parts = c.split(/\n\n/);
   if (parts.length >= 2) {
    parts.splice(2, 0, hero);
@@ -1609,6 +1618,10 @@ function buildTechnicalSeo(opts: {
  "Use a single H1, responsive images with width/height, 16px+ body text, and tap targets 48px+. Avoid horizontal scroll.",
  speedNotes:
  "Compress hero images (WebP), defer non-critical JS, keep LCP under 2.5s, and inline critical CSS for the article template.",
+ lastmod: new Date().toISOString().slice(0, 10),
+ robots: "index,follow",
+ hreflang: "x-default",
+ sitemapNote: `Add ${pageUrl} to https://${d}/sitemap.xml with lastmod on publish.`,
  aiEngineOptimization: {
  targetLlmEngines: ["Google AI Overviews", "ChatGPT Search", "Perplexity", "Gemini", "Copilot"],
  factualDensityScore: 88,

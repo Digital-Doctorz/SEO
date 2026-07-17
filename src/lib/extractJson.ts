@@ -152,3 +152,11 @@ export function tryParseJsonLoose(text: unknown): unknown | null {
     return null;
   }
 }
+
+/**
+ * TASK 2 public name: sanitizeAndParseJSON
+ * Strips ```json fences, trailing commas, and literal newlines before JSON.parse.
+ */
+export function sanitizeAndParseJSON(rawResponse: unknown): unknown {
+  return extractAndParseJSON(rawResponse);
+}

@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import type { BlogPost, SeoMasterChecklistItem } from "../../types";
+import BlogSerpPreview from "./BlogSerpPreview";
+import BlogSeoCompleteness from "./BlogSeoCompleteness";
 
 export interface BlogSeoMasterPanelProps {
   blogPost: BlogPost;
@@ -98,6 +100,9 @@ export default function BlogSeoMasterPanel({
           </button>
         </div>
       </div>
+
+      <BlogSeoCompleteness blogPost={blogPost} compact />
+      <BlogSerpPreview blogPost={blogPost} targetDomain={targetDomain} />
 
       {/* Keywords + analysis strip */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

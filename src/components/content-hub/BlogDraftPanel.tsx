@@ -5,6 +5,8 @@ import type { BlogPost, AiProviderConfig } from "../../types";
 import type { KeywordDensityMetrics } from "./keywordDensity";
 import { formatMarkdownToHtml, highlightKeywordsInHtml } from "./markdown";
 import { generateMetaSnippets } from "./generation";
+import BlogSerpPreview from "./BlogSerpPreview";
+import BlogSeoCompleteness from "./BlogSeoCompleteness";
 
 export interface BlogDraftPanelProps {
  blogPost: BlogPost;
@@ -74,76 +76,15 @@ export default function BlogDraftPanel({
 
  return (
  <div className="space-y-6">
- {/* Interactive SERP Preview Simulator */}
- <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
- <div className="flex justify-between items-center border-b border-slate-100 pb-3">
- <span className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
- <Eye className="h-4 w-4 text-blue-500" />
- <span>Google SERP Preview Simulator</span>
- </span>
- <span className="text-[10px] text-green-600 font-bold bg-green-50 border border-green-200 px-2.5 py-0.5 rounded-full">
- Google Crawler Compatible
- </span>
- </div>
+ <BlogSeoCompleteness blogPost={blogPost} />
 
- <div className="space-y-1 font-sans">
- <div className="flex items-center gap-1.5 text-xs text-slate-600 truncate">
- <Globe2 className="h-3.5 w-3.5 text-slate-400" />
- <span>https://{targetDomain || "example.com"}</span>
- <span className="text-slate-400"> / blog / {blogPost.slugSuggestion || "post-slug"}</span>
- </div>
- <h4 className="text-xl text-blue-800 hover:underline font-medium leading-tight cursor-pointer">
- {blogPost.title}
- </h4>
- <p className="text-xs text-slate-600 leading-relaxed max-w-2xl">
- <span className="text-slate-400 font-mono">Updated recently - </span>
- {blogPost.metaDescription}
- </p>
- </div>
-
- <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100 text-xs">
- <div className="space-y-1">
- <div className="flex justify-between text-[11px] font-bold text-slate-500">
- <span>Title Length (Optimal: 55-60)</span>
- <span className="font-mono">{blogPost.title.length} / 60 chars</span>
- </div>
- <span className={`px-2.5 py-1.5 rounded-lg font-bold border flex items-center gap-1.5 text-[11px] ${getCounterColor(blogPost.title.length, 55, 60)}`}>
- {blogPost.title.length >= 55 && blogPost.title.length <= 60 ? (
- <>
- <Check className="h-3.5 w-3.5 text-green-600 shrink-0" />
- <span>Perfect Length (55-60)</span>
- </>
- ) : (
- <>
- <AlertCircle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
- <span>Modify length to avoid cut-off</span>
- </>
- )}
- </span>
- </div>
-
- <div className="space-y-1">
- <div className="flex justify-between text-[11px] font-bold text-slate-500">
- <span>Meta Description (Optimal: 150-160)</span>
- <span className="font-mono">{blogPost.metaDescription.length} / 160 chars</span>
- </div>
- <span className={`px-2.5 py-1.5 rounded-lg font-bold border flex items-center gap-1.5 text-[11px] ${getCounterColor(blogPost.metaDescription.length, 150, 160)}`}>
- {blogPost.metaDescription.length >= 150 && blogPost.metaDescription.length <= 160 ? (
- <>
- <Check className="h-3.5 w-3.5 text-green-600 shrink-0" />
- <span>Perfect Length (150-160)</span>
- </>
- ) : (
- <>
- <AlertCircle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
- <span>Modify length to maximize CTR</span>
- </>
- )}
- </span>
- </div>
- </div>
-
- {/* Interactive Edit / AI Suggest Section */}
+ {/* Modular SERP preview (wraps existing meta tools as children) */}
+ <BlogSerpPreview
+  blogPost={blogPost}
+  targetDomain={targetDomain}
+  getCounterColor={getCounterColor}
+ >
+ {/* Interactive Edit / AI Suggest Section — preserved */}
  <div className="pt-4 border-t border-slate-100 space-y-4">
  <div className="flex flex-wrap items-center justify-between gap-2">
  <span className="text-xs font-bold text-slate-600">Optimize Snippets</span>
@@ -274,7 +215,7 @@ export default function BlogDraftPanel({
  </div>
  )}
  </div>
- </div>
+ </BlogSerpPreview>
 
  {/* Content Table of Contents */}
  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
