@@ -9,6 +9,7 @@ import {
   normalizeAiConfig,
   saveAiConfigToStorage,
   maskApiKey,
+  validateCustomProviderConfig,
 } from "../lib/aiConfig";
 
 interface SettingsModalProps {
@@ -100,10 +101,10 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
   const handleKeyChange = (value: string) => {
     setApiKey(value);
     setSaveError(null);
-    // Auto-switch provider when user pastes a clearly shaped key
+    // Auto-switch only when NOT on Custom (custom keys can look like OpenAI sk-...)
+    if (provider === "custom") return;
     const detected = detectProviderFromKey(value);
     if (detected && detected !== provider) {
-      // Stash current first
       if (apiKey.trim()) {
         localStorage.setItem(`seo_api_key_${provider}`, apiKey.trim());
       }
@@ -125,25 +126,37 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
       return;
     }
 
-    // Soft mismatch warning — auto-correct unambiguous cases via normalizeAiConfig
-    const mismatch = keyProviderMismatch(provider, trimmedKey);
+    // Never force Custom → Gemini/OpenRouter; only warn on obvious wrong-key pairs
     let activeProvider = provider;
     const detected = detectProviderFromKey(trimmedKey);
-    if (detected && detected !== provider) {
-      activeProvider = detected;
-    } else if (mismatch && detected === null && provider === "openrouter" && /^AIza/i.test(trimmedKey)) {
-      setSaveError(mismatch);
-      return;
-    } else if (mismatch && provider === "gemini" && /^sk-or/i.test(trimmedKey)) {
-      setSaveError(mismatch);
-      return;
+    if (provider !== "custom") {
+      const mismatch = keyProviderMismatch(provider, trimmedKey);
+      if (detected && detected !== provider) {
+        activeProvider = detected;
+      } else if (mismatch && provider === "openrouter" && /^AIza/i.test(trimmedKey)) {
+        setSaveError(mismatch);
+        return;
+      } else if (mismatch && provider === "gemini" && /^sk-or/i.test(trimmedKey)) {
+        setSaveError(mismatch);
+        return;
+      }
+    } else {
+      const customErr = validateCustomProviderConfig({
+        apiKey: trimmedKey,
+        apiEndpoint,
+        apiModel,
+        customFormat,
+      });
+      if (customErr) {
+        setSaveError(customErr);
+        return;
+      }
     }
 
     const meta = PROVIDER_META[activeProvider];
     let model = apiModel.trim() || meta.defaultModel;
     let endpoint = apiEndpoint.trim() || meta.defaultEndpoint;
 
-    // Force correct defaults when leftover model from other provider
     if (activeProvider === "openrouter") {
       if (!model || /gemini|^models\//i.test(model)) model = meta.defaultModel;
       if (!endpoint || /googleapis|generativelanguage/i.test(endpoint)) {
@@ -152,8 +165,12 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
       endpoint = endpoint.replace(/\/+$/, "") || meta.defaultEndpoint;
     }
     if (activeProvider === "gemini") {
-      if (!model || /llama|claude|openrouter|gpt-/i.test(model)) model = meta.defaultModel;
+      if (!model || /llama|claude|openrouter|mistral/i.test(model)) model = meta.defaultModel;
       endpoint = "";
+    }
+    if (activeProvider === "custom") {
+      endpoint = apiEndpoint.trim().replace(/\/+$/, "");
+      model = apiModel.trim() || "gpt-4o-mini";
     }
 
     const config = normalizeAiConfig({
@@ -161,7 +178,7 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
       provider: activeProvider,
       apiEndpoint: endpoint,
       apiModel: model,
-      customFormat,
+      customFormat: activeProvider === "custom" ? customFormat : "openai",
       dataforseoLogin: dataforseoLogin.trim() || undefined,
       dataforseoPassword: dataforseoPassword.trim() || undefined,
     });
@@ -249,9 +266,9 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
                 <Shield className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
                 <div className="text-xs text-slate-600 leading-relaxed">
                   <strong className="text-slate-800 block mb-1">Bring your own key (required)</strong>
-                  Select <strong>OpenRouter</strong> (or Gemini), paste that provider&apos;s key, then click{" "}
-                  <strong>Save &amp; Close</strong>. The active provider + key are sent with every analysis and blog request.
-                  Keys stay only in your browser.
+                  Choose <strong>Gemini</strong>, <strong>OpenRouter</strong>, or <strong>Custom</strong> (OpenAI / Anthropic /
+                  proxy). Paste that provider&apos;s API key (and Base URL for Custom), then{" "}
+                  <strong>Save</strong>. The active key is sent with every analysis and blog request — never stored on our server.
                 </div>
               </div>
 
@@ -348,7 +365,9 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
 
               {(provider === "openrouter" || provider === "custom") && (
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">API Endpoint URL</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    {provider === "custom" ? "Base URL (required)" : "API Endpoint URL"}
+                  </label>
                   <input
                     type="text"
                     value={apiEndpoint}
@@ -356,10 +375,22 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
                     placeholder={
                       provider === "openrouter"
                         ? "https://openrouter.ai/api/v1"
-                        : "https://your-api-endpoint.com/v1"
+                        : customFormat === "anthropic"
+                          ? "https://api.anthropic.com/v1"
+                          : customFormat === "gemini"
+                            ? "optional custom Gemini base URL"
+                            : "https://api.openai.com/v1"
                     }
                     className="w-full px-4 py-2.5 text-sm border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-mono transition-all"
                   />
+                  {provider === "custom" && (
+                    <p className="text-[10px] text-slate-400 leading-relaxed">
+                      OpenAI-compatible: base ending in <code className="bg-slate-100 px-1 rounded">/v1</code> (we call{" "}
+                      <code className="bg-slate-100 px-1 rounded">/chat/completions</code>). Anthropic:{" "}
+                      <code className="bg-slate-100 px-1 rounded">https://api.anthropic.com/v1</code>. Works with Groq,
+                      Together, Fireworks, Azure OpenAI proxies, local Ollama/vLLM OpenAI shims, etc.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -382,6 +413,13 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
                           className={`text-xs font-bold ${customFormat === fmt ? "text-blue-700" : "text-slate-700"}`}
                         >
                           {fmt === "openai" ? "OpenAI" : fmt === "anthropic" ? "Anthropic" : "Gemini"}
+                        </div>
+                        <div className="text-[9px] text-slate-400 font-medium mt-0.5">
+                          {fmt === "openai"
+                            ? "/chat/completions"
+                            : fmt === "anthropic"
+                              ? "/messages"
+                              : "Gemini SDK"}
                         </div>
                       </button>
                     ))}

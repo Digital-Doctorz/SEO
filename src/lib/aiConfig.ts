@@ -85,13 +85,17 @@ export function normalizeAiConfig(
   partial: Partial<AiProviderConfig> | null | undefined
 ): AiProviderConfig {
   const apiKey = typeof partial?.apiKey === "string" ? partial.apiKey.trim() : "";
+  // Explicit "custom" always wins — never re-route custom keys to Gemini/OpenRouter
+  const rawProvider = String(partial?.provider || "")
+    .toLowerCase()
+    .trim();
   let provider = normalizeProvider(partial?.provider, apiKey);
-
-  // Auto-correct obvious mismatches (e.g. sk-or key with Gemini still selected)
-  const detected = detectProviderFromKey(apiKey);
-  if (detected && detected !== provider) {
-    // Only auto-switch for unambiguous key shapes
-    if (detected === "openrouter" || detected === "gemini") {
+  if (rawProvider === "custom") {
+    provider = "custom";
+  } else {
+    // Auto-correct only when user did NOT pick Custom
+    const detected = detectProviderFromKey(apiKey);
+    if (detected && detected !== provider && (detected === "openrouter" || detected === "gemini")) {
       provider = detected;
     }
   }
@@ -100,36 +104,43 @@ export function normalizeAiConfig(
   let apiModel = (partial?.apiModel || "").trim();
   let apiEndpoint = (partial?.apiEndpoint || "").trim();
 
-  // Fix leftover Gemini model when on OpenRouter (common after provider switch)
-  if (provider === "openrouter") {
-    if (!apiModel || /gemini|gpt-4o-mini|^models\//i.test(apiModel)) {
-      apiModel = defaults.model;
-    }
-    if (!apiEndpoint || /generativelanguage|googleapis/i.test(apiEndpoint)) {
-      apiEndpoint = defaults.endpoint;
-    }
-    // Normalize endpoint path
-    apiEndpoint = apiEndpoint.replace(/\/+$/, "");
-    if (!apiEndpoint.endsWith("/api/v1") && apiEndpoint.includes("openrouter.ai")) {
-      apiEndpoint = "https://openrouter.ai/api/v1";
-    }
-  }
-  if (provider === "gemini") {
-    if (!apiModel || /llama|claude|gpt-|mistral|openrouter/i.test(apiModel)) {
-      apiModel = defaults.model;
-    }
-    apiEndpoint = "";
-  }
-  if (provider === "custom" && !apiModel) {
-    apiModel = defaults.model;
-  }
-
   const customFormat =
     partial?.customFormat === "anthropic" ||
     partial?.customFormat === "gemini" ||
     partial?.customFormat === "openai"
       ? partial.customFormat
       : "openai";
+
+  // Fix leftover Gemini model when on OpenRouter (common after provider switch)
+  if (provider === "openrouter") {
+    if (!apiModel || /gemini|^models\//i.test(apiModel)) {
+      apiModel = defaults.model;
+    }
+    if (!apiEndpoint || /generativelanguage|googleapis/i.test(apiEndpoint)) {
+      apiEndpoint = defaults.endpoint;
+    }
+    apiEndpoint = apiEndpoint.replace(/\/+$/, "");
+    if (!apiEndpoint.endsWith("/api/v1") && apiEndpoint.includes("openrouter.ai")) {
+      apiEndpoint = "https://openrouter.ai/api/v1";
+    }
+  }
+  if (provider === "gemini") {
+    if (!apiModel || /llama|claude|openrouter|mistral/i.test(apiModel)) {
+      apiModel = defaults.model;
+    }
+    apiEndpoint = "";
+  }
+  if (provider === "custom") {
+    if (!apiModel) apiModel = defaults.model;
+    // Normalize custom base URL (strip trailing slash / accidental chat path)
+    apiEndpoint = apiEndpoint
+      .replace(/\/+$/, "")
+      .replace(/\/chat\/completions$/i, "")
+      .replace(/\/messages$/i, "");
+    if (customFormat === "openai" && apiEndpoint && /openai\.com$/i.test(apiEndpoint)) {
+      apiEndpoint = `${apiEndpoint}/v1`;
+    }
+  }
 
   return {
     apiKey,
@@ -229,6 +240,10 @@ export function resolveAiConfig(
   override?: Partial<AiProviderConfig> | null
 ): AiProviderConfig | undefined {
   const stored = loadAiConfigFromStorage();
+  const explicitProvider =
+    override?.provider !== undefined && String(override.provider).trim()
+      ? override.provider
+      : stored.provider;
   const merged = normalizeAiConfig({
     ...stored,
     ...(override || {}),
@@ -237,13 +252,50 @@ export function resolveAiConfig(
       override?.apiKey !== undefined && String(override.apiKey).trim()
         ? String(override.apiKey).trim()
         : stored.apiKey,
-    provider: override?.provider || stored.provider,
+    provider: explicitProvider,
+    apiEndpoint:
+      override?.apiEndpoint !== undefined
+        ? String(override.apiEndpoint).trim()
+        : stored.apiEndpoint,
+    apiModel:
+      override?.apiModel !== undefined && String(override.apiModel).trim()
+        ? String(override.apiModel).trim()
+        : stored.apiModel,
+    customFormat: override?.customFormat || stored.customFormat,
   });
 
   if (!merged.apiKey || !isValidApiKeyShape(merged.apiKey)) {
     return undefined;
   }
+  // Custom OpenAI/Anthropic-compatible providers MUST have a base URL
+  if (merged.provider === "custom") {
+    if (merged.customFormat !== "gemini" && !merged.apiEndpoint.trim()) {
+      return undefined;
+    }
+  }
   return merged;
+}
+
+/** Validate custom provider fields for Settings UI. */
+export function validateCustomProviderConfig(cfg: {
+  apiKey: string;
+  apiEndpoint: string;
+  apiModel: string;
+  customFormat: AiProviderConfig["customFormat"];
+}): string | null {
+  if (!cfg.apiKey.trim() || !isValidApiKeyShape(cfg.apiKey)) {
+    return "Paste a valid API key for your custom provider.";
+  }
+  if (!cfg.apiModel.trim()) {
+    return "Enter a model id (e.g. gpt-4o-mini, claude-3-5-sonnet-latest).";
+  }
+  if (cfg.customFormat !== "gemini" && !cfg.apiEndpoint.trim()) {
+    return "Custom providers need a Base URL (e.g. https://api.openai.com/v1 or your proxy /v1).";
+  }
+  if (cfg.apiEndpoint.trim() && !/^https?:\/\//i.test(cfg.apiEndpoint.trim())) {
+    return "Base URL must start with https:// (or http:// for local).";
+  }
+  return null;
 }
 
 export function maskApiKey(apiKey: string): string {

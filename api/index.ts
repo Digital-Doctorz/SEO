@@ -535,6 +535,18 @@ function humanizeProviderError(raw: unknown): string {
   const cleanedOr = msg.replace(/\s+/g, " ").trim().slice(0, 220);
   return cleanedOr || "OpenRouter error. Check provider, key, and model in Settings. A full offline draft was still generated.";
  }
+ if (/Custom API|Custom Anthropic|Custom Gemini|Custom provider/i.test(msg)) {
+  if (/401|403|Unauthorized|invalid.*key|authentication/i.test(msg)) {
+   return "Custom provider rejected your API key. Re-check key, Base URL, and API Format (OpenAI / Anthropic / Gemini) in Settings.";
+  }
+  if (/Base URL|endpoint/i.test(msg)) {
+   return "Custom provider needs a valid Base URL (e.g. https://api.openai.com/v1). Save it under Settings → Custom.";
+  }
+  if (/429|rate.?limit/i.test(msg)) {
+   return "Custom provider rate limit hit. Wait and retry, or switch model in Settings.";
+  }
+  return msg.replace(/\s+/g, " ").trim().slice(0, 260) || "Custom LLM provider error. Check Settings.";
+ }
  if (/429|RESOURCE_EXHAUSTED|quota|rate-limit|rate limit|free_tier/i.test(msg)) {
  const retry = msg.match(/retry in ([\d.]+)\s*s/i);
  const wait = retry ? Math.ceil(Number(retry[1])) : 30;
@@ -2102,13 +2114,30 @@ function normalizeProviderId(raw: unknown, apiKey = ""): "gemini" | "openrouter"
   .toLowerCase()
   .trim()
   .replace(/[\s_]+/g, "");
+ // Explicit custom always wins — never re-route to Gemini/OpenRouter by key shape
+ if (p === "custom" || p === "openai" || p === "anthropic" || p === "proxy" || p === "selfhosted") {
+  return "custom";
+ }
  if (p === "openrouter" || p === "open-router" || p === "or") return "openrouter";
- if (p === "custom") return "custom";
  if (p === "gemini" || p === "google" || p === "googleai") return "gemini";
- // Infer from key when provider missing/wrong
+ // Infer from key only when provider omitted
  if (/^sk-or-v1-/i.test(apiKey) || /^sk-or-/i.test(apiKey)) return "openrouter";
  if (/^AIza[0-9A-Za-z_\-]{10,}/.test(apiKey)) return "gemini";
  return "gemini";
+}
+
+/** Normalize custom OpenAI-compatible base URL. */
+function normalizeCustomBaseUrl(endpoint: string, format: string): string {
+ let e = String(endpoint || "").trim().replace(/\/+$/, "");
+ if (!e) return "";
+ e = e
+  .replace(/\/chat\/completions$/i, "")
+  .replace(/\/messages$/i, "")
+  .replace(/\/v1\/messages$/i, "/v1");
+ if (format === "openai" && /openai\.com$/i.test(e)) {
+  e = `${e}/v1`;
+ }
+ return e.replace(/\/+$/, "");
 }
 
 async function callOpenRouter(
@@ -2275,50 +2304,147 @@ async function callAI(
  }
 
  if (provider === "custom") {
- const format = customFormat || "openai";
- const endpoint = (apiEndpoint || "").replace(/\/+$/, "");
- if (format === "openai") {
- const messages: any[] = [];
- if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
- messages.push({ role: "user", content: prompt });
- const body: any = { model: apiModel, messages, temperature: options?.temperature ?? 0.1, max_tokens: 8192 };
- // Avoid forcing json_object — many proxies reject it
- const response = await fetch(`${endpoint}/chat/completions`, {
- method: "POST",
- headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
- body: JSON.stringify(body),
- });
- const data = await response.json();
- if (!response.ok) throw new Error(`Custom API error ${response.status}: ${data.error?.message || JSON.stringify(data)}`);
- const text = data.choices?.[0]?.message?.content || "";
- return { text };
- }
- if (format === "anthropic") {
- const body: any = {
- model: apiModel,
- messages: systemPrompt
- ? [{ role: "user", content: `${systemPrompt}\n\n${prompt}` }]
- : [{ role: "user", content: prompt }],
- max_tokens: 8192,
- temperature: options?.temperature ?? 0.1,
- };
- const headers: Record<string, string> = { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" };
- const response = await fetch(`${endpoint}/messages`, { method: "POST", headers, body: JSON.stringify(body) });
- const data = await response.json();
- if (!response.ok) throw new Error(`Anthropic API error ${response.status}: ${data.error?.message || JSON.stringify(data)}`);
- const text = data.content?.[0]?.text || "";
- return { text };
- }
- if (format === "gemini") {
- const client = new GoogleGenAI({ apiKey, ...(endpoint ? { baseUrl: endpoint } : {}), httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } });
- const model = apiModel || "gemini-2.5-flash";
- const genConfig: any = { ...options };
- if (systemPrompt) genConfig.systemInstruction = { parts: [{ text: systemPrompt }] };
- const response = await client.models.generateContent({ model, contents: prompt, config: genConfig });
- return response;
- }
+ return callCustomProvider(apiKey, apiEndpoint, apiModel, customFormat || "openai", prompt, systemPrompt, options);
  }
  throw new Error(`Unknown provider: ${provider}`);
+}
+
+/** OpenAI / Anthropic / Gemini-compatible custom endpoints (user's own key + base URL). */
+async function callCustomProvider(
+ apiKey: string,
+ apiEndpoint: string,
+ apiModel: string,
+ format: "openai" | "anthropic" | "gemini",
+ prompt: string,
+ systemPrompt: string | undefined,
+ options?: { responseMimeType?: string; temperature?: number; maxOutputTokens?: number }
+): Promise<{ text: string }> {
+ const model = (apiModel || "gpt-4o-mini").trim();
+ const wantJson = options?.responseMimeType === "application/json";
+ const maxTokens = Math.min(8192, Math.max(1024, options?.maxOutputTokens ?? 8192));
+ const temperature = options?.temperature ?? 0.2;
+
+ if (format === "gemini") {
+  const endpoint = (apiEndpoint || "").replace(/\/+$/, "");
+  const client = new GoogleGenAI({
+   apiKey,
+   ...(endpoint ? { baseUrl: endpoint } : {}),
+   httpOptions: { headers: { "User-Agent": "aistudio-build" } },
+  });
+  const genConfig: any = {
+   temperature,
+   maxOutputTokens: maxTokens,
+  };
+  if (wantJson) genConfig.responseMimeType = "application/json";
+  if (systemPrompt) genConfig.systemInstruction = { parts: [{ text: systemPrompt }] };
+  const response = await client.models.generateContent({
+   model: model || "gemini-2.5-flash",
+   contents: wantJson
+    ? `${prompt}\n\nRespond with ONLY valid JSON. No markdown fences.`
+    : prompt,
+   config: genConfig,
+  });
+  const text = extractAiText(response);
+  if (!text.trim()) throw new Error("Custom Gemini endpoint returned empty response.");
+  return { text };
+ }
+
+ const base = normalizeCustomBaseUrl(apiEndpoint, format);
+ if (!base) {
+  throw new Error(
+   "Custom provider needs a Base URL in Settings (e.g. https://api.openai.com/v1 or your proxy URL)."
+  );
+ }
+
+ if (format === "anthropic") {
+  const url = /\/messages$/i.test(base) ? base : `${base}/messages`;
+  const body: any = {
+   model,
+   max_tokens: maxTokens,
+   temperature,
+   messages: [
+    {
+     role: "user",
+     content: systemPrompt
+      ? `${systemPrompt}\n\n${prompt}${wantJson ? "\n\nRespond with ONLY valid JSON. No markdown fences." : ""}`
+      : wantJson
+        ? `${prompt}\n\nRespond with ONLY valid JSON. No markdown fences.`
+        : prompt,
+    },
+   ],
+  };
+  const response = await fetch(url, {
+   method: "POST",
+   headers: {
+    "Content-Type": "application/json",
+    "x-api-key": apiKey,
+    "anthropic-version": "2023-06-01",
+   },
+   body: JSON.stringify(body),
+  });
+  let data: any = null;
+  try {
+   data = await response.json();
+  } catch {
+   throw new Error(`Custom Anthropic API error ${response.status}: non-JSON response`);
+  }
+  if (!response.ok) {
+   throw new Error(
+    `Custom Anthropic API error ${response.status}: ${data?.error?.message || JSON.stringify(data).slice(0, 280)}`
+   );
+  }
+  const text = data?.content?.[0]?.text || data?.content?.[0]?.content || "";
+  if (!String(text).trim()) throw new Error("Custom Anthropic endpoint returned empty response.");
+  return { text: String(text) };
+ }
+
+ // Default: OpenAI-compatible (/v1/chat/completions) — works for OpenAI, Azure proxies, Groq, Together, local vLLM, etc.
+ const chatUrl = /\/chat\/completions$/i.test(base) ? base : `${base}/chat/completions`;
+ const messages: any[] = [];
+ if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
+ messages.push({
+  role: "user",
+  content: wantJson
+   ? `${prompt}\n\nIMPORTANT: Respond with ONLY a valid JSON object. No markdown fences, no commentary.`
+   : prompt,
+ });
+ const body: any = {
+  model,
+  messages,
+  temperature,
+  max_tokens: maxTokens,
+ };
+ const response = await fetch(chatUrl, {
+  method: "POST",
+  headers: {
+   "Content-Type": "application/json",
+   Authorization: `Bearer ${apiKey}`,
+  },
+  body: JSON.stringify(body),
+ });
+ let data: any = null;
+ try {
+  data = await response.json();
+ } catch {
+  throw new Error(`Custom API error ${response.status}: non-JSON response from ${chatUrl}`);
+ }
+ if (!response.ok) {
+  const errMsg =
+   data?.error?.message ||
+   data?.message ||
+   (typeof data?.error === "string" ? data.error : null) ||
+   JSON.stringify(data?.error || data).slice(0, 300);
+  throw new Error(`Custom API error ${response.status}: ${errMsg}`);
+ }
+ const text =
+  data.choices?.[0]?.message?.content ||
+  data.choices?.[0]?.text ||
+  data.output_text ||
+  "";
+ if (!String(text).trim()) {
+  throw new Error("Custom API returned empty content. Check model id and Base URL in Settings.");
+ }
+ return { text: String(text) };
 }
 
 /**
@@ -2343,13 +2469,23 @@ function getProviderConfig(req: { body?: { aiConfig?: Partial<ProviderConfig> & 
   return null;
  }
 
+ const explicitCustom =
+  String(cfg.provider || "")
+   .toLowerCase()
+   .trim() === "custom";
  let provider = normalizeProviderId(cfg.provider, rawKey);
- // Hard correct: sk-or key must use OpenRouter path
- if (/^sk-or/i.test(rawKey)) provider = "openrouter";
- if (/^AIza/i.test(rawKey) && provider === "openrouter") provider = "gemini";
+
+ // Only hard-correct Gemini/OpenRouter when user did NOT select Custom
+ if (!explicitCustom && provider !== "custom") {
+  if (/^sk-or/i.test(rawKey)) provider = "openrouter";
+  if (/^AIza/i.test(rawKey) && provider === "openrouter") provider = "gemini";
+ }
+ if (explicitCustom) provider = "custom";
 
  let apiModel = typeof cfg.apiModel === "string" ? cfg.apiModel.trim() : "";
  let apiEndpoint = typeof cfg.apiEndpoint === "string" ? cfg.apiEndpoint.trim() : "";
+ const customFormat: "openai" | "anthropic" | "gemini" =
+  cfg.customFormat === "anthropic" || cfg.customFormat === "gemini" ? cfg.customFormat : "openai";
 
  if (provider === "openrouter") {
   if (!apiModel || /gemini|^models\//i.test(apiModel)) {
@@ -2364,10 +2500,18 @@ function getProviderConfig(req: { body?: { aiConfig?: Partial<ProviderConfig> & 
   }
  }
  if (provider === "gemini") {
-  if (!apiModel || /llama|claude|openrouter|gpt-/i.test(apiModel)) {
+  if (!apiModel || /llama|claude|openrouter|mistral/i.test(apiModel)) {
    apiModel = "gemini-2.5-flash";
   }
   apiEndpoint = "";
+ }
+ if (provider === "custom") {
+  if (!apiModel) apiModel = "gpt-4o-mini";
+  apiEndpoint = normalizeCustomBaseUrl(apiEndpoint, customFormat);
+  // OpenAI/Anthropic-compatible custom requires endpoint; Gemini format may use default Google host
+  if (customFormat !== "gemini" && !apiEndpoint) {
+   console.warn("[AI] Custom provider missing apiEndpoint — request will fail at call time");
+  }
  }
 
  return {
@@ -2375,7 +2519,7 @@ function getProviderConfig(req: { body?: { aiConfig?: Partial<ProviderConfig> & 
   provider,
   apiEndpoint,
   apiModel,
-  customFormat: cfg.customFormat === "anthropic" || cfg.customFormat === "gemini" ? cfg.customFormat : "openai",
+  customFormat,
  };
 }
 
