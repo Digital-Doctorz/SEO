@@ -686,12 +686,25 @@ function humanizeProviderError(raw: unknown): string {
   const cleanedOr = msg.replace(/\s+/g, " ").trim().slice(0, 220);
   return cleanedOr || "OpenRouter error. Check provider, key, and model in Settings. A full offline draft was still generated.";
  }
+ if (/NVIDIA|nvapi|integrate\.api\.nvidia/i.test(msg)) {
+  if (/401|403|Unauthorized|invalid.*key|authentication/i.test(msg)) {
+   return "NVIDIA API key was rejected. Open Settings → NVIDIA → paste a key from https://build.nvidia.com/ → Save.";
+  }
+  if (/404|model|not found|does not exist/i.test(msg)) {
+   return "NVIDIA model not found. Try meta/llama-3.1-70b-instruct or pick a model id from build.nvidia.com/models.";
+  }
+  if (/429|rate.?limit/i.test(msg)) {
+   return "NVIDIA rate limit hit. Wait a minute or switch model in Settings.";
+  }
+  const cleanedNv = msg.replace(/\s+/g, " ").trim().slice(0, 220);
+  return cleanedNv || "NVIDIA API error. Check key, model, and endpoint in Settings.";
+ }
  if (/Custom API|Custom Anthropic|Custom Gemini|Custom provider/i.test(msg)) {
   if (/401|403|Unauthorized|invalid.*key|authentication/i.test(msg)) {
-   return "Custom provider rejected your API key. Re-check key, Base URL, and API Format (OpenAI / Anthropic / Gemini) in Settings.";
+   return "Custom provider rejected your API key. Re-check key, Base URL, and API Format (OpenAI / Anthropic / Gemini / NVIDIA) in Settings.";
   }
   if (/Base URL|endpoint/i.test(msg)) {
-   return "Custom provider needs a valid Base URL (e.g. https://api.openai.com/v1). Save it under Settings → Custom.";
+   return "Custom provider needs a valid Base URL (e.g. https://api.openai.com/v1 or https://integrate.api.nvidia.com/v1). Save it under Settings → Custom.";
   }
   if (/429|rate.?limit/i.test(msg)) {
    return "Custom provider rate limit hit. Wait and retry, or switch model in Settings.";
@@ -2258,13 +2271,19 @@ function normalizeBlogPayload(parsed: any, domain: string, kw: string, seed?: nu
 // ============================================================
 interface ProviderConfig {
  apiKey: string;
- provider: "gemini" | "openrouter" | "custom";
+ provider: "gemini" | "openrouter" | "nvidia" | "custom";
  apiEndpoint: string;
  apiModel: string;
- customFormat: "openai" | "anthropic" | "gemini";
+ customFormat: "openai" | "anthropic" | "gemini" | "nvidia";
 }
 
-function normalizeProviderId(raw: unknown, apiKey = ""): "gemini" | "openrouter" | "custom" {
+const NVIDIA_DEFAULT_ENDPOINT = "https://integrate.api.nvidia.com/v1";
+const NVIDIA_DEFAULT_MODEL = "meta/llama-3.1-70b-instruct";
+
+function normalizeProviderId(
+ raw: unknown,
+ apiKey = ""
+): "gemini" | "openrouter" | "nvidia" | "custom" {
  const p = String(raw || "")
   .toLowerCase()
   .trim()
@@ -2273,17 +2292,23 @@ function normalizeProviderId(raw: unknown, apiKey = ""): "gemini" | "openrouter"
  if (p === "custom" || p === "openai" || p === "anthropic" || p === "proxy" || p === "selfhosted") {
   return "custom";
  }
+ if (p === "nvidia" || p === "nim" || p === "nvidianim" || p === "ngc") return "nvidia";
  if (p === "openrouter" || p === "open-router" || p === "or") return "openrouter";
  if (p === "gemini" || p === "google" || p === "googleai") return "gemini";
  // Infer from key only when provider omitted
  if (/^sk-or-v1-/i.test(apiKey) || /^sk-or-/i.test(apiKey)) return "openrouter";
  if (/^AIza[0-9A-Za-z_\-]{10,}/.test(apiKey)) return "gemini";
+ if (/^nvapi-/i.test(apiKey)) return "nvidia";
  return "gemini";
 }
 
-/** Normalize custom OpenAI-compatible base URL. */
+/** Normalize OpenAI / NVIDIA-compatible base URL. */
 function normalizeCustomBaseUrl(endpoint: string, format: string): string {
  let e = String(endpoint || "").trim().replace(/\/+$/, "");
+ if (!e && (format === "nvidia" || format === "openai")) {
+  if (format === "nvidia") e = NVIDIA_DEFAULT_ENDPOINT;
+  else return "";
+ }
  if (!e) return "";
  e = e
   .replace(/\/chat\/completions$/i, "")
@@ -2292,7 +2317,84 @@ function normalizeCustomBaseUrl(endpoint: string, format: string): string {
  if (format === "openai" && /openai\.com$/i.test(e)) {
   e = `${e}/v1`;
  }
+ if (format === "nvidia") {
+  if (/integrate\.api\.nvidia\.com$/i.test(e)) e = `${e}/v1`;
+  if (/nvidia\.com/i.test(e) && !/\/v1$/i.test(e) && !/\/v1\//i.test(e)) {
+   e = `${e}/v1`;
+  }
+ }
  return e.replace(/\/+$/, "");
+}
+
+/** NVIDIA NIM (integrate.api.nvidia.com) — OpenAI-compatible chat completions. */
+async function callNvidia(
+ apiKey: string,
+ apiEndpoint: string,
+ apiModel: string,
+ prompt: string,
+ systemPrompt: string | undefined,
+ options?: { responseMimeType?: string; temperature?: number; maxOutputTokens?: number }
+): Promise<{ text: string }> {
+ const base = normalizeCustomBaseUrl(
+  apiEndpoint || NVIDIA_DEFAULT_ENDPOINT,
+  "nvidia"
+ ) || NVIDIA_DEFAULT_ENDPOINT;
+ let model = (apiModel || NVIDIA_DEFAULT_MODEL).trim();
+ if (/gemini|^models\//i.test(model)) model = NVIDIA_DEFAULT_MODEL;
+ const wantJson = options?.responseMimeType === "application/json";
+ const maxTokens = Math.min(8192, Math.max(1024, options?.maxOutputTokens ?? 8192));
+ const temperature = options?.temperature ?? 0.2;
+
+ const chatUrl = /\/chat\/completions$/i.test(base) ? base : `${base}/chat/completions`;
+ const messages: any[] = [];
+ if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
+ messages.push({
+  role: "user",
+  content: wantJson
+   ? `${prompt}\n\nIMPORTANT: Respond with ONLY a valid JSON object. No markdown fences, no commentary.`
+   : prompt,
+ });
+ const body: any = {
+  model,
+  messages,
+  temperature,
+  max_tokens: maxTokens,
+  // NVIDIA OpenAI-compatible API often supports stream; keep non-stream for simple parse
+  stream: false,
+ };
+
+ const response = await fetch(chatUrl, {
+  method: "POST",
+  headers: {
+   "Content-Type": "application/json",
+   Authorization: `Bearer ${apiKey}`,
+   Accept: "application/json",
+  },
+  body: JSON.stringify(body),
+ });
+ let data: any = null;
+ try {
+  data = await response.json();
+ } catch {
+  throw new Error(`NVIDIA API error ${response.status}: non-JSON response from ${chatUrl}`);
+ }
+ if (!response.ok) {
+  const errMsg =
+   data?.error?.message ||
+   data?.message ||
+   (typeof data?.error === "string" ? data.error : null) ||
+   JSON.stringify(data?.error || data).slice(0, 300);
+  throw new Error(`NVIDIA API error ${response.status}: ${errMsg}`);
+ }
+ const text = flattenMessageContent(
+  data.choices?.[0]?.message?.content ?? data.choices?.[0]?.text ?? data.output_text ?? ""
+ );
+ if (!text.trim()) {
+  throw new Error(
+   "NVIDIA API returned empty content. Check model id (e.g. meta/llama-3.1-70b-instruct) and key at build.nvidia.com."
+  );
+ }
+ return { text };
 }
 
 async function callOpenRouter(
@@ -2457,26 +2559,34 @@ async function callAI(
  return callOpenRouter(apiKey, apiEndpoint, apiModel, prompt, systemPrompt, options);
  }
 
+ if (provider === "nvidia") {
+ return callNvidia(apiKey, apiEndpoint, apiModel, prompt, systemPrompt, options);
+ }
+
  if (provider === "custom") {
  return callCustomProvider(apiKey, apiEndpoint, apiModel, customFormat || "openai", prompt, systemPrompt, options);
  }
  throw new Error(`Unknown provider: ${provider}`);
 }
 
-/** OpenAI / Anthropic / Gemini-compatible custom endpoints (user's own key + base URL). */
+/** OpenAI / Anthropic / Gemini / NVIDIA-compatible custom endpoints (user's own key + base URL). */
 async function callCustomProvider(
  apiKey: string,
  apiEndpoint: string,
  apiModel: string,
- format: "openai" | "anthropic" | "gemini",
+ format: "openai" | "anthropic" | "gemini" | "nvidia",
  prompt: string,
  systemPrompt: string | undefined,
  options?: { responseMimeType?: string; temperature?: number; maxOutputTokens?: number }
 ): Promise<{ text: string }> {
- const model = (apiModel || "gpt-4o-mini").trim();
+ const model = (apiModel || (format === "nvidia" ? NVIDIA_DEFAULT_MODEL : "gpt-4o-mini")).trim();
  const wantJson = options?.responseMimeType === "application/json";
  const maxTokens = Math.min(8192, Math.max(1024, options?.maxOutputTokens ?? 8192));
  const temperature = options?.temperature ?? 0.2;
+
+ if (format === "nvidia") {
+  return callNvidia(apiKey, apiEndpoint, model, prompt, systemPrompt, options);
+ }
 
  if (format === "gemini") {
   const endpoint = (apiEndpoint || "").replace(/\/+$/, "");
@@ -2552,7 +2662,7 @@ async function callCustomProvider(
   return { text: String(text) };
  }
 
- // Default: OpenAI-compatible (/v1/chat/completions) — works for OpenAI, Azure proxies, Groq, Together, local vLLM, etc.
+ // Default: OpenAI-compatible (/v1/chat/completions) — OpenAI, Azure, Groq, Together, NVIDIA proxies, vLLM, etc.
  const chatUrl = /\/chat\/completions$/i.test(base) ? base : `${base}/chat/completions`;
  const messages: any[] = [];
  if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
@@ -2573,6 +2683,7 @@ async function callCustomProvider(
   headers: {
    "Content-Type": "application/json",
    Authorization: `Bearer ${apiKey}`,
+   Accept: "application/json",
   },
   body: JSON.stringify(body),
  });
@@ -2590,15 +2701,13 @@ async function callCustomProvider(
    JSON.stringify(data?.error || data).slice(0, 300);
   throw new Error(`Custom API error ${response.status}: ${errMsg}`);
  }
- const text =
-  data.choices?.[0]?.message?.content ||
-  data.choices?.[0]?.text ||
-  data.output_text ||
-  "";
- if (!String(text).trim()) {
+ const text = flattenMessageContent(
+  data.choices?.[0]?.message?.content ?? data.choices?.[0]?.text ?? data.output_text ?? ""
+ );
+ if (!text.trim()) {
   throw new Error("Custom API returned empty content. Check model id and Base URL in Settings.");
  }
- return { text: String(text) };
+ return { text };
 }
 
 /**
@@ -2623,23 +2732,34 @@ function getProviderConfig(req: { body?: { aiConfig?: Partial<ProviderConfig> & 
   return null;
  }
 
- const explicitCustom =
-  String(cfg.provider || "")
-   .toLowerCase()
-   .trim() === "custom";
+ const rawProvider = String(cfg.provider || "")
+  .toLowerCase()
+  .trim();
+ const explicitCustom = rawProvider === "custom";
+ const explicitNvidia = rawProvider === "nvidia" || rawProvider === "nim";
  let provider = normalizeProviderId(cfg.provider, rawKey);
 
- // Only hard-correct Gemini/OpenRouter when user did NOT select Custom
+ // Only hard-correct Gemini/OpenRouter/NVIDIA when user did NOT select Custom
  if (!explicitCustom && provider !== "custom") {
   if (/^sk-or/i.test(rawKey)) provider = "openrouter";
-  if (/^AIza/i.test(rawKey) && provider === "openrouter") provider = "gemini";
+  if (/^nvapi-/i.test(rawKey)) provider = "nvidia";
+  if (/^AIza/i.test(rawKey) && (provider === "openrouter" || provider === "nvidia")) {
+   provider = "gemini";
+  }
  }
  if (explicitCustom) provider = "custom";
+ if (explicitNvidia) provider = "nvidia";
 
  let apiModel = typeof cfg.apiModel === "string" ? cfg.apiModel.trim() : "";
  let apiEndpoint = typeof cfg.apiEndpoint === "string" ? cfg.apiEndpoint.trim() : "";
- const customFormat: "openai" | "anthropic" | "gemini" =
-  cfg.customFormat === "anthropic" || cfg.customFormat === "gemini" ? cfg.customFormat : "openai";
+ let customFormat: "openai" | "anthropic" | "gemini" | "nvidia" =
+  cfg.customFormat === "anthropic" ||
+  cfg.customFormat === "gemini" ||
+  cfg.customFormat === "nvidia"
+   ? cfg.customFormat
+   : "openai";
+ if (provider === "nvidia") customFormat = "nvidia";
+ if (provider === "custom" && /nvidia\.com/i.test(apiEndpoint)) customFormat = "nvidia";
 
  if (provider === "openrouter") {
   if (!apiModel || /gemini|^models\//i.test(apiModel)) {
@@ -2653,17 +2773,38 @@ function getProviderConfig(req: { body?: { aiConfig?: Partial<ProviderConfig> & 
    apiEndpoint = "https://openrouter.ai/api/v1";
   }
  }
+ if (provider === "nvidia") {
+  if (!apiModel || /gemini|^models\//i.test(apiModel)) {
+   apiModel = NVIDIA_DEFAULT_MODEL;
+  }
+  if (!apiEndpoint || /openrouter|googleapis|generativelanguage/i.test(apiEndpoint)) {
+   apiEndpoint = NVIDIA_DEFAULT_ENDPOINT;
+  }
+  apiEndpoint = normalizeCustomBaseUrl(apiEndpoint, "nvidia") || NVIDIA_DEFAULT_ENDPOINT;
+ }
+ if (provider === "custom" && customFormat === "nvidia") {
+  if (!apiModel || /gemini|^models\//i.test(apiModel)) {
+   apiModel = NVIDIA_DEFAULT_MODEL;
+  }
+  if (!apiEndpoint) apiEndpoint = NVIDIA_DEFAULT_ENDPOINT;
+  apiEndpoint = normalizeCustomBaseUrl(apiEndpoint, "nvidia") || NVIDIA_DEFAULT_ENDPOINT;
+ }
  if (provider === "gemini") {
-  if (!apiModel || /llama|claude|openrouter|mistral/i.test(apiModel)) {
+  if (!apiModel || /llama|claude|openrouter|mistral|nemotron|nvidia/i.test(apiModel)) {
    apiModel = "gemini-2.5-flash";
   }
   apiEndpoint = "";
  }
  if (provider === "custom") {
-  if (!apiModel) apiModel = "gpt-4o-mini";
+  if (!apiModel) {
+   apiModel = customFormat === "nvidia" ? NVIDIA_DEFAULT_MODEL : "gpt-4o-mini";
+  }
   apiEndpoint = normalizeCustomBaseUrl(apiEndpoint, customFormat);
-  // OpenAI/Anthropic-compatible custom requires endpoint; Gemini format may use default Google host
-  if (customFormat !== "gemini" && !apiEndpoint) {
+  // OpenAI/Anthropic/NVIDIA-compatible custom requires endpoint; Gemini format may use default Google host
+  if (customFormat === "nvidia" && !apiEndpoint) {
+   apiEndpoint = NVIDIA_DEFAULT_ENDPOINT;
+  }
+  if (customFormat !== "gemini" && customFormat !== "nvidia" && !apiEndpoint) {
    console.warn("[AI] Custom provider missing apiEndpoint — request will fail at call time");
   }
  }
@@ -2684,6 +2825,7 @@ function redactSecrets(message: string): string {
  .replace(/AIza[0-9A-Za-z_\-]{10,}/g, "[REDACTED_KEY]")
  .replace(/sk-or-v1-[A-Za-z0-9_\-]{10,}/g, "[REDACTED_KEY]")
  .replace(/sk-[A-Za-z0-9]{20,}/g, "[REDACTED_KEY]")
+ .replace(/nvapi-[A-Za-z0-9_\-]{10,}/gi, "[REDACTED_KEY]")
  .replace(/x-api-key["']?\s*[:=]\s*["']?[^"'\s,}]+/gi, "x-api-key:[REDACTED]");
 }
 

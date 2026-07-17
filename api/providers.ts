@@ -50,10 +50,66 @@ async function generateContentWithFallback(
 // ============================================================
 export interface ProviderConfig {
   apiKey: string;
-  provider: "gemini" | "openrouter" | "custom";
+  provider: "gemini" | "openrouter" | "nvidia" | "custom";
   apiEndpoint: string;
   apiModel: string;
-  customFormat: "openai" | "anthropic" | "gemini";
+  customFormat: "openai" | "anthropic" | "gemini" | "nvidia";
+}
+
+const NVIDIA_ENDPOINT = "https://integrate.api.nvidia.com/v1";
+const NVIDIA_MODEL = "meta/llama-3.1-70b-instruct";
+
+async function callOpenAiCompatible(
+  apiKey: string,
+  endpoint: string,
+  model: string,
+  prompt: string,
+  systemPrompt: string | undefined,
+  options?: { responseMimeType?: string; temperature?: number },
+  label = "API"
+): Promise<{ text: string }> {
+  const base = (endpoint || "").replace(/\/+$/, "");
+  const chatUrl = /\/chat\/completions$/i.test(base) ? base : `${base}/chat/completions`;
+  const messages: any[] = [];
+  if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
+  const wantJson = options?.responseMimeType === "application/json";
+  messages.push({
+    role: "user",
+    content: wantJson
+      ? `${prompt}\n\nIMPORTANT: Respond with ONLY a valid JSON object. No markdown fences.`
+      : prompt,
+  });
+  const body: any = {
+    model,
+    messages,
+    temperature: options?.temperature ?? 0.1,
+    max_tokens: 8192,
+    stream: false,
+  };
+  if (wantJson && !label.includes("NVIDIA")) {
+    try {
+      body.response_format = { type: "json_object" };
+    } catch {
+      /* ignore */
+    }
+  }
+  const response = await fetch(chatUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+      Accept: "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(
+      `${label} error ${response.status}: ${data?.error?.message || JSON.stringify(data).slice(0, 280)}`
+    );
+  }
+  const text = data.choices?.[0]?.message?.content || data.choices?.[0]?.text || "";
+  return { text: String(text) };
 }
 
 export async function callAI(
@@ -74,44 +130,48 @@ export async function callAI(
 
   if (provider === "openrouter") {
     const endpoint = (apiEndpoint || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
-    const messages: any[] = [];
-    if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
-    messages.push({ role: "user", content: prompt });
-    const body: any = {
-      model: apiModel || "meta-llama/llama-3.3-70b-instruct:free",
-      messages,
-      temperature: options?.temperature ?? 0.1,
-    };
-    if (options?.responseMimeType === "application/json") body.response_format = { type: "json_object" };
-    const response = await fetch(`${endpoint}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}`, "HTTP-Referer": "http://localhost:3000", "X-Title": "Local SEO App" },
-      body: JSON.stringify(body),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(`OpenRouter error ${response.status}: ${data.error?.message || JSON.stringify(data)}`);
-    const text = data.choices?.[0]?.message?.content || "";
-    return { text };
+    return callOpenAiCompatible(
+      apiKey,
+      endpoint,
+      apiModel || "meta-llama/llama-3.3-70b-instruct:free",
+      prompt,
+      systemPrompt,
+      options,
+      "OpenRouter"
+    );
+  }
+
+  if (provider === "nvidia" || customFormat === "nvidia") {
+    let endpoint = (apiEndpoint || NVIDIA_ENDPOINT).replace(/\/+$/, "");
+    if (/integrate\.api\.nvidia\.com$/i.test(endpoint)) endpoint = `${endpoint}/v1`;
+    return callOpenAiCompatible(
+      apiKey,
+      endpoint,
+      apiModel || NVIDIA_MODEL,
+      prompt,
+      systemPrompt,
+      options,
+      "NVIDIA"
+    );
   }
 
   if (provider === "custom") {
     const format = customFormat || "openai";
     const endpoint = (apiEndpoint || "").replace(/\/+$/, "");
-    if (format === "openai") {
-      const messages: any[] = [];
-      if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
-      messages.push({ role: "user", content: prompt });
-      const body: any = { model: apiModel, messages, temperature: options?.temperature ?? 0.1 };
-      if (options?.responseMimeType === "application/json") body.response_format = { type: "json_object" };
-      const response = await fetch(`${endpoint}/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-        body: JSON.stringify(body),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(`Custom API error ${response.status}: ${data.error?.message || JSON.stringify(data)}`);
-      const text = data.choices?.[0]?.message?.content || "";
-      return { text };
+    if (format === "openai" || format === "nvidia") {
+      const ep =
+        format === "nvidia"
+          ? endpoint || NVIDIA_ENDPOINT
+          : endpoint;
+      return callOpenAiCompatible(
+        apiKey,
+        ep,
+        apiModel || (format === "nvidia" ? NVIDIA_MODEL : "gpt-4o-mini"),
+        prompt,
+        systemPrompt,
+        options,
+        format === "nvidia" ? "NVIDIA" : "Custom API"
+      );
     }
     if (format === "anthropic") {
       const body: any = { model: apiModel, messages: [{ role: "user", content: prompt }], max_tokens: 4096, temperature: options?.temperature ?? 0.1 };
@@ -141,12 +201,23 @@ export function getProviderConfig(req: { body?: { aiConfig?: Partial<ProviderCon
   if (!rawKey || rawKey.length < 8) return null;
   const lower = rawKey.toLowerCase();
   if (lower.includes("placeholder") || lower === "my_gemini_api_key") return null;
+  let provider = (cfg?.provider || "gemini") as ProviderConfig["provider"];
+  if (provider === "nvidia" || /^nvapi-/i.test(rawKey)) provider = "nvidia";
+  let customFormat = (cfg?.customFormat || "openai") as ProviderConfig["customFormat"];
+  if (provider === "nvidia") customFormat = "nvidia";
+  let apiEndpoint = (cfg?.apiEndpoint || "").trim();
+  let apiModel = (cfg?.apiModel || "").trim();
+  if (provider === "nvidia") {
+    if (!apiEndpoint) apiEndpoint = NVIDIA_ENDPOINT;
+    if (!apiModel) apiModel = NVIDIA_MODEL;
+  }
+  if (customFormat === "nvidia" && !apiEndpoint) apiEndpoint = NVIDIA_ENDPOINT;
   return {
     apiKey: rawKey,
-    provider: cfg?.provider || "gemini",
-    apiEndpoint: (cfg?.apiEndpoint || "").trim(),
-    apiModel: (cfg?.apiModel || "").trim(),
-    customFormat: cfg?.customFormat || "openai",
+    provider,
+    apiEndpoint,
+    apiModel,
+    customFormat,
   };
 }
 

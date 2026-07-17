@@ -1,9 +1,11 @@
 export interface AiProviderConfig {
   apiKey: string;
-  provider: "gemini" | "openrouter" | "custom";
+  /** gemini | openrouter | nvidia (NIM) | custom (OpenAI/Anthropic/Gemini/NVIDIA-compatible) */
+  provider: "gemini" | "openrouter" | "nvidia" | "custom";
   apiEndpoint: string;
   apiModel: string;
-  customFormat: "openai" | "anthropic" | "gemini";
+  /** Used when provider === "custom" (and optional override for nvidia-compatible proxies) */
+  customFormat: "openai" | "anthropic" | "gemini" | "nvidia";
   /** DataForSEO API login (optional — enables live SEO data when both are set) */
   dataforseoLogin?: string;
   /** DataForSEO API password (auto-generated, different from account password) */

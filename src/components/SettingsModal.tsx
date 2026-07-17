@@ -40,9 +40,19 @@ const PROVIDER_META = {
     keyUrl: "https://openrouter.ai/keys",
     keyUrlLabel: "Get OpenRouter API Key",
   },
+  nvidia: {
+    label: "NVIDIA",
+    desc: "NIM / build.nvidia.com",
+    icon: Cpu,
+    defaultModel: AI_PROVIDER_DEFAULTS.nvidia.model,
+    defaultEndpoint: AI_PROVIDER_DEFAULTS.nvidia.endpoint,
+    keyPlaceholder: "nvapi-... or NGC key",
+    keyUrl: "https://build.nvidia.com/",
+    keyUrlLabel: "Get NVIDIA API Key",
+  },
   custom: {
     label: "Custom",
-    desc: "Your own endpoint",
+    desc: "OpenAI / Anthropic / NVIDIA / proxy",
     icon: Puzzle,
     defaultModel: AI_PROVIDER_DEFAULTS.custom.model,
     defaultEndpoint: AI_PROVIDER_DEFAULTS.custom.endpoint,
@@ -78,7 +88,7 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
     setSaved(false);
   }, [currentConfig, open]);
 
-  const handleProviderChange = (newProvider: "gemini" | "openrouter" | "custom") => {
+  const handleProviderChange = (newProvider: AiProviderConfig["provider"]) => {
     // Stash current provider's key in its own slot so switching never loses it
     if (apiKey.trim()) {
       localStorage.setItem(`seo_api_key_${provider}`, apiKey.trim());
@@ -95,6 +105,9 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
     setApiKey(savedKey);
     setApiModel(savedModel);
     setApiEndpoint(savedEndpoint);
+    if (newProvider === "nvidia") {
+      setCustomFormat("nvidia");
+    }
     setSaveError(null);
   };
 
@@ -130,21 +143,36 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
     let activeProvider = provider;
     const detected = detectProviderFromKey(trimmedKey);
     if (provider !== "custom") {
-      const mismatch = keyProviderMismatch(provider, trimmedKey);
-      if (detected && detected !== provider) {
-        activeProvider = detected;
-      } else if (mismatch && provider === "openrouter" && /^AIza/i.test(trimmedKey)) {
+      if (detected && detected !== provider && provider !== "nvidia") {
+        // Auto-switch for Gemini/OpenRouter/NVIDIA key shapes when not on Custom
+        if (detected === "gemini" || detected === "openrouter" || detected === "nvidia") {
+          activeProvider = detected;
+        }
+      }
+      const mismatch = keyProviderMismatch(activeProvider, trimmedKey);
+      if (mismatch && activeProvider === "openrouter" && /^AIza/i.test(trimmedKey)) {
         setSaveError(mismatch);
         return;
-      } else if (mismatch && provider === "gemini" && /^sk-or/i.test(trimmedKey)) {
+      }
+      if (mismatch && activeProvider === "gemini" && (/^sk-or/i.test(trimmedKey) || /^nvapi-/i.test(trimmedKey))) {
+        setSaveError(mismatch);
+        return;
+      }
+      if (mismatch && activeProvider === "nvidia" && (/^AIza/i.test(trimmedKey) || /^sk-or/i.test(trimmedKey))) {
         setSaveError(mismatch);
         return;
       }
     } else {
       const customErr = validateCustomProviderConfig({
         apiKey: trimmedKey,
-        apiEndpoint,
-        apiModel,
+        apiEndpoint:
+          customFormat === "nvidia" && !apiEndpoint.trim()
+            ? AI_PROVIDER_DEFAULTS.nvidia.endpoint
+            : apiEndpoint,
+        apiModel:
+          customFormat === "nvidia" && !apiModel.trim()
+            ? AI_PROVIDER_DEFAULTS.nvidia.model
+            : apiModel,
         customFormat,
       });
       if (customErr) {
@@ -156,6 +184,12 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
     const meta = PROVIDER_META[activeProvider];
     let model = apiModel.trim() || meta.defaultModel;
     let endpoint = apiEndpoint.trim() || meta.defaultEndpoint;
+    let format: AiProviderConfig["customFormat"] =
+      activeProvider === "custom"
+        ? customFormat
+        : activeProvider === "nvidia"
+          ? "nvidia"
+          : "openai";
 
     if (activeProvider === "openrouter") {
       if (!model || /gemini|^models\//i.test(model)) model = meta.defaultModel;
@@ -165,12 +199,28 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
       endpoint = endpoint.replace(/\/+$/, "") || meta.defaultEndpoint;
     }
     if (activeProvider === "gemini") {
-      if (!model || /llama|claude|openrouter|mistral/i.test(model)) model = meta.defaultModel;
+      if (!model || /llama|claude|openrouter|mistral|nemotron|nvidia/i.test(model))
+        model = meta.defaultModel;
       endpoint = "";
     }
+    if (activeProvider === "nvidia") {
+      if (!model || /gemini|^models\//i.test(model)) model = meta.defaultModel;
+      if (!endpoint || /openrouter|googleapis|generativelanguage/i.test(endpoint)) {
+        endpoint = meta.defaultEndpoint;
+      }
+      endpoint = endpoint.replace(/\/+$/, "") || meta.defaultEndpoint;
+      format = "nvidia";
+    }
     if (activeProvider === "custom") {
-      endpoint = apiEndpoint.trim().replace(/\/+$/, "");
-      model = apiModel.trim() || "gpt-4o-mini";
+      if (customFormat === "nvidia") {
+        endpoint =
+          apiEndpoint.trim().replace(/\/+$/, "") || AI_PROVIDER_DEFAULTS.nvidia.endpoint;
+        model = apiModel.trim() || AI_PROVIDER_DEFAULTS.nvidia.model;
+        format = "nvidia";
+      } else {
+        endpoint = apiEndpoint.trim().replace(/\/+$/, "");
+        model = apiModel.trim() || "gpt-4o-mini";
+      }
     }
 
     const config = normalizeAiConfig({
@@ -178,7 +228,7 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
       provider: activeProvider,
       apiEndpoint: endpoint,
       apiModel: model,
-      customFormat: activeProvider === "custom" ? customFormat : "openai",
+      customFormat: format,
       dataforseoLogin: dataforseoLogin.trim() || undefined,
       dataforseoPassword: dataforseoPassword.trim() || undefined,
     });
@@ -266,16 +316,17 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
                 <Shield className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
                 <div className="text-xs text-slate-600 leading-relaxed">
                   <strong className="text-slate-800 block mb-1">Bring your own key (required)</strong>
-                  Choose <strong>Gemini</strong>, <strong>OpenRouter</strong>, or <strong>Custom</strong> (OpenAI / Anthropic /
-                  proxy). Paste that provider&apos;s API key (and Base URL for Custom), then{" "}
-                  <strong>Save</strong>. The active key is sent with every analysis and blog request — never stored on our server.
+                  Choose <strong>Gemini</strong>, <strong>OpenRouter</strong>, <strong>NVIDIA</strong> (NIM), or{" "}
+                  <strong>Custom</strong> (OpenAI / Anthropic / NVIDIA / proxy). Paste that provider&apos;s API key
+                  (and Base URL when needed), then <strong>Save</strong>. The active key is sent with every analysis
+                  and blog request — never stored on our server.
                 </div>
               </div>
 
               {/* Provider selector */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">AI Provider</label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {(Object.entries(PROVIDER_META) as [keyof typeof PROVIDER_META, typeof PROVIDER_META.gemini][]).map(
                     ([id, p]) => {
                       const PIcon = p.icon;
@@ -331,13 +382,19 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
                     </button>
                   </div>
                 </div>
-                {detected && detected !== provider && (
+                {detected && detected !== provider && provider !== "custom" && (
                   <p className="text-[11px] text-blue-600 font-medium flex items-start gap-1">
                     <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                    Key looks like {detected === "openrouter" ? "OpenRouter" : "Gemini"} — provider will auto-switch on save.
+                    Key looks like{" "}
+                    {detected === "openrouter"
+                      ? "OpenRouter"
+                      : detected === "nvidia"
+                        ? "NVIDIA"
+                        : "Gemini"}{" "}
+                    — provider will auto-switch on save.
                   </p>
                 )}
-                {liveMismatch && !detected && (
+                {liveMismatch && !detected && provider !== "custom" && (
                   <p className="text-[11px] text-amber-600 font-medium flex items-start gap-1">
                     <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                     {liveMismatch}
@@ -357,16 +414,40 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
                 />
                 {provider === "openrouter" && (
                   <p className="text-[10px] text-slate-400">
-                    Free example: <code className="bg-slate-100 px-1 rounded">meta-llama/llama-3.3-70b-instruct:free</code>
-                    . Paid models need OpenRouter credits.
+                    Free example:{" "}
+                    <code className="bg-slate-100 px-1 rounded">meta-llama/llama-3.3-70b-instruct:free</code>. Paid
+                    models need OpenRouter credits.
+                  </p>
+                )}
+                {(provider === "nvidia" || (provider === "custom" && customFormat === "nvidia")) && (
+                  <p className="text-[10px] text-slate-400">
+                    Examples:{" "}
+                    <code className="bg-slate-100 px-1 rounded">meta/llama-3.1-70b-instruct</code>,{" "}
+                    <code className="bg-slate-100 px-1 rounded">nvidia/llama-3.1-nemotron-70b-instruct</code>,{" "}
+                    <code className="bg-slate-100 px-1 rounded">meta/llama-3.3-70b-instruct</code>. Browse models at{" "}
+                    <a
+                      href="https://build.nvidia.com/models"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:underline"
+                    >
+                      build.nvidia.com
+                    </a>
+                    .
                   </p>
                 )}
               </div>
 
-              {(provider === "openrouter" || provider === "custom") && (
+              {(provider === "openrouter" || provider === "nvidia" || provider === "custom") && (
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    {provider === "custom" ? "Base URL (required)" : "API Endpoint URL"}
+                    {provider === "custom"
+                      ? customFormat === "nvidia"
+                        ? "Base URL (defaults to NVIDIA NIM)"
+                        : customFormat === "gemini"
+                          ? "Base URL (optional for Gemini)"
+                          : "Base URL (required)"
+                      : "API Endpoint URL"}
                   </label>
                   <input
                     type="text"
@@ -375,20 +456,31 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
                     placeholder={
                       provider === "openrouter"
                         ? "https://openrouter.ai/api/v1"
-                        : customFormat === "anthropic"
-                          ? "https://api.anthropic.com/v1"
-                          : customFormat === "gemini"
-                            ? "optional custom Gemini base URL"
-                            : "https://api.openai.com/v1"
+                        : provider === "nvidia"
+                          ? "https://integrate.api.nvidia.com/v1"
+                          : customFormat === "anthropic"
+                            ? "https://api.anthropic.com/v1"
+                            : customFormat === "gemini"
+                              ? "optional custom Gemini base URL"
+                              : customFormat === "nvidia"
+                                ? "https://integrate.api.nvidia.com/v1"
+                                : "https://api.openai.com/v1"
                     }
                     className="w-full px-4 py-2.5 text-sm border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 font-mono transition-all"
                   />
                   {provider === "custom" && (
                     <p className="text-[10px] text-slate-400 leading-relaxed">
-                      OpenAI-compatible: base ending in <code className="bg-slate-100 px-1 rounded">/v1</code> (we call{" "}
+                      OpenAI / NVIDIA-compatible: base ending in{" "}
+                      <code className="bg-slate-100 px-1 rounded">/v1</code> (we call{" "}
                       <code className="bg-slate-100 px-1 rounded">/chat/completions</code>). Anthropic:{" "}
-                      <code className="bg-slate-100 px-1 rounded">https://api.anthropic.com/v1</code>. Works with Groq,
-                      Together, Fireworks, Azure OpenAI proxies, local Ollama/vLLM OpenAI shims, etc.
+                      <code className="bg-slate-100 px-1 rounded">https://api.anthropic.com/v1</code>. NVIDIA:{" "}
+                      <code className="bg-slate-100 px-1 rounded">https://integrate.api.nvidia.com/v1</code>. Also works
+                      with Groq, Together, Fireworks, Azure proxies, Ollama/vLLM, etc.
+                    </p>
+                  )}
+                  {provider === "nvidia" && (
+                    <p className="text-[10px] text-slate-400 leading-relaxed">
+                      Default NIM endpoint is prefilled. Leave as-is unless you use a private NVIDIA deploy or proxy.
                     </p>
                   )}
                 </div>
@@ -397,12 +489,22 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
               {provider === "custom" && (
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">API Format</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {(["openai", "anthropic", "gemini"] as const).map((fmt) => (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {(["openai", "anthropic", "gemini", "nvidia"] as const).map((fmt) => (
                       <button
                         key={fmt}
                         type="button"
-                        onClick={() => setCustomFormat(fmt)}
+                        onClick={() => {
+                          setCustomFormat(fmt);
+                          if (fmt === "nvidia") {
+                            if (!apiEndpoint.trim() || /openai\.com|anthropic|openrouter/i.test(apiEndpoint)) {
+                              setApiEndpoint(AI_PROVIDER_DEFAULTS.nvidia.endpoint);
+                            }
+                            if (!apiModel.trim() || /gpt-|claude|gemini/i.test(apiModel)) {
+                              setApiModel(AI_PROVIDER_DEFAULTS.nvidia.model);
+                            }
+                          }
+                        }}
                         className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
                           customFormat === fmt
                             ? "border-blue-500 bg-blue-50 ring-1 ring-blue-500/30"
@@ -412,14 +514,22 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
                         <div
                           className={`text-xs font-bold ${customFormat === fmt ? "text-blue-700" : "text-slate-700"}`}
                         >
-                          {fmt === "openai" ? "OpenAI" : fmt === "anthropic" ? "Anthropic" : "Gemini"}
+                          {fmt === "openai"
+                            ? "OpenAI"
+                            : fmt === "anthropic"
+                              ? "Anthropic"
+                              : fmt === "gemini"
+                                ? "Gemini"
+                                : "NVIDIA"}
                         </div>
                         <div className="text-[9px] text-slate-400 font-medium mt-0.5">
                           {fmt === "openai"
                             ? "/chat/completions"
                             : fmt === "anthropic"
                               ? "/messages"
-                              : "Gemini SDK"}
+                              : fmt === "gemini"
+                                ? "Gemini SDK"
+                                : "NIM /v1"}
                         </div>
                       </button>
                     ))}
