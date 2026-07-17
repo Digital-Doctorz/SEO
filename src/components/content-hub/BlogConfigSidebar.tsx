@@ -308,7 +308,7 @@ export default function BlogConfigSidebar(props: BlogConfigSidebarProps) {
  {isBlogGenerating ? (
  <>
  <span className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin inline-block" />
- <span>Gemini is drafting your article...</span>
+ <span>Analyzing URL + writing with master prompt…</span>
  </>
  ) : (
  <>

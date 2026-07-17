@@ -62,7 +62,42 @@ export default function ContentHub({
   const [customAnchor, setCustomAnchor] = useState("");
   const [customTargetUrl, setCustomTargetUrl] = useState("");
   const [isBlogGenerating, setIsBlogGenerating] = useState(false);
+  /** Live pipeline stage shown while AI analyzes URL + writes with master prompt */
+  const [generationStage, setGenerationStage] = useState<{
+    index: number;
+    label: string;
+    detail: string;
+  } | null>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
+  const [lastPipeline, setLastPipeline] = useState<{
+    crawlSource?: string;
+    scrapedPages?: number;
+    generationMode?: string;
+    wordCount?: number;
+    masterPromptApplied?: boolean;
+  } | null>(null);
+
+  const GENERATION_STAGES = useMemo(
+    () => [
+      {
+        label: "Analyzing target URL",
+        detail: "Crawling pages, niche, services, headings, and on-site language…",
+      },
+      {
+        label: "Building research brief",
+        detail: "Intent, long-tails, outline, competitor gaps, proof points…",
+      },
+      {
+        label: "Writing with master SEO prompt",
+        detail: "Full structured article: intro, takeaways, 6–8 H2s, table, FAQ, CTA…",
+      },
+      {
+        label: "Quality & SEO pack",
+        detail: "Word-count gate, schema, meta, 9-point checklist, polish…",
+      },
+    ],
+    []
+  );
   const [schemaCopied, setSchemaCopied] = useState(false);
   const [blogViewTab, setBlogViewTab] = useState<"draft" | "prewriting" | "seo" | "checklist" | "multimedia" | "links" | "technical" | "schema">("draft");
   const [toasts, setToasts] = useState<AppToast[]>([]);
@@ -590,14 +625,25 @@ export default function ContentHub({
 
     setIsBlogGenerating(true);
     setGenerationError(null);
+    setLastPipeline(null);
+    setGenerationStage({ index: 0, ...GENERATION_STAGES[0] });
     // Keep previous post visible under loading banner only if redrafting; still replace when done
     if (!isRedraft) setBlogPost(null);
+
+    // Live stage ticker while the single server request runs research → master write → pack
+    let stageIdx = 0;
+    const stageTimer = window.setInterval(() => {
+      stageIdx = Math.min(stageIdx + 1, GENERATION_STAGES.length - 1);
+      setGenerationStage({ index: stageIdx, ...GENERATION_STAGES[stageIdx] });
+    }, 14000);
 
     try {
       // Require live AI key for full articles (postApi also injects storage key)
       const liveKey = resolveAiConfig(aiConfig) || resolveAiConfig(null);
       if (!liveKey?.apiKey) {
+        window.clearInterval(stageTimer);
         setIsBlogGenerating(false);
+        setGenerationStage(null);
         setGenerationError(
           "Add your AI API key in Settings (OpenRouter or Gemini) to write live blogs from analysis."
         );
@@ -658,6 +704,33 @@ export default function ContentHub({
       validateBlogResponse(data);
       data = ensureBlogEnrichment(data, targetDomain, keywordToUse || topicToUse);
 
+      const pipe = (data as {
+        pipeline?: {
+          crawlSource?: string;
+          scrapedPages?: number;
+          generationMode?: string;
+          wordCount?: number;
+          masterPromptApplied?: boolean;
+        };
+        qualityScore?: { words?: number };
+        generationMode?: string;
+        masterPromptApplied?: boolean;
+      }).pipeline;
+      setLastPipeline({
+        crawlSource: pipe?.crawlSource,
+        scrapedPages: pipe?.scrapedPages,
+        generationMode: pipe?.generationMode || (data as { generationMode?: string }).generationMode,
+        wordCount: pipe?.wordCount || (data as { qualityScore?: { words?: number } }).qualityScore?.words,
+        masterPromptApplied:
+          pipe?.masterPromptApplied ??
+          (data as { masterPromptApplied?: boolean }).masterPromptApplied ??
+          true,
+      });
+
+      setGenerationStage({
+        index: GENERATION_STAGES.length - 1,
+        ...GENERATION_STAGES[GENERATION_STAGES.length - 1],
+      });
       setBlogPost(data);
       handleSaveArticleVersion(data, true);
       if (data.isFallback) {
@@ -677,17 +750,18 @@ export default function ContentHub({
         const researchUsed = (data as { researchUsed?: boolean }).researchUsed;
         const aiGenerated = (data as { aiGenerated?: boolean }).aiGenerated;
         const master = data.seoMasterChecklist?.score;
+        const mode = (data as { generationMode?: string }).generationMode || "master-markdown";
         if (aiGenerated && qs && !qs.ok && (qs.words || 0) > 0) {
           setGenerationError(
-            `AI article generated (${qs.words || "?"} words)${researchUsed ? " with research brief" : ""}. Some quality checks were soft — review structure before publishing.`
+            `AI article generated (${qs.words || "?"} words)${researchUsed ? " with research brief" : ""} via master prompt (${mode}). Some quality checks were soft — review structure before publishing.`
           );
           pushToast("info", "Article ready — review quality", `${qs.words} words · 9-point score ${master ?? "—"}/100`);
         } else {
           setGenerationError(null);
           pushToast(
             "success",
-            isRedraft ? "Article redrafted" : "Article generated",
-            `SEO pack ready${master != null ? ` · completeness checklist ${master}/100` : ""}. Open SERP preview & 9-Point SEO tab.`
+            isRedraft ? "Article redrafted" : "Complete AI article ready",
+            `Master prompt applied · ${qs?.words || "—"} words${master != null ? ` · checklist ${master}/100` : ""}. Live URL analysis + SEO pack included.`
           );
         }
       }
@@ -808,7 +882,9 @@ export default function ContentHub({
       setBlogPost(localDraft);
       setGenerationError(localDraft.fallbackReason || msg);
     } finally {
+      window.clearInterval(stageTimer);
       setIsBlogGenerating(false);
+      setGenerationStage(null);
     }
   };
 
@@ -923,15 +999,84 @@ export default function ContentHub({
           <div className="lg:col-span-7 space-y-6">
             
             {isBlogGenerating && (
-              <div className="bg-white p-12 rounded-2xl border border-slate-200 shadow-xs text-center space-y-4">
-                <div className="h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
-                <h4 className="font-extrabold text-slate-800 text-base">AI is writing a publication-ready SEO draft...</h4>
-                <div className="text-xs text-slate-400 max-w-sm mx-auto space-y-2">
-                  <p>- Analyzing target URL niche &amp; intent</p>
-                  <p>- Applying Seo-Promt-Master 9-point checklist</p>
-                  <p>- Building title, meta, keywords, JSON-LD</p>
-                  <p>- Headings, images+alt, internal links, sitemap notes</p>
+              <div className="bg-white p-8 md:p-10 rounded-2xl border border-slate-200 shadow-xs space-y-6">
+                <div className="text-center space-y-3">
+                  <div className="h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
+                  <h4 className="font-extrabold text-slate-800 text-base">
+                    {generationStage?.label || "Generating complete AI article…"}
+                  </h4>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                    {generationStage?.detail ||
+                      "Live URL analysis → research brief → master SEO prompt write → SEO pack"}
+                  </p>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-blue-600">
+                    Target: {targetDomain} · Master prompt on · First-pass complete article
+                  </p>
                 </div>
+                <div className="max-w-lg mx-auto space-y-2.5">
+                  {GENERATION_STAGES.map((stage, i) => {
+                    const active = (generationStage?.index ?? 0) === i;
+                    const done = (generationStage?.index ?? 0) > i;
+                    return (
+                      <div
+                        key={stage.label}
+                        className={`flex items-start gap-3 rounded-xl border px-3.5 py-2.5 text-left transition-all ${
+                          active
+                            ? "border-blue-300 bg-blue-50/80 shadow-sm"
+                            : done
+                              ? "border-emerald-100 bg-emerald-50/40"
+                              : "border-slate-100 bg-slate-50/50"
+                        }`}
+                      >
+                        <span
+                          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                            done
+                              ? "bg-emerald-500 text-white"
+                              : active
+                                ? "bg-blue-600 text-white animate-pulse"
+                                : "bg-slate-200 text-slate-500"
+                          }`}
+                        >
+                          {done ? "✓" : i + 1}
+                        </span>
+                        <div className="min-w-0">
+                          <p
+                            className={`text-xs font-bold ${
+                              active ? "text-blue-800" : done ? "text-emerald-800" : "text-slate-500"
+                            }`}
+                          >
+                            {stage.label}
+                          </p>
+                          <p className="text-[11px] text-slate-500 leading-snug">{stage.detail}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {!isBlogGenerating && lastPipeline && blogPost && !blogPost.isFallback && (
+              <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold text-slate-500 px-1">
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 px-2.5 py-1">
+                  Master prompt applied
+                </span>
+                {lastPipeline.generationMode && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100 px-2.5 py-1">
+                    Mode: {lastPipeline.generationMode}
+                  </span>
+                )}
+                {lastPipeline.wordCount != null && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200 px-2.5 py-1">
+                    {lastPipeline.wordCount} words
+                  </span>
+                )}
+                {lastPipeline.crawlSource && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200 px-2.5 py-1">
+                    Crawl: {lastPipeline.crawlSource}
+                    {lastPipeline.scrapedPages != null ? ` (${lastPipeline.scrapedPages} pages)` : ""}
+                  </span>
+                )}
               </div>
             )}
 
