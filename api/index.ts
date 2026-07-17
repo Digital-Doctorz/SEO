@@ -4546,10 +4546,11 @@ app.post("/api/analyze", async (req, res) => {
   }
 
   const providerConfig = getProviderConfig(req);
+  const requireAi = Boolean(req.body?.requireAi);
 
-  // ΓöÇΓöÇ No AI key AND no DataForSEO ΓåÆ demo fallback ΓöÇΓöÇ
+  // ΓöÇΓöÇ No AI key AND no DataForSEO ΓåÆ demo fallback (blocked when client requires live AI) ΓöÇΓöÇ
   if (!providerConfig && !dfseoData) {
-    return res.json(
+    return res.status(requireAi ? 401 : 200).json(
       sanitizeDeep({
         ...base,
         contentGaps: normalizeContentGaps(base.contentGaps),
@@ -4557,9 +4558,19 @@ app.post("/api/analyze", async (req, res) => {
         needsApiKey: true,
         dataSource: "simulated",
         fallbackReason:
-          "Demo data only. Open Settings and add your own AI API key, or configure DataForSEO credentials for real SEO data.",
+          "Live analysis requires your AI API key. Open Settings, add OpenRouter or Gemini, Save, then run analysis again.",
       })
     );
+  }
+
+  if (requireAi && !providerConfig) {
+    return res.status(401).json({
+      error: "API key required",
+      needsApiKey: true,
+      isFallback: true,
+      fallbackReason:
+        "Add your AI API key in Settings to run real-time analysis and blog generation.",
+    });
   }
 
   // ΓöÇΓöÇ DataForSEO available (with or without AI key) ΓöÇΓöÇ
@@ -4609,7 +4620,7 @@ app.post("/api/analyze", async (req, res) => {
       isFallback: false,
     };
 
-    // If AI key is also available, let AI enrich with gaps/blueprint on top of real data
+    // If AI key is available, enrich DataForSEO with live AI (user's model first)
     if (providerConfig) {
       try {
         const prompt = `Quick SEO enrichment for "${domain}" using real DataForSEO data.
@@ -4624,44 +4635,61 @@ Return compact JSON: { contentGaps[{competitorKeyword,competitorRank,competitorV
 contentGaps: 5-8 rows. targetRank number or "Not Ranking". difficultyCategory Easy|Medium|Hard. competitorVolume monthly searches. competitorDifficulty 1-100.
 ASCII only. JSON only.`;
 
-        const fastConfig: ProviderConfig = {
-          ...providerConfig,
-          apiModel: providerConfig.provider === "gemini" ? "gemini-2.5-flash-lite" : providerConfig.apiModel,
-        };
-
+        // Use the user's configured model (Settings) — fallbacks handled inside callAI
         const result = await withTimeout(
-          callAI(fastConfig, prompt, "Valid compact JSON only. No fences.", {
+          callAI(providerConfig, prompt, "Valid compact JSON only. No fences.", {
             responseMimeType: "application/json",
             temperature: 0.15,
-            maxOutputTokens: 2000,
+            maxOutputTokens: 2500,
           }),
-          10000,
+          25000,
           "AI enrichment"
         );
-        const parsed = cleanAndParseJSON(result.text);
+        const enrichRaw = extractAiText(result);
+        const parsed = tryParseJsonLoose(enrichRaw);
+        if (!parsed || typeof parsed !== "object") {
+          throw new Error("AI enrichment JSON unusable after sanitize");
+        }
         enriched.contentGaps = normalizeContentGaps(
-          parsed.contentGaps,
+          (parsed as any).contentGaps,
           (base.keywords || []).map((k: any) => k.keyword).filter(Boolean)
         );
         if (!enriched.contentGaps.length) enriched.contentGaps = base.contentGaps;
-        enriched.rankingBlueprint = parsed.rankingBlueprint || base.rankingBlueprint;
-        enriched.discoveredCompetitors = Array.isArray(parsed.discoveredCompetitors) && parsed.discoveredCompetitors.length
-          ? parsed.discoveredCompetitors
-          : base.discoveredCompetitors;
+        enriched.rankingBlueprint = (parsed as any).rankingBlueprint || base.rankingBlueprint;
+        enriched.discoveredCompetitors =
+          Array.isArray((parsed as any).discoveredCompetitors) && (parsed as any).discoveredCompetitors.length
+            ? (parsed as any).discoveredCompetitors
+            : base.discoveredCompetitors;
         enriched.dataSource = "dataforseo+ai";
-      } catch {
-        // AI enrichment failed ΓÇö DataForSEO data is still valuable
+        enriched.isFallback = false;
+        enriched.aiProvider = providerConfig.provider;
+        enriched.aiModel = providerConfig.apiModel;
+      } catch (enrichErr) {
+        console.warn("[Analyze] AI enrichment failed:", enrichErr);
         enriched.contentGaps = normalizeContentGaps(base.contentGaps);
+        enriched.aiWarning = "DataForSEO data shown; AI enrichment failed (retry or check quota).";
       }
     } else {
-      // No AI key: still normalize gaps from baseline
       enriched.contentGaps = normalizeContentGaps(base.contentGaps || enriched.contentGaps);
     }
 
     return res.json(sanitizeDeep(enriched));
   }
 
-  // ΓöÇΓöÇ AI-only path (no DataForSEO) ΓÇö original behavior ΓöÇΓöÇ
+  // ΓöÇΓöÇ AI-only path (no DataForSEO) — live crawl baseline + user's AI key for full analysis ΓöÇΓöÇ
+  if (!providerConfig) {
+    return res.json(
+      sanitizeDeep({
+        ...base,
+        contentGaps: normalizeContentGaps(base.contentGaps),
+        isFallback: true,
+        needsApiKey: true,
+        dataSource: "crawl-only",
+        fallbackReason: "Add your AI API key in Settings for full live keyword/gap/competitor analysis.",
+      })
+    );
+  }
+
   try {
     const siteCtx = {
       niche: base.targetAnalysis?.coreNiche,
@@ -4670,44 +4698,68 @@ ASCII only. JSON only.`;
       source: base.siteProfile?.source,
       seedKeywords: (base.keywords || []).slice(0, 10).map((k: any) => k.keyword),
       services: (base.target?.topPages || []).slice(0, 5).map((p: any) => p.title),
-      snippet: (base.targetAnalysis?.detailedBreakdown || "").slice(0, 400),
+      headings: (base.siteProfile?.headings || []).slice(0, 12),
+      snippet: (base.targetAnalysis?.detailedBreakdown || "").slice(0, 500),
+      rawSnippet: (base.siteProfile?.rawSnippet || "").slice(0, 600),
     };
-    const prompt = `SEO competitive analysis for LIVE website https://${domain}/${competitorUrl ? ` vs competitor https://${cleanDomain(competitorUrl)}/` : ""}.
-Site context from crawl (MUST stay on-niche; do not invent unrelated industries):
+    const prompt = `You are a senior SEO analyst. Analyze the LIVE website at https://${domain}/${competitorUrl ? ` compared with competitor https://${cleanDomain(competitorUrl)}/` : ""}.
+
+GROUND TRUTH from live crawl (stay strictly on-niche — do not invent unrelated industries):
 ${JSON.stringify(siteCtx)}
 
-Return compact JSON with:
-- keywords: exactly 15 LONG-TAIL keywords highly relevant to this business (3-7 words each, commercial + informational mix). volume,difficulty,cpc,intent,type,opportunityScore
-- contentGaps: 10 items with competitorKeyword,competitorRank,competitorVolume,competitorDifficulty,targetRank,recommendedTopic (click-worthy long-tail title),recommendedType,difficultyCategory,isQuickWin
-- discoveredCompetitors: exactly 15 industry peers/similar businesses with domain,nicheSimilarity,nicheFocus,estimatedMonthlyTraffic,analyzedTakeaway,targetKeywords[]
-- targetAnalysis{coreNiche,audiencePersona,contentStrengths[],contentWeaknesses[],detailedBreakdown}
-- rankingBlueprint{summary,priorityActions[{action,impact,effort,timeframe}],timelineEstimate}
-- serpFeatures(4), backlinkSources(4), backlinkOpportunities(3) optional
-Keep numbers realistic. ASCII only. JSON only. No off-topic keywords.`;
+Return ONLY valid compact JSON (no markdown fences) with:
+- keywords: exactly 15 LONG-TAIL keywords highly relevant to this business (3-7 words each, commercial + informational mix). Each: keyword, volume, difficulty, cpc, intent, type, opportunityScore, relatedKeywords[]
+- contentGaps: 10 items: competitorKeyword, competitorRank, competitorVolume, competitorDifficulty, targetRank, recommendedTopic (click-worthy long-tail title), recommendedType, difficultyCategory, isQuickWin
+- discoveredCompetitors: exactly 12-15 industry peers with domain, nicheSimilarity, nicheFocus, estimatedMonthlyTraffic, analyzedTakeaway, targetKeywords[]
+- targetAnalysis: { coreNiche, audiencePersona, contentStrengths[], contentWeaknesses[], detailedBreakdown }
+- rankingBlueprint: { summary, priorityActions[{action,impact,effort,timeframe}], timelineEstimate, contentStrategy[] }
+- serpFeatures: 4 items { type, query, opportunity, actionability }
+- backlinkSources: 4 items { sourceUrl, domainRating, targetUrl, anchorText, linkType }
+- backlinkOpportunities: 3 items
+Keep numbers realistic. ASCII only. No off-topic keywords.`;
 
-    // Prefer flash-lite for analysis speed (user can still set a custom model in Settings)
-    const fastConfig: ProviderConfig = {
-      ...providerConfig,
-      apiModel:
-        providerConfig.provider === "gemini"
-          ? "gemini-2.5-flash-lite"
-          : providerConfig.apiModel,
-    };
-
+    // Use the user's Settings model (Gemini / OpenRouter) for real-time analysis
     const result = await withTimeout(
-      callAI(fastConfig, prompt, "Valid compact JSON only. No fences. ASCII punctuation. Stay on-niche.", {
-        responseMimeType: "application/json",
-        temperature: 0.2,
-        maxOutputTokens: 5000,
-      }),
-      22000,
+      callAI(
+        providerConfig,
+        prompt,
+        "You are an expert SEO analyst. Output ONLY valid JSON. No markdown fences. No commentary. Escape quotes inside strings. Stay on-niche for the crawled site.",
+        {
+          responseMimeType: "application/json",
+          temperature: 0.25,
+          maxOutputTokens: 6000,
+        }
+      ),
+      45000,
       "SEO analysis"
     );
-    const parsed = cleanAndParseJSON(result.text);
-    const autonomous =
-      parsed.autonomousBlog
-        ? normalizeBlogPayload(parsed.autonomousBlog, domain, base.keywords?.[0]?.keyword || "services")
-        : base.autonomousBlog;
+    const rawAi = extractAiText(result);
+    const parsed = tryParseJsonLoose(rawAi);
+    if (!parsed || typeof parsed !== "object") {
+      throw new Error(
+        `AI analysis JSON parse failed. ${rawAi ? "Sanitizer could not recover object." : "Empty AI response."}`
+      );
+    }
+
+    const primaryKw =
+      (Array.isArray(parsed.keywords) && parsed.keywords[0]?.keyword) ||
+      base.keywords?.[0]?.keyword ||
+      "services";
+
+    // Optional: seed Content Hub with a short AI outline blog (full blog still via generate-blog)
+    let autonomous = base.autonomousBlog;
+    try {
+      if (parsed.autonomousBlog) {
+        autonomous = normalizeBlogPayload(
+          parsed.autonomousBlog,
+          domain,
+          primaryKw
+        );
+      }
+    } catch {
+      autonomous = base.autonomousBlog;
+    }
+
     const kwFallback = (base.keywords || []).map((k: any) => k.keyword).filter(Boolean);
     const gaps = normalizeContentGaps(
       Array.isArray(parsed.contentGaps) && parsed.contentGaps.length ? parsed.contentGaps : base.contentGaps,
@@ -4734,24 +4786,34 @@ Keep numbers realistic. ASCII only. JSON only. No off-topic keywords.`;
           Array.isArray(parsed.discoveredCompetitors) && parsed.discoveredCompetitors.length >= 8
             ? parsed.discoveredCompetitors.slice(0, 15)
             : base.discoveredCompetitors,
+        targetAnalysis: parsed.targetAnalysis || base.targetAnalysis,
+        rankingBlueprint: parsed.rankingBlueprint || base.rankingBlueprint,
         siteProfile: base.siteProfile,
         autonomousBlog: autonomous,
         dataSource: "ai",
         isFallback: false,
+        aiProvider: providerConfig.provider,
+        aiModel: providerConfig.apiModel,
+        liveCrawl: Boolean(base.siteProfile?.source === "live-crawl" || base.siteProfile?.scrapedPages),
       })
     );
   } catch (err: unknown) {
     const message = redactSecrets(err instanceof Error ? err.message : String(err));
     console.error("Analyze error:", message);
+    // Still return crawl baseline so UI is not empty — flag as partial AI failure
     res.json(
       sanitizeDeep({
         ...base,
         contentGaps: normalizeContentGaps(base.contentGaps),
         isFallback: true,
-        dataSource: "simulated",
+        dataSource: "crawl+ai-failed",
+        aiProvider: providerConfig.provider,
+        aiModel: providerConfig.apiModel,
         errorMsg: message.includes("timed out")
-          ? "Live AI timed out. Showing fast structured analysis instead."
-          : message,
+          ? "Live AI timed out. Showing live-crawl baseline — retry analysis or switch model in Settings."
+          : message.includes("quota") || message.includes("429")
+            ? "AI quota/rate limit hit. Showing crawl baseline. Wait, switch model, or add OpenRouter credits, then retry."
+            : `AI analysis failed: ${message}. Showing live-crawl baseline. Fix key/model in Settings and retry.`,
       })
     );
   }
@@ -4875,7 +4937,7 @@ app.post("/api/generate-blog", async (req, res) => {
   analysisAudience ||
   `buyers researching ${siteBrief?.niche || analysisNiche || "solutions"} related to ${brandName}`;
 
- // No API key: still return a FRESH unique high-readability article grounded in site + analysis
+ // No API key → offline draft only (client should prompt Settings for live AI blogs)
  if (!providerConfig) {
  const unique = buildUniqueArticle({
  domain,
@@ -4889,7 +4951,7 @@ app.post("/api/generate-blog", async (req, res) => {
  previousTitle: String(previousTitle || ""),
  });
  const normalized = normalizeBlogPayload(unique, domain, kw, seed);
- return res.json({
+ return res.status(200).json({
  ...normalized,
  isFallback: true,
  needsApiKey: true,
@@ -4897,11 +4959,16 @@ app.post("/api/generate-blog", async (req, res) => {
  variationSeed: seed,
  enhanceMode: isEnhance,
  masterPromptApplied: true,
- fallbackReason: isEnhance
-  ? "Enhanced structured draft (offline). Add your AI API key in Settings for full AI deep-research rewrites."
-  : "Unique structured draft generated offline from live analysis. Add your AI API key for full deep-research articles.",
+ aiGenerated: false,
+ fallbackReason:
+  "Live AI blog writing requires your API key. Open Settings → add OpenRouter or Gemini → Save → Generate again for a full AI research article.",
  });
  }
+
+ // Log which provider will write (never log the key)
+ console.log(
+  `[Blog] Live AI write via ${providerConfig.provider} model=${providerConfig.apiModel || "(default)"} domain=${domain} kw=${kw}`
+ );
  try {
  const secondaryList = Array.isArray(secondaryKeywords)
   ? secondaryKeywords.map(String).filter(Boolean)

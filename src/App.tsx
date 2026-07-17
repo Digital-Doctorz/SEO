@@ -82,7 +82,7 @@ export default function App() {
     { name: "Notion vs Obsidian", target: "notion.so", competitor: "obsidian.md", niche: "Knowledge Management & Notes" }
   ];
 
-  // Run SEO Analysis Request
+  // Run SEO Analysis Request — always uses saved BYOK key for live AI + crawl
   const runAnalysis = async (target: string, competitor: string) => {
     if (!target) return;
     setIsAnalyzing(true);
@@ -92,13 +92,19 @@ export default function App() {
     // Always resolve latest key from storage so OpenRouter/Gemini match what user saved
     const geo = detectLocationFromDomain(target);
     const liveConfig = resolveAiConfig(aiConfig) || resolveAiConfig(null);
-    const configWithGeo: AiProviderConfig | undefined = liveConfig
-      ? {
-          ...liveConfig,
-          locationCode: geo.locationCode,
-          languageCode: geo.languageCode,
-        }
-      : undefined;
+    if (!liveConfig?.apiKey) {
+      setIsAnalyzing(false);
+      setErrorMsg(
+        "Add your AI API key in Settings (OpenRouter or Gemini) to run live analysis and blog generation. Demo mode is disabled for full real-time data."
+      );
+      setSettingsModalOpen(true);
+      return;
+    }
+    const configWithGeo: AiProviderConfig = {
+      ...liveConfig,
+      locationCode: geo.locationCode,
+      languageCode: geo.languageCode,
+    };
 
     try {
       const data = await postApi<AnalysisResult & {
@@ -108,10 +114,12 @@ export default function App() {
         errorMsg?: string;
         fallbackReason?: string;
         estimatedCost?: { amount: number; currency: string };
+        dataSource?: string;
       }>("/api/analyze", {
         targetUrl: target,
         competitorUrl: competitor || undefined,
         aiConfig: configWithGeo,
+        requireAi: true,
       });
 
       const meta = data as AnalysisResult & {
@@ -120,16 +128,27 @@ export default function App() {
         error?: string;
         errorMsg?: string;
         fallbackReason?: string;
+        dataSource?: string;
       };
       // Canonical normalize: stable shapes for every tab (gaps, keywords, SERP, links)
       const safeResult = normalizeAnalysisResult(meta, target);
 
+      if (meta.needsApiKey) {
+        setAnalysisResult(null);
+        setErrorMsg(
+          "API key was not accepted. Open Settings, re-save your OpenRouter or Gemini key, then analyze again."
+        );
+        setSettingsModalOpen(true);
+        return;
+      }
+
       if (meta.isFallback) {
+        // Still show crawl-based result but warn — AI enrichment may have failed
         setAnalysisResult(safeResult);
         setErrorMsg(
-          meta.needsApiKey
-            ? "No API key configured. Open Settings to enter your key or review pre-compiled fallback analysis."
-            : meta.errorMsg || meta.fallbackReason || ""
+          meta.errorMsg ||
+            meta.fallbackReason ||
+            "Partial analysis: live crawl ran, but AI enrichment failed (quota or timeout). Check Settings model/billing and retry for full AI keywords & gaps."
         );
         setActiveTab("overview");
         return;
@@ -137,6 +156,7 @@ export default function App() {
 
       if (meta.error) throw new Error(String(meta.error));
       if (meta.errorMsg) setErrorMsg(String(meta.errorMsg));
+      else setErrorMsg("");
 
       setAnalysisResult(safeResult);
       setActiveTab("overview");
@@ -398,11 +418,11 @@ export default function App() {
                   API Settings —{" "}
                   <span className="capitalize font-bold">{aiConfig.provider}</span>
                   {aiConfig.apiKey ? (
-                    <span className="text-emerald-500 ml-1" title="Key saved">
-                      ● key set
+                    <span className="text-emerald-500 ml-1" title="Key saved for live AI">
+                      ● live AI ready ({aiConfig.apiModel || "default model"})
                     </span>
                   ) : (
-                    <span className="text-amber-400 ml-1">○ no key</span>
+                    <span className="text-amber-400 ml-1">○ add key for live analysis</span>
                   )}
                 </span>
               </button>

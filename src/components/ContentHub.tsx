@@ -26,6 +26,7 @@ import BlogLinksPanel from "./content-hub/BlogLinksPanel";
 import BlogTechnicalPanel from "./content-hub/BlogTechnicalPanel";
 import ErrorBoundary from "./ErrorBoundary";
 import ToastHost, { makeToast, type AppToast } from "./ToastHost";
+import { resolveAiConfig } from "../lib/aiConfig";
 
 export type { LinkSuggestion } from "./content-hub/types";
 
@@ -593,6 +594,17 @@ export default function ContentHub({
     if (!isRedraft) setBlogPost(null);
 
     try {
+      // Require live AI key for full articles (postApi also injects storage key)
+      const liveKey = resolveAiConfig(aiConfig) || resolveAiConfig(null);
+      if (!liveKey?.apiKey) {
+        setIsBlogGenerating(false);
+        setGenerationError(
+          "Add your AI API key in Settings (OpenRouter or Gemini) to write live blogs from analysis."
+        );
+        pushToast("warning", "API key required", "Open Settings and save your OpenRouter or Gemini key.");
+        return;
+      }
+
       // Deeper default length for research-grade articles
       // Master prompt minimum 2000 words
       const cappedWords = Math.min(2800, Math.max(2000, Number(wordCountToUse) || 2000));

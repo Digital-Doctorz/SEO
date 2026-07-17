@@ -1,4 +1,5 @@
 import type { AiProviderConfig } from "../types";
+import { resolveAiConfig } from "./aiConfig";
 
 export class ApiError extends Error {
   status: number;
@@ -25,16 +26,44 @@ async function parseJsonResponse(response: Response): Promise<unknown> {
   }
 }
 
-/** Typed POST helper for /api/* routes. Always attaches aiConfig when provided. */
+/**
+ * Typed POST helper for /api/* routes.
+ * Always attaches the latest saved AI key from Settings (localStorage) so
+ * analyze, blog, social, and keyword tools all use real BYOK credentials.
+ */
 export async function postApi<T = unknown>(
   path: string,
   body: Record<string, unknown>,
   options?: { signal?: AbortSignal }
 ): Promise<T> {
+  const fromBody =
+    body.aiConfig && typeof body.aiConfig === "object"
+      ? (body.aiConfig as Partial<AiProviderConfig>)
+      : null;
+  // Prefer explicit body config, else storage — never drop a valid key
+  const live = resolveAiConfig(fromBody) || resolveAiConfig(null);
+  const payload: Record<string, unknown> = {
+    ...body,
+    // Keep DataForSEO / geo fields from body if live resolve omitted them
+    aiConfig: live
+      ? {
+          ...live,
+          ...(fromBody?.dataforseoLogin
+            ? {
+                dataforseoLogin: fromBody.dataforseoLogin,
+                dataforseoPassword: fromBody.dataforseoPassword,
+              }
+            : {}),
+          ...(fromBody?.locationCode != null ? { locationCode: fromBody.locationCode } : {}),
+          ...(fromBody?.languageCode ? { languageCode: fromBody.languageCode } : {}),
+        }
+      : fromBody || undefined,
+  };
+
   const response = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
     signal: options?.signal,
   });
 
@@ -65,5 +94,5 @@ export function withAiConfig(
   payload: Record<string, unknown>,
   aiConfig: AiProviderConfig
 ): Record<string, unknown> {
-  return { ...payload, aiConfig };
+  return { ...payload, aiConfig: resolveAiConfig(aiConfig) || aiConfig };
 }
