@@ -798,7 +798,9 @@ export default function ContentHub({
           isFallback: true,
           fallbackReason: msg.includes("API key")
             ? "Add your AI API key in Settings for fully original AI articles. Showing a fresh unique draft for now."
-            : `${msg} Showing a fresh unique draft. Click regenerate for another angle.`,
+            : /JSON|parse|non-whitespace|Unexpected token|not valid JSON/i.test(msg)
+              ? "AI returned a messy response format. Showing a fresh unique draft — click regenerate for a new angle."
+              : `${msg} Showing a fresh unique draft. Click regenerate for another angle.`,
         },
         targetDomain,
         kw

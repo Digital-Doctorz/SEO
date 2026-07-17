@@ -401,81 +401,232 @@ function sanitizeJsonStringEscapes(input: string): string {
 }
 
 /**
+ * Extract the first complete JSON object/array by brace balance (string-aware).
+ * Fixes dual-JSON / trailing-junk failures like:
+ *   {"a":1}{"b":2}  →  {"a":1}
+ *   null{"a":1}     →  {"a":1}
+ * Greedy /\{[\s\S]*\}/ wrongly spans multiple root values and triggers
+ * "Unexpected non-whitespace character after JSON at position N".
+ */
+function extractBalancedJsonSlice(text: string, fromIndex = 0): string | null {
+ const rel = text.slice(fromIndex).search(/[\[{]/);
+ if (rel < 0) return null;
+ const absStart = fromIndex + rel;
+ let depth = 0;
+ let inString = false;
+ let escape = false;
+ for (let i = absStart; i < text.length; i++) {
+  const c = text[i];
+  if (escape) {
+   escape = false;
+   continue;
+  }
+  if (inString) {
+   if (c === "\\") {
+    escape = true;
+    continue;
+   }
+   if (c === '"') inString = false;
+   continue;
+  }
+  if (c === '"') {
+   inString = true;
+   continue;
+  }
+  if (c === "{" || c === "[") {
+   depth++;
+   continue;
+  }
+  if (c === "}" || c === "]") {
+   depth--;
+   if (depth === 0) return text.slice(absStart, i + 1);
+  }
+ }
+ // Truncated — return from start so repairTruncatedJson can close it
+ return text.slice(absStart);
+}
+
+/** Normalize messy LLM text before JSON candidate extraction. */
+function preprocessLlmJsonText(raw: string): string {
+ let s = String(raw || "")
+  .replace(/^\uFEFF/, "")
+  .trim();
+ if (!s) return s;
+
+ // Strip markdown fences (leading, trailing, and inline remnants)
+ s = s
+  .replace(/^```(?:json|JSON|js|javascript)?\s*/i, "")
+  .replace(/\s*```[\s\w]*$/i, "")
+  .replace(/```(?:json|JSON)?\s*/gi, "")
+  .replace(/```/g, "")
+  .trim();
+
+ // Language-tag leftovers: "json\n{...}" or "json{...}"
+ s = s.replace(/^(?:json|JSON)\s*/i, "").trim();
+
+ // Conversational prefixes
+ s = s
+  .replace(
+   /^(?:here(?:'s| is)|sure[,.]?|absolutely[,.]?|of course[,.]?|okay[,.]?|ok[,.]?)\s*/i,
+   ""
+  )
+  .trim();
+
+ return s;
+}
+
+/** Prepare a candidate string for JSON.parse (escapes, smart quotes, trailing commas). */
+function prepareJsonCandidate(input: string): string {
+ let s = input.replace(/,\s*([\]}])/g, "$1");
+ s = sanitizeJsonStringEscapes(s);
+ s = s
+  .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+  .replace(/[\u2018\u2019\u201A\u201B]/g, "'");
+ return s;
+}
+
+/**
+ * Try JSON.parse; if V8 reports trailing junk after a complete value
+ * ("Unexpected non-whitespace character after JSON at position N"),
+ * re-parse the prefix. Prefer object/array over null/true/number when
+ * the remainder still contains a balanced object (e.g. null{...}).
+ */
+function parseJsonWithTrailingRecovery(text: string): any {
+ try {
+  return JSON.parse(text);
+ } catch (e) {
+  const msg = e instanceof Error ? e.message : String(e);
+  const m = msg.match(/after JSON at position\s+(\d+)/i);
+  if (!m) throw e;
+  const pos = Number(m[1]);
+  if (!Number.isFinite(pos) || pos <= 0 || pos > text.length) throw e;
+
+  const head = text.slice(0, pos).trimEnd();
+  let headVal: any;
+  try {
+   headVal = JSON.parse(head);
+  } catch {
+   throw e;
+  }
+
+  // null/true/false/number before a real object — prefer the object
+  const rest = text.slice(pos);
+  const braceAt = rest.search(/[\[{]/);
+  if (
+   braceAt >= 0 &&
+   (headVal === null ||
+    typeof headVal === "boolean" ||
+    typeof headVal === "number" ||
+    typeof headVal === "string")
+  ) {
+   const balanced = extractBalancedJsonSlice(rest, braceAt);
+   if (balanced) {
+    try {
+     return JSON.parse(prepareJsonCandidate(balanced));
+    } catch {
+     try {
+      return JSON.parse(repairTruncatedJson(prepareJsonCandidate(balanced)));
+     } catch {
+      /* fall through to headVal */
+     }
+    }
+   }
+  }
+  return headVal;
+ }
+}
+
+/**
  * Extract and parse JSON from messy LLM output.
- * Handles markdown fences, conversational filler, trailing commas,
- * bad escapes, unescaped newlines, and truncated objects.
+ * Handles markdown fences, dual root values, conversational filler,
+ * trailing commas, bad escapes, unescaped newlines, and truncated objects.
  */
 function extractAndParseJSON(rawResponse: unknown): any {
  if (rawResponse == null) throw new Error("Invalid response format");
  if (typeof rawResponse === "object") return rawResponse;
- let cleanedText = String(rawResponse || "").trim();
+ let cleanedText = preprocessLlmJsonText(String(rawResponse || ""));
  if (!cleanedText) throw new Error("Invalid response format");
 
- // 1. Strip markdown code fences (```json ... ``` or ``` ... ```)
- cleanedText = cleanedText
-  .replace(/^```(?:json|JSON)?\s*/i, "")
-  .replace(/\s*```$/i, "")
-  .replace(/```json\s*/gi, "")
-  .replace(/```\s*/g, "")
-  .trim();
+ // Build ordered candidates (best first)
+ const candidates: string[] = [];
+ const pushUnique = (c: string | null | undefined) => {
+  if (!c || !c.trim()) return;
+  const t = c.trim();
+  if (!candidates.includes(t)) candidates.push(t);
+ };
 
- // 2. Drop common conversational prefixes
- cleanedText = cleanedText
-  .replace(/^(?:here(?:'s| is)|sure[,.]?|absolutely[,.]?|of course[,.]?)\s*/i, "")
-  .replace(/^[\s\S]{0,200}?(\{[\s\S]*)$/, "$1"); // keep from first { if preamble is short
+ // 1. First brace-balanced object/array (handles dual JSON + leading null/true junk)
+ const balanced = extractBalancedJsonSlice(cleanedText, 0);
+ pushUnique(balanced);
 
- // 3. Extract outermost JSON object (or array)
- const objMatch = cleanedText.match(/\{[\s\S]*\}/);
- const arrMatch = cleanedText.match(/\[[\s\S]*\]/);
- if (objMatch && (!arrMatch || (objMatch.index ?? 0) <= (arrMatch.index ?? 0))) {
-  cleanedText = objMatch[0];
- } else if (arrMatch) {
-  cleanedText = arrMatch[0];
- } else {
+ // 2. From first { or [ to end (truncated objects need repair)
+ const firstBrace = cleanedText.search(/[\[{]/);
+ if (firstBrace >= 0) {
+  pushUnique(cleanedText.slice(firstBrace));
+  // 3. Greedy outermost (legacy) — last } may help when balance is confused by bad escapes
+  const fromBrace = cleanedText.slice(firstBrace);
+  const greedyObj = fromBrace.match(/\{[\s\S]*\}/);
+  const greedyArr = fromBrace.match(/\[[\s\S]*\]/);
+  if (greedyObj) pushUnique(greedyObj[0]);
+  if (greedyArr) pushUnique(greedyArr[0]);
+ }
+
+ // 4. Full cleaned text (primitives / already-clean JSON)
+ pushUnique(cleanedText);
+
+ // 5. Second balanced value if dual objects (sometimes first is a tiny stub)
+ if (balanced && balanced.length < cleanedText.length) {
+  const after = cleanedText.indexOf(balanced) + balanced.length;
+  const second = extractBalancedJsonSlice(cleanedText, after);
+  pushUnique(second);
+ }
+
+ if (!candidates.length) {
   throw new Error("No JSON object found in the response.");
  }
 
- // 4. Trailing commas before } or ]
- cleanedText = cleanedText.replace(/,\s*([\]}])/g, "$1");
-
- // 5. Fix bad escapes / literal newlines in strings (Bad escaped character)
- cleanedText = sanitizeJsonStringEscapes(cleanedText);
-
- // 6. Smart quotes → ASCII (LLMs often emit these)
- cleanedText = cleanedText
-  .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
-  .replace(/[\u2018\u2019\u201A\u201B]/g, "'");
-
- const attempts = [
-  cleanedText,
-  repairTruncatedJson(cleanedText),
-  repairTruncatedJson(sanitizeJsonStringEscapes(cleanedText)),
- ];
-
  let lastErr: Error | null = null;
- for (const attempt of attempts) {
-  try {
-   return JSON.parse(attempt);
-  } catch (e) {
-   lastErr = e as Error;
+ const parsedValues: any[] = [];
+
+ for (const candidate of candidates) {
+  const prepared = prepareJsonCandidate(candidate);
+  const attempts = [
+   prepared,
+   repairTruncatedJson(prepared),
+   repairTruncatedJson(
+    prepareJsonCandidate(
+     prepared
+      .replace(/\u2028/g, "\\n")
+      .replace(/\u2029/g, "\\n")
+      .replace(/[\x00-\x1F]/g, (ch) => {
+       if (ch === "\n") return "\\n";
+       if (ch === "\r") return "\\r";
+       if (ch === "\t") return "\\t";
+       return "";
+      })
+    )
+   ),
+  ];
+
+  for (const attempt of attempts) {
+   try {
+    const val = parseJsonWithTrailingRecovery(attempt);
+    parsedValues.push(val);
+    // Prefer structured object/array immediately
+    if (val !== null && typeof val === "object") {
+     return val;
+    }
+   } catch (e) {
+    lastErr = e as Error;
+   }
   }
  }
 
- // 7. Last resort: escape remaining raw control chars globally inside strings via repair
- try {
-  const aggressive = cleanedText
-   .replace(/\u2028/g, "\\n")
-   .replace(/\u2029/g, "\\n")
-   .replace(/[\x00-\x1F]/g, (ch) => {
-    if (ch === "\n") return "\\n";
-    if (ch === "\r") return "\\r";
-    if (ch === "\t") return "\\t";
-    return "";
-   });
-  return JSON.parse(repairTruncatedJson(sanitizeJsonStringEscapes(aggressive)));
- } catch (e) {
-  lastErr = e as Error;
+ // Accept non-null primitive only if nothing better
+ for (const val of parsedValues) {
+  if (val !== null && val !== undefined) return val;
  }
+ if (parsedValues.includes(null)) return null;
 
  throw new Error(
   `Failed to parse JSON: ${lastErr?.message || "unknown"}. Snippet: ${cleanedText.slice(0, 180)}`
@@ -558,7 +709,11 @@ function humanizeProviderError(raw: unknown): string {
  if (/timed out/i.test(msg)) {
  return "AI timed out. Showing a complete offline draft — try again with a shorter word count.";
  }
- if (/Failed to parse JSON|Bad escaped character|No JSON object|Unexpected token/i.test(msg)) {
+ if (
+  /Failed to parse JSON|Bad escaped character|No JSON object|Unexpected token|Unexpected non-whitespace|after JSON at position|not valid JSON/i.test(
+   msg
+  )
+ ) {
   return "AI returned malformed structured data (fixed automatically when possible). Showing the best recovered or offline draft — regenerate for a fresh AI article.";
  }
  const cleaned = msg
@@ -2207,14 +2362,13 @@ async function callOpenRouter(
     JSON.stringify(data?.error || data).slice(0, 300);
    throw new Error(`OpenRouter error ${response.status}: ${errMsg}`);
   }
-  const text =
-   data.choices?.[0]?.message?.content ||
-   data.choices?.[0]?.text ||
-   "";
-  if (!text || !String(text).trim()) {
+  const text = flattenMessageContent(
+   data.choices?.[0]?.message?.content ?? data.choices?.[0]?.text ?? ""
+  );
+  if (!text.trim()) {
    throw new Error("OpenRouter error: empty model response. Try another model in Settings.");
   }
-  return { text: String(text) };
+  return { text };
  }
 
  async function withBackoff(): Promise<{ text: string }> {
@@ -2657,6 +2811,25 @@ function mapMasterTone(raw: string): "Conversational" | "Professional" | "Academ
  return "Professional";
 }
 
+/** Flatten OpenAI/OpenRouter message content (string | content-part[]). */
+function flattenMessageContent(content: unknown): string {
+ if (typeof content === "string") return content;
+ if (Array.isArray(content)) {
+  return content
+   .map((part) => {
+    if (typeof part === "string") return part;
+    if (part && typeof part === "object") {
+     const p = part as { text?: unknown; content?: unknown };
+     if (typeof p.text === "string") return p.text;
+     if (typeof p.content === "string") return p.content;
+    }
+    return "";
+   })
+   .join("");
+ }
+ return "";
+}
+
 /** Reliable text extraction across Gemini SDK + OpenRouter { text } shapes. */
 function extractAiText(result: any): string {
  if (!result) return "";
@@ -2670,12 +2843,18 @@ function extractAiText(result: any): string {
    /* ignore */
   }
  }
+ // OpenRouter/OpenAI chat shape sometimes nested under choices
+ const choiceContent = result?.choices?.[0]?.message?.content ?? result?.choices?.[0]?.text;
+ const fromChoice = flattenMessageContent(choiceContent);
+ if (fromChoice.trim()) return fromChoice;
+
  const parts = result?.candidates?.[0]?.content?.parts;
  if (Array.isArray(parts)) {
   const joined = parts.map((p: any) => (typeof p?.text === "string" ? p.text : "")).join("");
   if (joined.trim()) return joined;
  }
- if (typeof result?.content === "string" && result.content.trim()) return result.content;
+ const flatContent = flattenMessageContent(result?.content);
+ if (flatContent.trim()) return flatContent;
  return "";
 }
 
