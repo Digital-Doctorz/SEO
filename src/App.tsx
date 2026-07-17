@@ -686,6 +686,17 @@ export default function App() {
                         audience: analysisResult.targetAnalysis?.audiencePersona,
                         strengths: analysisResult.targetAnalysis?.contentStrengths,
                         weaknesses: analysisResult.targetAnalysis?.contentWeaknesses,
+                        localLocation: analysisResult.localLocation
+                          ? {
+                              city: analysisResult.localLocation.city,
+                              state: analysisResult.localLocation.state,
+                              country: analysisResult.localLocation.country,
+                              detectedAddress: analysisResult.localLocation.detectedAddress,
+                              serviceAreas: (analysisResult.localLocation as { serviceAreas?: string[] })
+                                .serviceAreas,
+                              localSeoVerdict: analysisResult.localLocation.localSeoVerdict,
+                            }
+                          : undefined,
                       }}
                     />
                     </Suspense>

@@ -696,6 +696,7 @@ export default function ContentHub({
               audience: analysisContext.audience || audienceToUse,
               strengths: analysisContext.strengths,
               weaknesses: analysisContext.weaknesses,
+              localLocation: analysisContext.localLocation,
             }
           : undefined,
       });

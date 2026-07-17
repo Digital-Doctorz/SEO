@@ -10,8 +10,11 @@ import type {
   DiscoveredCompetitor,
   DomainMetrics,
   Keyword,
+  LocalCompetitor,
+  LocalLocation,
   MarketResearchReport,
   PageMetric,
+  RankingBlueprint,
   SerpFeature,
   TargetAnalysis,
 } from "../types";
@@ -555,6 +558,154 @@ export function normalizeTargetAnalysis(
   };
 }
 
+export function normalizeLocalLocation(
+  raw: unknown,
+  opts: { domain?: string; niche?: string; brand?: string } = {}
+): LocalLocation {
+  const l = (raw && typeof raw === "object" ? raw : {}) as Record<string, any>;
+  const domain = str(opts.domain, "example.com");
+  const brand = str(opts.brand, domain.split(".")[0] || "Brand");
+  const niche = str(opts.niche, "local services");
+  const city = str(l.city, "Local service area");
+  const state = str(l.state, "");
+  const country = str(l.country, "United States");
+  const primaryService = niche.split(/[&,|·]/)[0]?.trim() || "services";
+
+  const localCompetitors: LocalCompetitor[] = Array.isArray(l.localCompetitors)
+    ? l.localCompetitors.slice(0, 8).map((c: any, i: number) => ({
+        name: str(c?.name, `${city} ${primaryService} #${i + 1}`),
+        domain: str(c?.domain, `local-competitor-${i + 1}.com`),
+        address: str(c?.address, `${city}${state ? `, ${state}` : ""}`),
+        distance: str(c?.distance, `${(i + 1) * 1.1} mi`),
+        phone: str(c?.phone, ""),
+        rating: Math.min(5, Math.max(1, num(c?.rating, 4.2))),
+        reviewCount: Math.max(0, Math.round(num(c?.reviewCount, 40 + i * 20))),
+        localRank: Math.max(1, Math.round(num(c?.localRank, i + 2))),
+        services: strList(c?.services, 4).length
+          ? strList(c?.services, 4)
+          : [primaryService],
+        domainRating: Math.max(1, Math.min(100, Math.round(num(c?.domainRating, 35 + i * 3)))),
+        estimatedMonthlyTraffic: Math.max(100, Math.round(num(c?.estimatedMonthlyTraffic, 1200 + i * 400))),
+        googleMapsUrl: str(
+          c?.googleMapsUrl,
+          `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(primaryService + " " + city)}`
+        ),
+      }))
+    : [];
+
+  const primaryLocalCompetitors = Array.isArray(l.primaryLocalCompetitors)
+    ? l.primaryLocalCompetitors.slice(0, 5).map((c: any, i: number) => ({
+        name: str(c?.name, localCompetitors[i]?.name || `Local peer ${i + 1}`),
+        domain: str(c?.domain, localCompetitors[i]?.domain || `peer${i + 1}.com`),
+        localRank: Math.max(1, Math.round(num(c?.localRank, i + 2))),
+        mapDistance: str(c?.mapDistance || c?.distance, `${i + 1}.2 mi`),
+      }))
+    : localCompetitors.slice(0, 3).map((c) => ({
+        name: c.name,
+        domain: c.domain,
+        localRank: c.localRank,
+        mapDistance: c.distance,
+      }));
+
+  const localKeywordOpportunities = Array.isArray(l.localKeywordOpportunities)
+    ? l.localKeywordOpportunities.slice(0, 12).map((k: any) => ({
+        keyword: str(k?.keyword, `${primaryService} near me`),
+        searchVolume: Math.max(10, Math.round(num(k?.searchVolume, 200))),
+        intent: str(k?.intent, "Transactional"),
+      }))
+    : [
+        { keyword: `${primaryService} near me`, searchVolume: 720, intent: "Transactional" },
+        { keyword: `${primaryService} in ${city}`, searchVolume: 540, intent: "Commercial" },
+        { keyword: `best ${primaryService} ${city}`, searchVolume: 310, intent: "Commercial" },
+      ];
+
+  const rbIn = l.rankingBlueprint && typeof l.rankingBlueprint === "object" ? l.rankingBlueprint : {};
+  const rankingBlueprint: RankingBlueprint = {
+    currentPosition: str(rbIn.currentPosition, "Not consistently in local pack"),
+    targetPosition: str(
+      rbIn.targetPosition,
+      `Top 3 Map Pack for ${primaryService} near me / in ${city}`
+    ),
+    summary: str(
+      rbIn.summary,
+      `${brand} in ${city}: prioritize GBP, NAP consistency, reviews, and geo landing pages for high-intent local traffic.`
+    ),
+    technicalSeo: strList(rbIn.technicalSeo, 6).length
+      ? strList(rbIn.technicalSeo, 6)
+      : ["LocalBusiness JSON-LD", "Mobile-fast contact page", "Unique geo title/meta"],
+    localSeo: strList(rbIn.localSeo, 6).length
+      ? strList(rbIn.localSeo, 6)
+      : [
+          `Verify Google Business Profile for ${city}`,
+          "Identical NAP across citations",
+          "Review response cadence <48h",
+        ],
+    contentStrategy: strList(rbIn.contentStrategy, 6).length
+      ? strList(rbIn.contentStrategy, 6)
+      : [`${primaryService} in ${city} pillar`, "Near-me FAQ cluster", "Local comparison pages"],
+    linkBuilding: strList(rbIn.linkBuilding, 6).length
+      ? strList(rbIn.linkBuilding, 6)
+      : ["Local directories", "Chamber / community pages", "Partner local businesses"],
+    timelineEstimate: str(rbIn.timelineEstimate, "6–12 weeks for Map Pack gains"),
+    priorityActions: Array.isArray(rbIn.priorityActions)
+      ? rbIn.priorityActions.slice(0, 8).map((a: any) => ({
+          action: str(a?.action, "Improve local signals"),
+          impact: (["High", "Medium", "Low"].includes(str(a?.impact))
+            ? str(a?.impact)
+            : "High") as "High" | "Medium" | "Low",
+          effort: (["High", "Medium", "Low"].includes(str(a?.effort))
+            ? str(a?.effort)
+            : "Medium") as "High" | "Medium" | "Low",
+          timeframe: str(a?.timeframe, "2–4 weeks"),
+        }))
+      : [
+          {
+            action: `Optimize GBP for ${primaryService} in ${city}`,
+            impact: "High" as const,
+            effort: "Low" as const,
+            timeframe: "1 week",
+          },
+        ],
+    localKeywordsToTarget: Array.isArray(rbIn.localKeywordsToTarget)
+      ? rbIn.localKeywordsToTarget.slice(0, 8).map((k: any) => ({
+          keyword: str(k?.keyword, `${primaryService} near me`),
+          searchVolume: Math.max(10, Math.round(num(k?.searchVolume, 200))),
+          currentRank: str(k?.currentRank, "Not ranking / untracked"),
+        }))
+      : localKeywordOpportunities.slice(0, 5).map((k) => ({
+          keyword: k.keyword,
+          searchVolume: k.searchVolume,
+          currentRank: "Not ranking / untracked",
+        })),
+  };
+
+  return {
+    detectedAddress: str(l.detectedAddress, `${city}${state ? `, ${state}` : ""}, ${country}`),
+    city,
+    state,
+    country,
+    confidenceScore: Math.max(1, Math.min(100, Math.round(num(l.confidenceScore, 55)))),
+    googleMapPackScore: Math.max(1, Math.min(100, Math.round(num(l.googleMapPackScore, 52)))),
+    citationConsistency: Math.max(1, Math.min(100, Math.round(num(l.citationConsistency, 58)))),
+    serviceAreas: strList(l.serviceAreas, 8).length ? strList(l.serviceAreas, 8) : [city],
+    primaryLocalCompetitors,
+    localCompetitors,
+    rankingBlueprint,
+    localKeywordOpportunities,
+    localOptimizationsNeeded: strList(l.localOptimizationsNeeded, 8).length
+      ? strList(l.localOptimizationsNeeded, 8)
+      : [
+          "Publish full NAP on contact page",
+          `Geo page: ${primaryService} in ${city}`,
+          "Embed Google Map + LocalBusiness schema",
+        ],
+    localSeoVerdict: str(
+      l.localSeoVerdict,
+      `${brand} can capture more high-intent local traffic in ${city} with GBP optimization, geo-modified keywords, and location-specific content.`
+    ),
+  };
+}
+
 /** Full AnalysisResult normalizer — use on every successful /api/analyze response. */
 export function normalizeAnalysisResult(raw: unknown, fallbackTarget = "example.com"): AnalysisResult {
   const data = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -613,8 +764,12 @@ export function normalizeAnalysisResult(raw: unknown, fallbackTarget = "example.
     targetAnalysis,
     marketResearch,
     autonomousBlog: sanitized.autonomousBlog,
-    localLocation: sanitized.localLocation,
-    rankingBlueprint: sanitized.rankingBlueprint,
+    localLocation: normalizeLocalLocation(sanitized.localLocation, {
+      domain: target.domain,
+      niche: nicheHint,
+      brand: brandHint,
+    }),
+    rankingBlueprint: sanitized.rankingBlueprint || sanitized.localLocation?.rankingBlueprint,
     dataSource: str(sanitized.dataSource, "simulated"),
     estimatedCost: sanitized.estimatedCost as AnalysisResult["estimatedCost"],
     pageSpeed: sanitized.pageSpeed,

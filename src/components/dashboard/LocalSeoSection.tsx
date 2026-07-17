@@ -32,7 +32,18 @@ export default function LocalSeoSection({
                   Local SEO & Geographic Search Intelligence
                 </h3>
                 <p className="text-xs text-slate-500 font-medium">
-                  Dynamically parsed address, localized Map Pack visibility, and geo-targeted competitor analysis for <span className="text-blue-600 font-semibold">{target.domain}</span>
+                  Local SEO focus: NAP, Map Pack, geo keywords &amp; city competitors for{" "}
+                  <span className="text-blue-600 font-semibold">{target.domain}</span>
+                  {localLocation.city ? (
+                    <>
+                      {" "}
+                      · market:{" "}
+                      <span className="text-slate-700 font-semibold">
+                        {localLocation.city}
+                        {localLocation.state ? `, ${localLocation.state}` : ""}
+                      </span>
+                    </>
+                  ) : null}
                 </p>
               </div>
             </div>
@@ -105,6 +116,23 @@ export default function LocalSeoSection({
             </div>
 
           </div>
+
+          {/* Service areas + verdict strip */}
+          {(localLocation.serviceAreas && localLocation.serviceAreas.length > 0) && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">
+                Service areas
+              </span>
+              {localLocation.serviceAreas.map((area) => (
+                <span
+                  key={area}
+                  className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100"
+                >
+                  {area}
+                </span>
+              ))}
+            </div>
+          )}
 
           {/* Local Competitors & Keywords Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">

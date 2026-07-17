@@ -129,6 +129,8 @@ export interface LocalLocation {
   confidenceScore: number;
   googleMapPackScore: number;
   citationConsistency: number;
+  /** Cities/neighborhoods the business serves */
+  serviceAreas?: string[];
   primaryLocalCompetitors: Array<{ name: string; domain: string; localRank: number; mapDistance: string }>;
   localCompetitors: LocalCompetitor[];
   rankingBlueprint: RankingBlueprint;

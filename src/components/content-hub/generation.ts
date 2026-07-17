@@ -146,6 +146,14 @@ export async function generateBlogPost(params: {
     audience?: string;
     strengths?: string[];
     weaknesses?: string[];
+    /** Local SEO location pack from analysis */
+    localLocation?: {
+      city?: string;
+      state?: string;
+      country?: string;
+      detectedAddress?: string;
+      serviceAreas?: string[];
+    };
   };
 }): Promise<
   BlogPost & {

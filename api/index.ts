@@ -3302,7 +3302,8 @@ function mapStrictSeoArticleJson(
 const SEO_BLOG_SYSTEM_PROMPT = buildSeoBlogSystemPrompt("Professional");
 
 // ============================================================
-// Live site crawl ΓÇö understand the real business behind the URL
+// Live site crawl — understand the real business behind the URL
+// Local SEO: extract NAP / city / service area for geo targeting
 // ============================================================
 interface SiteProfile {
  niche: string;
@@ -3315,6 +3316,423 @@ interface SiteProfile {
  scrapedPages: number;
  rawSnippet: string;
  source: "live-crawl" | "heuristic" | "known-brand";
+ /** Detected primary city for Local SEO */
+ city?: string;
+ state?: string;
+ country?: string;
+ detectedAddress?: string;
+ locationConfidence?: number;
+ serviceAreas?: string[];
+ phoneHints?: string[];
+}
+
+/** Major city signals for geo extraction (Local SEO). */
+const KNOWN_CITY_HINTS: Array<{ city: string; state: string; country: string; re: RegExp }> = [
+ { city: "Bangalore", state: "Karnataka", country: "India", re: /\b(bengaluru|bangalore)\b/i },
+ { city: "Mumbai", state: "Maharashtra", country: "India", re: /\b(mumbai|bombay)\b/i },
+ { city: "Delhi", state: "Delhi", country: "India", re: /\b(new delhi|delhi ncr|delhi)\b/i },
+ { city: "Hyderabad", state: "Telangana", country: "India", re: /\bhyderabad\b/i },
+ { city: "Chennai", state: "Tamil Nadu", country: "India", re: /\bchennai\b/i },
+ { city: "Kolkata", state: "West Bengal", country: "India", re: /\b(kolkata|calcutta)\b/i },
+ { city: "Pune", state: "Maharashtra", country: "India", re: /\bpune\b/i },
+ { city: "Ahmedabad", state: "Gujarat", country: "India", re: /\bahmedabad\b/i },
+ { city: "Jaipur", state: "Rajasthan", country: "India", re: /\bjaipur\b/i },
+ { city: "Kochi", state: "Kerala", country: "India", re: /\b(kochi|cochin)\b/i },
+ { city: "Chandigarh", state: "Chandigarh", country: "India", re: /\bchandigarh\b/i },
+ { city: "Gurgaon", state: "Haryana", country: "India", re: /\b(gurgaon|gurugram)\b/i },
+ { city: "Noida", state: "Uttar Pradesh", country: "India", re: /\bnoida\b/i },
+ { city: "London", state: "England", country: "United Kingdom", re: /\blondon\b/i },
+ { city: "Manchester", state: "England", country: "United Kingdom", re: /\bmanchester\b/i },
+ { city: "New York", state: "NY", country: "United States", re: /\b(new york|nyc|manhattan|brooklyn)\b/i },
+ { city: "Los Angeles", state: "CA", country: "United States", re: /\b(los angeles|l\.a\.)\b/i },
+ { city: "Chicago", state: "IL", country: "United States", re: /\bchicago\b/i },
+ { city: "Houston", state: "TX", country: "United States", re: /\bhouston\b/i },
+ { city: "Austin", state: "TX", country: "United States", re: /\baustin\b/i },
+ { city: "Seattle", state: "WA", country: "United States", re: /\bseattle\b/i },
+ { city: "San Francisco", state: "CA", country: "United States", re: /\b(san francisco|sf bay)\b/i },
+ { city: "Toronto", state: "ON", country: "Canada", re: /\btoronto\b/i },
+ { city: "Vancouver", state: "BC", country: "Canada", re: /\bvancouver\b/i },
+ { city: "Sydney", state: "NSW", country: "Australia", re: /\bsydney\b/i },
+ { city: "Melbourne", state: "VIC", country: "Australia", re: /\bmelbourne\b/i },
+ { city: "Dubai", state: "Dubai", country: "UAE", re: /\bdubai\b/i },
+ { city: "Singapore", state: "Singapore", country: "Singapore", re: /\bsingapore\b/i },
+];
+
+function countryFromDomainTld(domain: string): string {
+ const host = cleanDomain(domain).toLowerCase();
+ if (/\.in$|\.co\.in$/.test(host)) return "India";
+ if (/\.uk$|\.co\.uk$/.test(host)) return "United Kingdom";
+ if (/\.au$|\.com\.au$/.test(host)) return "Australia";
+ if (/\.ca$/.test(host)) return "Canada";
+ if (/\.ae$/.test(host)) return "UAE";
+ if (/\.sg$/.test(host)) return "Singapore";
+ if (/\.de$/.test(host)) return "Germany";
+ if (/\.fr$/.test(host)) return "France";
+ return "United States";
+}
+
+/** Extract address / city / phone signals from crawled HTML + text (Local SEO NAP). */
+function extractLocationFromCorpus(
+ domain: string,
+ corpus: string,
+ htmlChunks: string[] = []
+): {
+ city: string;
+ state: string;
+ country: string;
+ detectedAddress: string;
+ confidence: number;
+ serviceAreas: string[];
+ phones: string[];
+} {
+ const text = `${corpus} ${htmlChunks.join(" ")}`.replace(/\s+/g, " ");
+ const country = countryFromDomainTld(domain);
+ const phones = Array.from(
+  new Set(
+   (text.match(/(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,5}\)?[-.\s]?)?\d{3,5}[-.\s]?\d{3,5}[-.\s]?\d{0,5}/g) || [])
+    .map((p) => p.trim())
+    .filter((p) => p.replace(/\D/g, "").length >= 10 && p.replace(/\D/g, "").length <= 15)
+  )
+ ).slice(0, 4);
+
+ // JSON-LD LocalBusiness / PostalAddress
+ let schemaAddress = "";
+ let schemaCity = "";
+ let schemaState = "";
+ for (const html of htmlChunks) {
+  const ldBlocks = html.match(
+   /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
+  ) || [];
+  for (const block of ldBlocks) {
+   const raw = block.replace(/<\/?script[^>]*>/gi, "").trim();
+   try {
+    const data = JSON.parse(raw);
+    const nodes = Array.isArray(data) ? data : data?.["@graph"] ? data["@graph"] : [data];
+    for (const n of nodes) {
+     const addr = n?.address || n?.location?.address;
+     if (addr && typeof addr === "object") {
+      schemaCity = String(addr.addressLocality || schemaCity || "");
+      schemaState = String(addr.addressRegion || schemaState || "");
+      const line = [addr.streetAddress, addr.addressLocality, addr.addressRegion, addr.postalCode]
+       .filter(Boolean)
+       .join(", ");
+      if (line.length > schemaAddress.length) schemaAddress = line;
+     }
+     if (n?.areaServed) {
+      /* collected below via city hints */
+     }
+    }
+   } catch {
+    /* ignore bad JSON-LD */
+   }
+  }
+ }
+
+ let city = schemaCity;
+ let state = schemaState;
+ let confidence = schemaCity ? 78 : 35;
+ for (const hint of KNOWN_CITY_HINTS) {
+  if (hint.re.test(text) || hint.re.test(schemaAddress)) {
+   city = hint.city;
+   state = hint.state;
+   confidence = Math.max(confidence, schemaCity ? 88 : 72);
+   break;
+  }
+ }
+
+ // Postal-style Indian pin + street fragments
+ const pinMatch = text.match(
+  /([A-Za-z0-9][A-Za-z0-9\s,.\-\/]{12,80}?\b\d{5,6}\b)/
+ );
+ let detectedAddress = schemaAddress;
+ if (!detectedAddress && pinMatch) {
+  detectedAddress = pinMatch[1].trim().slice(0, 140);
+  confidence = Math.max(confidence, 60);
+ }
+ if (!detectedAddress && city) {
+  detectedAddress = `${city}${state ? `, ${state}` : ""}, ${country}`;
+ }
+ if (!city) {
+  // TLD-based soft default for local framing
+  if (country === "India") {
+   city = "Local service area";
+   state = "India";
+   confidence = Math.max(confidence, 40);
+  } else {
+   city = "Local service area";
+   state = country;
+   confidence = Math.max(confidence, 38);
+  }
+ }
+
+ const serviceAreas: string[] = [];
+ if (city && city !== "Local service area") serviceAreas.push(city);
+ for (const hint of KNOWN_CITY_HINTS) {
+  if (hint.country === country && hint.re.test(text) && !serviceAreas.includes(hint.city)) {
+   serviceAreas.push(hint.city);
+  }
+  if (serviceAreas.length >= 6) break;
+ }
+
+ return {
+  city,
+  state: state || country,
+  country,
+  detectedAddress: detectedAddress || `${city}, ${country}`,
+  confidence: Math.min(95, confidence),
+  serviceAreas: serviceAreas.slice(0, 6),
+  phones,
+ };
+}
+
+/** Build geo-modified keyword list for Local SEO high-traffic capture. */
+function buildLocalKeywordPool(
+ services: string[],
+ nicheKeywords: string[],
+ city: string,
+ serviceAreas: string[] = []
+): string[] {
+ const areas = Array.from(
+  new Set([city, ...serviceAreas].map((a) => String(a || "").trim()).filter(Boolean))
+ ).filter((a) => a.toLowerCase() !== "local service area");
+ const seeds = Array.from(
+  new Set(
+   [...services, ...nicheKeywords]
+    .map((s) => String(s || "").trim().toLowerCase())
+    .filter((s) => s.length > 2 && s.length < 60)
+  )
+ ).slice(0, 10);
+
+ const out: string[] = [];
+ const push = (k: string) => {
+  const t = k.replace(/\s+/g, " ").trim();
+  if (t && !out.includes(t) && t.split(/\s+/).length >= 2) out.push(t);
+ };
+
+ for (const seed of seeds) {
+  // strip city if already present
+  const base = seed.replace(/\b(near me|in [a-z\s]+)$/i, "").trim();
+  push(`${base} near me`);
+  for (const area of areas.slice(0, 3)) {
+   push(`${base} in ${area}`);
+   push(`best ${base} in ${area}`);
+   push(`${base} ${area}`);
+  }
+  push(`${base} cost`);
+  push(`${base} reviews`);
+ }
+ // Always-on local intent patterns
+ if (areas[0]) {
+  const a = areas[0];
+  const niche = seeds[0] || "services";
+  push(`${niche} clinic near me`);
+  push(`${niche} ${a} appointments`);
+  push(`top ${niche} in ${a}`);
+  push(`${a} ${niche} for families`);
+  push(`affordable ${niche} near ${a}`);
+ }
+ return out.slice(0, 24);
+}
+
+/**
+ * Full Local SEO profile: Map Pack readiness, local competitors, geo keywords, blueprint.
+ * Always returned so Overview Local SEO section has real structure.
+ */
+function buildLocalSeoProfile(opts: {
+ domain: string;
+ brand: string;
+ niche: string;
+ services: string[];
+ keywords: string[];
+ city: string;
+ state: string;
+ country: string;
+ detectedAddress: string;
+ confidence: number;
+ serviceAreas?: string[];
+ phones?: string[];
+ scrapedPages?: number;
+ domainRating?: number;
+}): any {
+ const {
+  domain,
+  brand,
+  niche,
+  services,
+  keywords,
+  city,
+  state,
+  country,
+  detectedAddress,
+  confidence,
+ } = opts;
+ const areas = (opts.serviceAreas || [city]).filter(Boolean).slice(0, 5);
+ const primaryService = services[0] || keywords[0] || niche.split(/[&,|]/)[0]?.trim() || "services";
+ const localKws = buildLocalKeywordPool(services, keywords, city, areas);
+
+ const localCompetitors = [
+  {
+   name: `${city} ${primaryService} Center`,
+   domain: `${city.toLowerCase().replace(/\s+/g, "")}-${String(primaryService).split(/\s+/)[0]?.toLowerCase() || "clinic"}.com`,
+   address: `${city}, ${state}`,
+   distance: "1.2 mi",
+   phone: opts.phones?.[0] || "",
+   rating: 4.6,
+   reviewCount: 180 + (brand.length % 40),
+   localRank: 2,
+   services: services.slice(0, 3).length ? services.slice(0, 3) : [primaryService],
+   domainRating: 42,
+   estimatedMonthlyTraffic: 4200,
+   googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(primaryService + " " + city)}`,
+  },
+  {
+   name: `Best ${primaryService} ${city}`,
+   domain: `best${String(primaryService).split(/\s+/)[0]?.toLowerCase() || "local"}${city.toLowerCase().replace(/\s+/g, "")}.com`,
+   address: `${city} metro`,
+   distance: "2.4 mi",
+   phone: "",
+   rating: 4.4,
+   reviewCount: 95,
+   localRank: 3,
+   services: [primaryService, "Consultations"],
+   domainRating: 38,
+   estimatedMonthlyTraffic: 2800,
+   googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(primaryService + " near " + city)}`,
+  },
+  {
+   name: `${city} Specialty Care`,
+   domain: `${city.toLowerCase().replace(/\s+/g, "")}care.local`,
+   address: `Near ${city} center`,
+   distance: "3.1 mi",
+   phone: "",
+   rating: 4.2,
+   reviewCount: 64,
+   localRank: 5,
+   services: services.slice(0, 2).length ? services.slice(0, 2) : [primaryService],
+   domainRating: 33,
+   estimatedMonthlyTraffic: 1600,
+   googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(city + " " + niche)}`,
+  },
+ ];
+
+ const mapPackScore = Math.min(
+  92,
+  38 +
+   Math.round(confidence * 0.25) +
+   (opts.scrapedPages && opts.scrapedPages > 2 ? 12 : 4) +
+   (opts.phones?.length ? 10 : 0) +
+   (detectedAddress && detectedAddress.length > 20 ? 10 : 0)
+ );
+ const citationScore = Math.min(90, 45 + Math.round(confidence * 0.3) + (opts.phones?.length ? 8 : 0));
+
+ const localKeywordOpportunities = localKws.slice(0, 12).map((keyword, i) => ({
+  keyword,
+  searchVolume: Math.max(40, 880 - i * 55 + (keyword.includes("near me") ? 120 : 0)),
+  intent: /near me|in |appoint|book|cost|price/i.test(keyword)
+   ? "Transactional"
+   : /best|top|review/i.test(keyword)
+     ? "Commercial"
+     : "Informational",
+ }));
+
+ return {
+  detectedAddress,
+  city,
+  state,
+  country,
+  confidenceScore: confidence,
+  googleMapPackScore: mapPackScore,
+  citationConsistency: citationScore,
+  serviceAreas: areas,
+  primaryLocalCompetitors: localCompetitors.slice(0, 3).map((c) => ({
+   name: c.name,
+   domain: c.domain,
+   localRank: c.localRank,
+   mapDistance: c.distance,
+  })),
+  localCompetitors,
+  rankingBlueprint: {
+   currentPosition: mapPackScore >= 70 ? "Map Pack contender (local pack 4–10)" : "Not consistently in local pack",
+   targetPosition: `Top 3 Map Pack for "${primaryService} near me" / "${primaryService} ${city}" within 90 days`,
+   summary: `${brand} serves ${city}${state ? `, ${state}` : ""} (${country}) in ${niche}. Local SEO priority: consistent NAP, Google Business Profile categories/photos/reviews, geo-modified service pages, and location landing content for ${areas.slice(0, 3).join(", ") || city}. Capture high-intent "near me" and "in ${city}" queries that convert better than national head terms.`,
+   technicalSeo: [
+    "LocalBusiness + PostalAddress + geo JSON-LD on homepage and contact",
+    "Unique title/meta per location or service-area page",
+    "Fast mobile LCP on contact & booking pages (local intent is mobile-heavy)",
+   ],
+   localSeo: [
+    `Claim/verify Google Business Profile for ${city}`,
+    "Weekly photo + post cadence; respond to every review in <48h",
+    `Build citations with identical NAP: ${detectedAddress.slice(0, 80)}`,
+    `Create/refresh service pages targeting "${primaryService} in ${city}"`,
+   ],
+   contentStrategy: [
+    `Pillar: complete guide to ${primaryService} in ${city}`,
+    `Cluster: cost, process, FAQs, neighborhoods/service areas`,
+    "Comparison pages vs local alternatives (honest, helpful)",
+    "Case stories with city/neighborhood context (privacy-safe)",
+   ],
+   linkBuilding: [
+    `Local chambers, directories, and ${city} resource pages`,
+    "Partner clinics / complementary local businesses",
+    "Sponsorships and community pages with geo anchor variety",
+   ],
+   timelineEstimate: "6–12 weeks for Map Pack movement with consistent GBP + geo content",
+   priorityActions: [
+    {
+     action: `Optimize GBP categories + services list for ${primaryService}`,
+     impact: "High",
+     effort: "Low",
+     timeframe: "1 week",
+    },
+    {
+     action: `Publish geo landing page: ${primaryService} in ${city}`,
+     impact: "High",
+     effort: "Medium",
+     timeframe: "2–3 weeks",
+    },
+    {
+     action: "Fix NAP consistency across top 10 citations",
+     impact: "High",
+     effort: "Medium",
+     timeframe: "2–4 weeks",
+    },
+    {
+     action: "Launch review request workflow after every visit/booking",
+     impact: "High",
+     effort: "Low",
+     timeframe: "1–2 weeks",
+    },
+    {
+     action: `Target 5 "near me" / neighborhood long-tails in content hub`,
+     impact: "Medium",
+     effort: "Medium",
+     timeframe: "4–6 weeks",
+    },
+   ],
+   localKeywordsToTarget: localKeywordOpportunities.slice(0, 8).map((k) => ({
+    keyword: k.keyword,
+    searchVolume: k.searchVolume,
+    currentRank: "Not ranking / untracked",
+   })),
+  },
+  localKeywordOpportunities,
+  localOptimizationsNeeded: [
+    confidence < 70
+     ? "Publish a clear contact page with full street address, city, phone, and hours"
+     : "Keep NAP identical across GBP, site footer, and directories",
+    `Add Internal links from blog posts to "${primaryService} in ${city}" service page`,
+    "Embed Google Map on contact/location page",
+    "Add FAQ schema answering local cost, parking, hours, and service-area questions",
+    areas.length > 1
+     ? `Create neighborhood/service-area sections for: ${areas.slice(0, 4).join(", ")}`
+     : `Expand service-area coverage content around ${city}`,
+  ],
+  localSeoVerdict:
+   mapPackScore >= 70
+    ? `${brand} has a solid local foundation in ${city}. Double down on reviews, geo-pages, and GBP posts to push into the top-3 Map Pack and capture high-converting local traffic.`
+    : `${brand} can win more high-intent local traffic in ${city} by fixing NAP/GBP signals and publishing location-specific service + FAQ content targeting "near me" and "in ${city}" queries.`,
+ };
 }
 
 const STOP_WORDS = new Set(
@@ -3768,9 +4186,15 @@ async function crawlTargetSite(targetDomain: string): Promise<SiteProfile> {
  `https://${clean}/products`,
  `https://${clean}/solutions`,
  `https://${clean}/pricing`,
+ `https://${clean}/contact`,
+ `https://${clean}/contact-us`,
+ `https://${clean}/locations`,
+ `https://${clean}/location`,
+ `https://${clean}/find-us`,
  `https://www.${clean}/about`,
  `https://www.${clean}/services`,
  `https://www.${clean}/products`,
+ `https://www.${clean}/contact`,
  ];
 
  const fetched: Array<{ url: string; html: string }> = [];
@@ -3790,7 +4214,7 @@ async function crawlTargetSite(targetDomain: string): Promise<SiteProfile> {
  for (const p of parsedHome.pathHints) {
  const low = p.toLowerCase();
  if (
- /about|service|product|solution|pricing|feature|blog|care|treatment|shop|platform|docs|api|contact|industr|use-case|customer/.test(
+ /about|service|product|solution|pricing|feature|blog|care|treatment|shop|platform|docs|api|contact|location|branch|clinic|hospital|industr|use-case|customer|near|map/.test(
  low
  )
  ) {
@@ -3865,11 +4289,25 @@ async function crawlTargetSite(targetDomain: string): Promise<SiteProfile> {
  const uniqueServices = Array.from(new Set(services.map((s) => s.trim()).filter(Boolean))).slice(0, 8);
  const nicheFromHead =
  headings[0] ||
- pageTitles[0]?.split(/[|\-ΓÇôΓÇö]/)[0]?.trim() ||
+ pageTitles[0]?.split(/[|\-–—]/)[0]?.trim() ||
  `${brand} products & services`;
  const description =
  descriptions.sort((a, b) => b.length - a.length)[0] ||
- `${brand} (${clean}) ΓÇö ${nicheFromHead}. ${corpus.slice(0, 220)}`;
+ `${brand} (${clean}) — ${nicheFromHead}. ${corpus.slice(0, 220)}`;
+
+ const loc = extractLocationFromCorpus(
+  clean,
+  corpus,
+  fetched.map((f) => f.html)
+ );
+ // Local SEO: blend geo-modified keywords for high-intent local traffic
+ const localKws = buildLocalKeywordPool(
+  uniqueServices.length ? uniqueServices : heuristicSiteProfile(clean).services,
+  longTails,
+  loc.city,
+  loc.serviceAreas
+ );
+ const mergedKeywords = Array.from(new Set([...localKws.slice(0, 10), ...longTails])).slice(0, 18);
 
  return {
  niche: nicheFromHead.slice(0, 120),
@@ -3877,13 +4315,20 @@ async function crawlTargetSite(targetDomain: string): Promise<SiteProfile> {
  services: uniqueServices.length
  ? uniqueServices
  : heuristicSiteProfile(clean).services,
- keywords: longTails.slice(0, 15),
+ keywords: mergedKeywords.slice(0, 15),
  brand,
  pageTitles: pageTitles.slice(0, 12),
  headings: headings.slice(0, 30),
  scrapedPages: fetched.length,
  rawSnippet: corpus.slice(0, 1500),
  source: "live-crawl",
+ city: loc.city,
+ state: loc.state,
+ country: loc.country,
+ detectedAddress: loc.detectedAddress,
+ locationConfidence: loc.confidence,
+ serviceAreas: loc.serviceAreas,
+ phoneHints: loc.phones,
  };
 }
 
@@ -4311,9 +4756,30 @@ async function generateFallbackData(targetRaw: string, competitorRaw?: string) {
  const targetPageInfo = await fetchPageSummary(target);
  const compPageInfo = competitor ? await fetchPageSummary(competitor) : null;
  const targetSeed = target.length;
- const brandName = target.split(".")[0];
+ const brandName = targetPageInfo.brand || target.split(".")[0];
  const services = targetPageInfo.services;
- const nicheKeywords = targetPageInfo.keywords;
+ // Prefer geo-modified local keywords for Local SEO traffic capture
+ const locFromSite = extractLocationFromCorpus(
+  target,
+  `${targetPageInfo.rawSnippet || ""} ${targetPageInfo.description || ""} ${(targetPageInfo.headings || []).join(" ")}`,
+  []
+ );
+ const city =
+  targetPageInfo.city ||
+  locFromSite.city ||
+  "Local service area";
+ const state = targetPageInfo.state || locFromSite.state || countryFromDomainTld(target);
+ const country = targetPageInfo.country || locFromSite.country || countryFromDomainTld(target);
+ const serviceAreas = targetPageInfo.serviceAreas || locFromSite.serviceAreas || [city];
+ const localKeywordPool = buildLocalKeywordPool(
+  services || [],
+  targetPageInfo.keywords || [],
+  city,
+  serviceAreas
+ );
+ const nicheKeywords = Array.from(
+  new Set([...(localKeywordPool || []), ...(targetPageInfo.keywords || [])])
+ ).slice(0, 18);
  const topServices = (services || []).slice(0, 6);
  const targetMetrics = {
  domain: target,
@@ -4352,61 +4818,122 @@ async function generateFallbackData(targetRaw: string, competitorRaw?: string) {
  topPages: compTopPages,
  };
 
- // Top 15 competitive set grounded in real niche (not random prefixes)
+ // Top 15 competitive set grounded in real niche (local + category peers)
  const brandLabel = targetPageInfo.brand || brandName.charAt(0).toUpperCase() + brandName.slice(1);
  const discoveredCompetitors = buildIndustryCompetitors(
  target,
  brandLabel,
  targetPageInfo.niche,
  nicheKeywords
- );
-
- // Top 15 long-tail keywords derived from live site crawl / niche profile
- const keywordPool = nicheKeywords.slice(0, 15);
- while (keywordPool.length < 15) {
- keywordPool.push(`${brandLabel.toLowerCase()} ${["guide", "pricing", "alternatives", "setup", "review"][keywordPool.length % 5]}`);
- }
- const keywordList = keywordPool.map((kw, i) => ({
- keyword: kw,
- volume: Math.max(80, 2400 - i * 130 + (kw.length % 7) * 20),
- difficulty: Math.min(85, 22 + i * 4),
- cpc: parseFloat((1.1 + i * 0.22).toFixed(2)),
- intent: (i < 5 ? "Commercial" : i < 11 ? "Informational" : "Transactional") as "Commercial" | "Informational" | "Transactional",
- type: (kw.split(/\s+/).length >= 3 || kw.length >= 18 ? "Long-tail" : "Short-tail") as "Short-tail" | "Long-tail",
- competition: (i < 4 ? "High" : i < 10 ? "Medium" : "Low") as "Low" | "Medium" | "High",
- trend: (i < 6 ? "rising" : "stable") as "rising" | "stable" | "declining",
- serpRankings: [{ rank: 1, title: `${kw} | ${brandLabel}`, url: `https://${target}` }],
- relatedKeywords: keywordPool.filter((_, j) => j !== i).slice(0, 4),
- parentTopic: targetPageInfo.niche.split("&")[0].trim(),
- buyerJourneyStage: (i < 5 ? "Awareness" : i < 11 ? "Consideration" : "Decision") as
- | "Awareness"
- | "Consideration"
- | "Decision",
- opportunityScore: Math.max(12, 92 - i * 4),
- isPillarOpportunity: i < 5,
+ ).map((c: any, i: number) => ({
+  ...c,
+  nicheFocus: i < 4 ? `${c.nicheFocus} · local/${city} market` : c.nicheFocus,
+  analyzedTakeaway: `${c.analyzedTakeaway} For Local SEO in ${city}: win "near me" and "in ${city}" modifiers with GBP trust + geo landing pages.`,
+  targetKeywords: Array.from(
+   new Set([
+    ...(c.targetKeywords || []),
+    `${(nicheKeywords[0] || "services").split(" in ")[0]} in ${city}`,
+    `${(nicheKeywords[0] || "services").split(" near ")[0]} near me`,
+   ])
+  ).slice(0, 6),
  }));
 
+ // Local SEO profile (always present for Overview Local SEO card)
+ const localLocation = buildLocalSeoProfile({
+  domain: target,
+  brand: brandLabel,
+  niche: targetPageInfo.niche,
+  services: services || [],
+  keywords: nicheKeywords,
+  city,
+  state,
+  country,
+  detectedAddress:
+   targetPageInfo.detectedAddress ||
+   locFromSite.detectedAddress ||
+   `${city}, ${state}, ${country}`,
+  confidence: targetPageInfo.locationConfidence || locFromSite.confidence || 45,
+  serviceAreas,
+  phones: targetPageInfo.phoneHints || locFromSite.phones,
+  scrapedPages: targetPageInfo.scrapedPages,
+  domainRating: targetMetrics.domainRating,
+ });
+
+ // Top 15 long-tail LOCAL keywords — geo + service for high local traffic
+ const keywordPool = nicheKeywords.slice(0, 15);
+ while (keywordPool.length < 15) {
+  const extras = [
+   `${(services[0] || "services").toLowerCase()} near me`,
+   `best ${(services[0] || "clinic").toLowerCase()} in ${city}`,
+   `${city} ${(services[1] || services[0] || "treatment").toLowerCase()}`,
+   `${(services[0] || "services").toLowerCase()} cost ${city}`,
+   `${brandLabel.toLowerCase()} ${city} reviews`,
+  ];
+  keywordPool.push(extras[keywordPool.length % extras.length]);
+ }
+ const keywordList = keywordPool.map((kw, i) => {
+  const isLocal =
+   /near me| in |city|local|nearby|appointment|clinic|hospital/i.test(kw) ||
+   kw.toLowerCase().includes(city.toLowerCase());
+  return {
+   keyword: kw,
+   volume: Math.max(
+    80,
+    (isLocal ? 1600 : 1200) - i * 110 + (kw.includes("near me") ? 200 : 0) + (kw.length % 7) * 20
+   ),
+   difficulty: Math.min(85, (isLocal ? 18 : 26) + i * 3),
+   cpc: parseFloat((isLocal ? 1.8 : 1.1 + i * 0.18).toFixed(2)),
+   intent: (
+    /near me|book|appoint|cost|price|contact/i.test(kw)
+     ? "Transactional"
+     : i < 6
+       ? "Commercial"
+       : "Informational"
+   ) as "Commercial" | "Informational" | "Transactional",
+   type: (kw.split(/\s+/).length >= 3 || kw.length >= 18 ? "Long-tail" : "Short-tail") as
+    | "Short-tail"
+    | "Long-tail",
+   competition: (i < 4 ? "High" : i < 10 ? "Medium" : "Low") as "Low" | "Medium" | "High",
+   trend: (i < 8 ? "rising" : "stable") as "rising" | "stable" | "declining",
+   serpRankings: [
+    {
+     rank: 1,
+     title: `${kw} | ${brandLabel} ${city}`,
+     url: `https://${target}`,
+    },
+   ],
+   relatedKeywords: keywordPool.filter((_, j) => j !== i).slice(0, 4),
+   parentTopic: `${targetPageInfo.niche.split("&")[0].trim()} · ${city}`,
+   buyerJourneyStage: (i < 5 ? "Awareness" : i < 11 ? "Consideration" : "Decision") as
+    | "Awareness"
+    | "Consideration"
+    | "Decision",
+   opportunityScore: Math.max(12, (isLocal ? 96 : 88) - i * 4),
+   isPillarOpportunity: i < 5 || isLocal,
+  };
+ });
+
  const contentGaps = normalizeContentGaps(
- keywordPool.slice(0, 12).map((kw, i) => {
- const difficulty = Math.min(75, 16 + i * 5);
- const titleCase = kw.replace(/\b\w/g, (c) => c.toUpperCase());
- return {
- competitorKeyword: kw,
- competitorRank: 2 + (i % 8),
- competitorVolume: Math.max(90, 1800 - i * 110),
- competitorDifficulty: difficulty,
- targetRank: i % 3 === 0 ? "Not Ranking" : 12 + i * 3,
- recommendedTopic:
- i % 3 === 0
- ? `How to Master ${titleCase} Without Wasting Budget (2026 Guide)`
- : i % 3 === 1
- ? `${titleCase}: ${5 + (i % 4)} Proven Steps That Actually Work`
- : `Why Smart Teams Switch to ${titleCase} (And How to Start)`,
- recommendedType: i % 2 === 0 ? "Pillar Blog Post" : "Comparison Guide",
- difficultyCategory: difficulty < 30 ? "Easy" : difficulty < 55 ? "Medium" : "Hard",
- isQuickWin: difficulty < 38 && i < 6,
- };
- })
+  keywordPool.slice(0, 12).map((kw, i) => {
+   const difficulty = Math.min(75, (kw.includes("near me") ? 12 : 16) + i * 4);
+   const titleCase = kw.replace(/\b\w/g, (c) => c.toUpperCase());
+   return {
+    competitorKeyword: kw,
+    competitorRank: 2 + (i % 8),
+    competitorVolume: Math.max(90, 1800 - i * 110),
+    competitorDifficulty: difficulty,
+    targetRank: i % 3 === 0 ? "Not Ranking" : 12 + i * 3,
+    recommendedTopic:
+     i % 3 === 0
+      ? `${titleCase}: Local Guide for ${city} Families (2026)`
+      : i % 3 === 1
+        ? `Best ${titleCase} — What ${city} Patients Should Know`
+        : `${titleCase} Near Me: How ${brandLabel} Helps in ${city}`,
+    recommendedType: i % 2 === 0 ? "Local Pillar / Service Page" : "Geo Comparison Guide",
+    difficultyCategory: difficulty < 30 ? "Easy" : difficulty < 55 ? "Medium" : "Hard",
+    isQuickWin: difficulty < 38 && i < 6,
+   };
+  })
  );
 
  const serpFeatures = [
@@ -4424,9 +4951,9 @@ async function generateFallbackData(targetRaw: string, competitorRaw?: string) {
  },
  {
  type: "Local Pack" as const,
- query: `${nicheKeywords[0] || "clinic"} near me`,
- opportunity: "Win map pack visibility for local commercial intent.",
- actionability: "Optimize Google Business Profile categories, photos, and reviews.",
+ query: `${(services[0] || nicheKeywords[0] || "clinic").toString().split(" in ")[0]} near me`,
+ opportunity: `Win Map Pack visibility in ${city} for high-intent local queries.`,
+ actionability: `Optimize Google Business Profile (categories, photos, reviews, services) for ${city}; keep NAP identical to site footer.`,
  },
  {
  type: "Video Carousel" as const,
@@ -4495,35 +5022,36 @@ async function generateFallbackData(targetRaw: string, competitorRaw?: string) {
    weaknesses: contentWeaknesses,
   });
   return {
-   coreNiche: targetPageInfo.niche,
-   audiencePersona: `People actively searching for ${targetPageInfo.niche} solutions related to ${brandLabel}`,
+   coreNiche: `${targetPageInfo.niche} · ${city}, ${country}`,
+   audiencePersona: `Local buyers in ${city}${state ? ` / ${state}` : ""} searching for ${targetPageInfo.niche} — "near me", reviews, pricing, and booking intent`,
    contentStrengths,
    contentWeaknesses,
-   detailedBreakdown: `${brandLabel} (${target}) operates in ${targetPageInfo.niche}. Site profile source: ${targetPageInfo.source}. ${targetPageInfo.description} Top demand themes: ${nicheKeywords.slice(0, 5).join("; ")}. Estimated DR ${targetMetrics.domainRating} with ~${(targetMetrics.organicTraffic / 1000).toFixed(0)}k monthly organic visits. Priority: publish long-tail pillar content and comparison pages that match real service language. Closest tracked peers: ${discoveredCompetitors
+   detailedBreakdown: `${brandLabel} (${target}) is a Local SEO target in ${city}, ${state}, ${country}. Industry/niche: ${targetPageInfo.niche}. Crawl source: ${targetPageInfo.source}. ${targetPageInfo.description} Address signal: ${localLocation.detectedAddress}. Primary local demand themes: ${nicheKeywords.slice(0, 6).join("; ")}. Map Pack score est. ${localLocation.googleMapPackScore}/100. Priority: GBP + NAP consistency, geo service pages ("in ${city}" / "near me"), review velocity, and local competitor outranking. Peers: ${discoveredCompetitors
     .slice(0, 4)
     .map((c: any) => c.domain)
     .join(", ")}.`,
-   socialPresenceSummary: `Around ${targetPageInfo.niche}, public conversation clusters on practical how-tos, proof/outcomes, pricing clarity, and peer recommendations. Brands that answer specific questions and show process detail earn more trust than slogan-led posts.`,
+   socialPresenceSummary: `In ${city}, conversations about ${targetPageInfo.niche} cluster on recommendations, wait times, pricing transparency, parking/hours, and before/after proof. Local reviews and neighborhood mentions drive more trust than national brand slogans.`,
    socialMentionKeywords: [
-    ...(nicheKeywords.slice(0, 4) || []),
-    "how it works",
+    city,
+    ...(nicheKeywords.slice(0, 3) || []),
+    "near me",
     "reviews",
+    "appointments",
     "pricing",
-    "alternatives",
    ].filter(Boolean).slice(0, 8),
-   competitorSocialInsights: `Peers such as ${discoveredCompetitors
+   competitorSocialInsights: `Local peers and category sites (${discoveredCompetitors
     .slice(0, 4)
     .map((c: any) => c.domain)
     .join(
      ", "
-    )} win attention with educational explainers, comparison posts, and proof snippets. Counter with original data, transparent process, and answer-first posts that link to service pages on ${target}.`,
+    )}) win ${city} attention with review replies, geo hashtags, and "serving ${city}" posts. Counter with GBP posts, neighborhood proof, and answer-first content linking to service pages on ${target}.`,
    marketResearch,
   };
  })(),
  marketResearch: buildMarketResearchPack({
   brand: brandLabel,
   domain: target,
-  niche: targetPageInfo.niche,
+  niche: `${targetPageInfo.niche} in ${city}`,
   keywords: nicheKeywords,
   competitors: discoveredCompetitors,
  }),
@@ -4536,43 +5064,47 @@ async function generateFallbackData(targetRaw: string, competitorRaw?: string) {
  niche: targetPageInfo.niche,
  headings: (targetPageInfo.headings || []).slice(0, 12),
  pageTitles: (targetPageInfo.pageTitles || []).slice(0, 8),
+ city,
+ state,
+ country,
+ detectedAddress: localLocation.detectedAddress,
+ serviceAreas,
  },
+ localLocation,
  serpFeatures,
  backlinkSources,
  backlinkOpportunities,
- rankingBlueprint: {
- currentPosition: "Not in top 30 for primary keywords",
- targetPosition: "Top 10 for 5+ primary keywords within 90 days",
- summary: `${target.split(".")[0]} has a solid domain authority of ${targetMetrics.domainRating} but needs to close the gap with competitors via structured topical authority, backlink acquisition, and schema implementation.`,
+ rankingBlueprint: localLocation.rankingBlueprint || {
+ currentPosition: "Not in top 30 for primary local keywords",
+ targetPosition: `Top 3 Map Pack + top 10 organic for ${city} service terms within 90 days`,
+ summary: `${brandLabel} (${target}) in ${city}: prioritize Local SEO (GBP, NAP, geo pages) plus topical clusters for ${targetPageInfo.niche}.`,
  technicalSeo: [
- "Improve LCP below 2.5 seconds",
- "Add structured data (FAQPage, HowTo, LocalBusiness)",
- "Ensure mobile responsiveness across all pages",
+ "Improve LCP below 2.5 seconds (mobile local intent)",
+ "Add LocalBusiness + FAQPage + HowTo structured data",
+ "Ensure mobile responsiveness on contact & booking pages",
  ],
  localSeo: [
- "Claim and verify Google Business Profile",
- "Build local citations on relevant directories",
- "Collect and respond to customer reviews",
+ `Claim and verify Google Business Profile for ${city}`,
+ "Build local citations with identical NAP",
+ "Collect and respond to customer reviews weekly",
  ],
  contentStrategy: [
- "Build topic clusters around primary service keywords",
- "Publish pillar pages for each core offering",
- "Create comparison content vs competitors",
+ `Geo pillar: ${services[0] || "services"} in ${city}`,
+ "Near-me FAQ clusters and neighborhood pages",
+ "Comparison content vs local competitors",
  ],
  linkBuilding: [
- "Guest post on niche health/wellness publications",
- "Get listed on curated resource pages",
- "Build broken-link replacements on .edu and .org domains",
+ `Local directories and ${city} resource pages`,
+ "Community / chamber sponsorships",
+ "Partner local businesses for contextual links",
  ],
- timelineEstimate: "3-6 months for measurable ranking improvements",
- priorityActions: [
- { action: "Build topical authority clusters with internal hub pages", impact: "High" as const, effort: "Medium" as const, timeframe: "4-6 weeks" },
- { action: "Acquire contextual backlinks from niche academic & .org domains", impact: "High" as const, effort: "High" as const, timeframe: "8-12 weeks" },
- { action: "Optimize Core Web Vitals (LCP < 2.5s, CLS < 0.1)", impact: "Medium" as const, effort: "Low" as const, timeframe: "1-2 weeks" },
- { action: "Implement FAQPage & HowTo structured data for rich snippets", impact: "Medium" as const, effort: "Low" as const, timeframe: "1 week" },
- { action: "Publish 2-3 pillar articles targeting bottom-of-funnel commercial intents", impact: "High" as const, effort: "Medium" as const, timeframe: "3-4 weeks" },
- ],
- localKeywordsToTarget: [],
+ timelineEstimate: "6-12 weeks for measurable local pack improvements",
+ priorityActions: (localLocation.rankingBlueprint?.priorityActions || []).slice(0, 5),
+ localKeywordsToTarget: (localLocation.localKeywordOpportunities || []).slice(0, 8).map((k: any) => ({
+  keyword: k.keyword,
+  searchVolume: k.searchVolume,
+  currentRank: "Not ranking / untracked",
+ })),
  },
  autonomousBlog: normalizeBlogPayload(
  buildUniqueArticle({
@@ -5229,40 +5761,58 @@ ASCII only. JSON only.`;
   }
 
   try {
+    const localBase = base.localLocation || {};
     const siteCtx = {
+      purpose: "LOCAL_SEO",
       niche: base.targetAnalysis?.coreNiche,
       brand: base.siteProfile?.brand || domain.split(".")[0],
       scrapedPages: base.siteProfile?.scrapedPages,
       source: base.siteProfile?.source,
+      city: localBase.city || base.siteProfile?.city,
+      state: localBase.state || base.siteProfile?.state,
+      country: localBase.country || base.siteProfile?.country,
+      detectedAddress: localBase.detectedAddress || base.siteProfile?.detectedAddress,
+      serviceAreas: localBase.serviceAreas || base.siteProfile?.serviceAreas,
       seedKeywords: (base.keywords || []).slice(0, 10).map((k: any) => k.keyword),
       services: (base.target?.topPages || []).slice(0, 5).map((p: any) => p.title),
       headings: (base.siteProfile?.headings || []).slice(0, 12),
       snippet: (base.targetAnalysis?.detailedBreakdown || "").slice(0, 500),
       rawSnippet: (base.siteProfile?.rawSnippet || "").slice(0, 600),
     };
-    const prompt = `You are a senior SEO analyst. Analyze the LIVE website at https://${domain}/${competitorUrl ? ` compared with competitor https://${cleanDomain(competitorUrl)}/` : ""}.
+    const cityHint = siteCtx.city || "the business city";
+    const prompt = `You are a senior LOCAL SEO analyst. This product is for Local SEO — maximize high-intent local traffic (Map Pack + geo organic).
 
-GROUND TRUTH from live crawl (stay strictly on-niche — do not invent unrelated industries):
+Analyze LIVE site https://${domain}/${competitorUrl ? ` vs competitor https://${cleanDomain(competitorUrl)}/` : ""}.
+
+GROUND TRUTH (location + industry — stay on-niche; do not invent unrelated industries):
 ${JSON.stringify(siteCtx)}
 
+LOCAL SEO RULES:
+1. Detect/confirm business city, state/region, service areas from crawl.
+2. Keywords MUST be geo-modified for high local traffic: "near me", "in ${cityHint}", neighborhood + service, cost/reviews/appointments.
+3. Competitors should include local/regional peers that fight for the same city Map Pack — not only national publishers.
+4. Content gap titles must be location-aware (city in H1 angle when natural).
+5. rankingBlueprint and localLocation must prioritize GBP, NAP, reviews, geo pages, citations.
+
 Return ONLY valid compact JSON (no markdown fences) with:
-- keywords: exactly 15 LONG-TAIL keywords highly relevant to this business (3-7 words each, commercial + informational mix). Each: keyword, volume, difficulty, cpc, intent, type, opportunityScore, relatedKeywords[]
-- contentGaps: 10 items: competitorKeyword, competitorRank, competitorVolume, competitorDifficulty, targetRank, recommendedTopic (click-worthy long-tail title), recommendedType, difficultyCategory, isQuickWin
-- discoveredCompetitors: exactly 12-15 REAL industry peers (prefer real known domains in this niche; no nonsense invented brands). Each MUST include: domain, nicheSimilarity (1-100), nicheFocus, estimatedMonthlyTraffic, domainRating, threatLevel (High|Medium|Low), contentCadence, popularBlogUrl, latestArticleTitle, latestArticleUrl, analyzedTakeaway (2-4 sentences of competitive insight), targetKeywords[4-6], strengths[2-4], weaknesses[2-4], contentAngles[2-4], counterMove, seoStrategy, aiRankStrategy, schemaRecommendation
-- marketResearch: { executiveSummary, marketOverview, demandDrivers[4-6], buyerSegments[{segment,intent,priority}], competitiveIntensity (Low|Moderate|High|Very High), intensityRationale, categoryLeaders[], whitespaceOpportunities[4-6], positioningRecommendation, channelMix[{channel,role,priority}], ninetyDayPlays[{play,why,effort}], swot{strengths[],weaknesses[],opportunities[],threats[]} }
-- targetAnalysis: { coreNiche, audiencePersona, contentStrengths[], contentWeaknesses[], detailedBreakdown, socialPresenceSummary, socialMentionKeywords[], competitorSocialInsights }
-- rankingBlueprint: { summary, priorityActions[{action,impact,effort,timeframe}], timelineEstimate, contentStrategy[] }
-- serpFeatures: 4 items { type, query, opportunity, actionability }
-- backlinkSources: 4 items { sourceUrl, domainRating, targetUrl, anchorText, linkType }
+- keywords: exactly 15 LOCAL long-tails (3-7 words). Prefer "${cityHint}" / "near me" modifiers. Each: keyword, volume, difficulty, cpc, intent, type, opportunityScore, relatedKeywords[]
+- contentGaps: 10 items with recommendedTopic titles that mention ${cityHint} or local intent when natural
+- discoveredCompetitors: 12-15 peers (mix local specialists + category leaders). Include nicheFocus noting local market, targetKeywords with geo modifiers, analyzedTakeaway with Local SEO counter-moves
+- localLocation: { detectedAddress, city, state, country, confidenceScore, googleMapPackScore, citationConsistency, primaryLocalCompetitors[{name,domain,localRank,mapDistance}], localCompetitors[{name,domain,address,distance,rating,reviewCount,localRank,services,domainRating,estimatedMonthlyTraffic}], localKeywordOpportunities[{keyword,searchVolume,intent}], localOptimizationsNeeded[], localSeoVerdict, rankingBlueprint{summary,priorityActions[{action,impact,effort,timeframe}],timelineEstimate,localSeo[],contentStrategy[]} }
+- marketResearch: include local demand drivers and whitespace for ${cityHint}
+- targetAnalysis: { coreNiche (include city), audiencePersona (local buyers), contentStrengths[], contentWeaknesses[], detailedBreakdown (mention location + industry), socialPresenceSummary, socialMentionKeywords[], competitorSocialInsights }
+- rankingBlueprint: Local SEO first (Map Pack + geo organic)
+- serpFeatures: must include Local Pack opportunity for ${cityHint}
+- backlinkSources: 4 items (prefer local/directory/geo when possible)
 - backlinkOpportunities: 3 items
-Keep numbers realistic. ASCII only. No off-topic keywords. Research-quality competitor insights — not one-line fluff.`;
+Keep numbers realistic. ASCII only. No off-topic keywords.`;
 
     // Use the user's Settings model (Gemini / OpenRouter) for real-time analysis
     const result = await withTimeout(
       callAI(
         providerConfig,
         prompt,
-        "You are an expert SEO analyst. Output ONLY valid JSON. No markdown fences. No commentary. Escape quotes inside strings. Stay on-niche for the crawled site.",
+        "You are an expert LOCAL SEO analyst. Output ONLY valid JSON. No markdown fences. Prioritize location, Map Pack, geo keywords, and local competitors. Escape quotes inside strings. Stay on-niche for the crawled site.",
         {
           responseMimeType: "application/json",
           temperature: 0.25,
@@ -5359,7 +5909,13 @@ Keep numbers realistic. ASCII only. No off-topic keywords. Research-quality comp
           parsed.targetAnalysis?.marketResearch ||
           base.marketResearch ||
           base.targetAnalysis?.marketResearch,
-        rankingBlueprint: parsed.rankingBlueprint || base.rankingBlueprint,
+        rankingBlueprint:
+          parsed.rankingBlueprint ||
+          parsed.localLocation?.rankingBlueprint ||
+          base.rankingBlueprint,
+        localLocation: parsed.localLocation
+          ? { ...base.localLocation, ...parsed.localLocation }
+          : base.localLocation,
         siteProfile: base.siteProfile,
         autonomousBlog: autonomous,
         dataSource: "ai",
@@ -5367,6 +5923,7 @@ Keep numbers realistic. ASCII only. No off-topic keywords. Research-quality comp
         aiProvider: providerConfig.provider,
         aiModel: providerConfig.apiModel,
         liveCrawl: Boolean(base.siteProfile?.source === "live-crawl" || base.siteProfile?.scrapedPages),
+        seoFocus: "local",
       })
     );
   } catch (err: unknown) {
@@ -5624,11 +6181,42 @@ app.post("/api/generate-blog", async (req, res) => {
       .join("\n")
    : "(none from analysis — derive from niche and competitor)";
 
- const analysisBlock = `## STEP 0 — TARGET URL ANALYSIS (mandatory ground truth — write ONLY for this site)
+ // Local SEO location from crawl + optional analysisContext
+ const analysisLocal = (analysis as any)?.localLocation || (analysis as any)?.location || {};
+ const blogLoc = extractLocationFromCorpus(
+  domain,
+  `${siteContext.rawSnippet || ""} ${siteContext.description || ""} ${(siteContext.headings || []).join(" ")} ${analysisNiche}`,
+  []
+ );
+ const localCity = sanitizeText(
+  analysisLocal.city || siteBrief?.city || blogLoc.city || ""
+ ) || blogLoc.city;
+ const localState = sanitizeText(
+  analysisLocal.state || siteBrief?.state || blogLoc.state || ""
+ ) || blogLoc.state;
+ const localCountry = sanitizeText(
+  analysisLocal.country || siteBrief?.country || blogLoc.country || ""
+ ) || blogLoc.country;
+ const localAddress = sanitizeText(
+  analysisLocal.detectedAddress || siteBrief?.detectedAddress || blogLoc.detectedAddress || ""
+ ) || blogLoc.detectedAddress;
+ const localAreas = (
+  Array.isArray(analysisLocal.serviceAreas)
+   ? analysisLocal.serviceAreas
+   : siteBrief?.serviceAreas || blogLoc.serviceAreas || [localCity]
+ ).filter(Boolean).slice(0, 6);
+
+ const analysisBlock = `## STEP 0 — TARGET URL + LOCAL SEO ANALYSIS (mandatory — write for THIS local business)
+PURPOSE: LOCAL SEO — high-intent local traffic (Map Pack + geo organic). Ground every section in location + industry.
 TARGET_URL: https://${domain}/
 BRAND: ${brandName}
 CRAWL SOURCE: ${siteBrief?.source || "unknown"}
-NICHE: ${analysisNiche || siteBrief?.niche || "infer strictly from crawl"}
+PRIMARY CITY / MARKET: ${localCity}
+STATE / REGION: ${localState}
+COUNTRY: ${localCountry}
+DETECTED ADDRESS / NAP: ${localAddress}
+SERVICE AREAS: ${localAreas.join("; ") || localCity}
+INDUSTRY / NICHE: ${analysisNiche || siteBrief?.niche || "infer strictly from crawl"}
 DESCRIPTION: ${String(siteContext.description || "").slice(0, 400)}
 SERVICES/OFFERS: ${(siteContext.services || []).join("; ") || "(from crawl headings)"}
 PAGE TITLES: ${(siteContext.pageTitles || []).slice(0, 6).join(" | ") || "(none)"}
@@ -5638,25 +6226,28 @@ STRENGTHS: ${analysisStrengths.join("; ") || "(from crawl)"}
 WEAKNESSES / OPPORTUNITIES: ${analysisWeaknesses.join("; ") || "(from crawl)"}
 RAW SNIPPET: ${String(siteContext.rawSnippet || "").slice(0, 500)}
 
-## KEYWORD + AUDIENCE TARGETING
+## KEYWORD + AUDIENCE TARGETING (LOCAL)
 TOPIC: ${topicResolved}
 PRIMARY KEYWORD: ${kw}
-SECONDARY: ${secondary || "derive 2-3 from site keywords"}
-LONG-TAILS: ${analysisKeywords.slice(0, 12).join("; ") || (siteBrief?.keywords || []).slice(0, 12).join("; ") || "derive from niche"}
-AUDIENCE: ${resolvedAudience}
+  (If keyword is not geo-modified, weave "${localCity}" / "near me" / neighborhood naturally in H2s and examples — do not keyword-stuff.)
+SECONDARY: ${secondary || "derive 2-3 from site keywords + city modifiers"}
+LONG-TAILS: ${analysisKeywords.slice(0, 12).join("; ") || (siteBrief?.keywords || []).slice(0, 12).join("; ") || "derive local long-tails"}
+AUDIENCE: ${resolvedAudience || `Local buyers in ${localCity} researching ${analysisNiche || kw}`}
 TONE: ${masterTone}
 DENSITY: ${densityLow}-${densityHigh} natural uses of primary keyword (~1.0-1.5% of ${targetWords} words)
+LOCAL INTENT: Prefer examples, FAQs, and CTAs that help someone in ${localCity} choose and contact ${brandName}.
 
-## COMPETITOR + CONTENT GAPS (outrank / differentiate)
-COMPETITOR_URL: ${compDomain ? `https://${compDomain}/` : "(use peers from analysis)"}
+## LOCAL COMPETITOR + CONTENT GAPS
+COMPETITOR_URL: ${compDomain ? `https://${compDomain}/` : "(use local peers from analysis)"}
 COMPETITORS: ${analysisCompetitors.join(", ") || "(none listed)"}
 COMPETITOR CRAWL: ${JSON.stringify(competitorContext)}
 CONTENT GAPS TO COVER:
 ${gapLines}
 
-## EDITORIAL SEED (optional flavor — content must stay on TARGET_URL niche)
+## EDITORIAL SEED (stay on TARGET_URL niche + city)
 Strategy: ${strategy.id} / ${strategy.style}
-Title seed: ${strategy.titlePrefix(kw)}`;
+Title seed: ${strategy.titlePrefix(kw)}
+Location must appear in intro, at least 2 H2s or examples, FAQ (hours/parking/areas if relevant), and conclusion CTA to https://${domain}/`;
 
  // PHASE 1: AI research brief — URL-first, JSON with robust parse
  let researchBrief: any = null;
@@ -5741,21 +6332,25 @@ Rules: Stay on-niche for ${brandName}. No article body. Escape any quotes inside
 
  const researchBriefJson = JSON.stringify(researchBrief).slice(0, 3500);
  const masterWriteSystem = buildSeoBlogWriterSystemPrompt(masterTone);
- const masterWritePrompt = `FIRST-PASS COMPLETE ARTICLE — write the full publishable post now (not an outline, not a stub).
+ const masterWritePrompt = `FIRST-PASS COMPLETE ARTICLE — write the full publishable LOCAL SEO post now (not an outline, not a stub).
 
-STEP 0 — INTERNALIZE TARGET URL (already crawled):
-You have live analysis of https://${domain}/. The article must sound researched for THIS brand only.
-If any paragraph could sit on a random competitor blog unchanged, rewrite with ${brandName}-specific detail.
+STEP 0 — INTERNALIZE TARGET URL + LOCATION (already crawled):
+You have live analysis of https://${domain}/ serving ${localCity}, ${localState}, ${localCountry}.
+The article must sound researched for THIS local brand only.
+If any paragraph could sit on a random national blog unchanged, rewrite with ${brandName} + ${localCity} specificity.
+Goal: rank for local/geo intent and convert high-traffic "near me" / "in ${localCity}" searchers.
 
-INPUTS (master prompt):
+INPUTS (master prompt + Local SEO):
 TOPIC: ${topicResolved}
 KEYWORD: ${kw}
 WORDCOUNT: ${targetWords} (hard minimum 1800 words of real prose; prefer ${targetWords}+)
-AUDIENCE: ${resolvedAudience}
+AUDIENCE: ${resolvedAudience || `people in ${localCity} researching local solutions`}
 TONE: ${masterTone}
 BRAND: ${brandName}
 TARGET_URL: https://${domain}/
-COMPETITOR_URL: ${compDomain ? `https://${compDomain}/` : "(from analysis peers)"}
+LOCATION: ${localCity}, ${localState}, ${localCountry}
+SERVICE AREAS: ${localAreas.join(", ") || localCity}
+COMPETITOR_URL: ${compDomain ? `https://${compDomain}/` : "(from local analysis peers)"}
 ${enhanceNote}
 
 ${analysisBlock}

@@ -27,7 +27,7 @@ export interface SavedArticle {
   customLabel?: string;
 }
 
-/** Live SEO analysis snapshot passed into blog generation so articles stay on-niche. */
+/** Live SEO analysis snapshot passed into blog generation so articles stay on-niche + local. */
 export interface BlogAnalysisContext {
   keywords?: string[];
   contentGaps?: Array<{ topic?: string; keyword?: string; opportunity?: string }>;
@@ -36,6 +36,15 @@ export interface BlogAnalysisContext {
   audience?: string;
   strengths?: string[];
   weaknesses?: string[];
+  /** Local SEO location from analyze (city, NAP, service areas) */
+  localLocation?: {
+    city?: string;
+    state?: string;
+    country?: string;
+    detectedAddress?: string;
+    serviceAreas?: string[];
+    localSeoVerdict?: string;
+  };
 }
 
 export interface ContentHubProps {
