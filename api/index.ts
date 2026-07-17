@@ -331,37 +331,168 @@ function repairTruncatedJson(s: string): string {
  return result;
 }
 
-function cleanAndParseJSON(text: string): any {
- let cleaned = String(text || "").trim();
- if (cleaned.startsWith("```")) {
- cleaned = cleaned.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "");
+/**
+ * Fix invalid JSON string escapes that LLMs often emit (root cause of
+ * "Bad escaped character in JSON"). Only valid escapes: \" \\ \/ \b \f \n \r \t \uXXXX
+ */
+function sanitizeJsonStringEscapes(input: string): string {
+ let out = "";
+ let inString = false;
+ for (let i = 0; i < input.length; i++) {
+  const c = input[i];
+  if (!inString) {
+   if (c === '"') inString = true;
+   out += c;
+   continue;
+  }
+  // Inside a JSON string
+  if (c === "\\") {
+   const next = input[i + 1];
+   if (next === undefined) {
+    out += "\\\\";
+    continue;
+   }
+   if ('"\\/bfnrt'.includes(next)) {
+    out += "\\" + next;
+    i++;
+    continue;
+   }
+   if (next === "u") {
+    const hex = input.slice(i + 2, i + 6);
+    if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+     out += "\\u" + hex;
+     i += 5;
+     continue;
+    }
+    // Invalid \u — escape the backslash literally
+    out += "\\\\u";
+    i++;
+    continue;
+   }
+   // Invalid escape like \a \x \' — drop the backslash or double it
+   // Prefer keeping the character without invalid escape
+   out += next === "'" ? "'" : next;
+   i++;
+   continue;
+  }
+  if (c === '"') {
+   inString = false;
+   out += c;
+   continue;
+  }
+  // Literal newlines/tabs inside strings break JSON
+  if (c === "\n") {
+   out += "\\n";
+   continue;
+  }
+  if (c === "\r") {
+   out += "\\r";
+   continue;
+  }
+  if (c === "\t") {
+   out += "\\t";
+   continue;
+  }
+  // Strip other control chars
+  if (c.charCodeAt(0) < 32) continue;
+  out += c;
  }
- cleaned = cleaned.trim();
+ return out;
+}
+
+/**
+ * Extract and parse JSON from messy LLM output.
+ * Handles markdown fences, conversational filler, trailing commas,
+ * bad escapes, unescaped newlines, and truncated objects.
+ */
+function extractAndParseJSON(rawResponse: unknown): any {
+ if (rawResponse == null) throw new Error("Invalid response format");
+ if (typeof rawResponse === "object") return rawResponse;
+ let cleanedText = String(rawResponse || "").trim();
+ if (!cleanedText) throw new Error("Invalid response format");
+
+ // 1. Strip markdown code fences (```json ... ``` or ``` ... ```)
+ cleanedText = cleanedText
+  .replace(/^```(?:json|JSON)?\s*/i, "")
+  .replace(/\s*```$/i, "")
+  .replace(/```json\s*/gi, "")
+  .replace(/```\s*/g, "")
+  .trim();
+
+ // 2. Drop common conversational prefixes
+ cleanedText = cleanedText
+  .replace(/^(?:here(?:'s| is)|sure[,.]?|absolutely[,.]?|of course[,.]?)\s*/i, "")
+  .replace(/^[\s\S]{0,200}?(\{[\s\S]*)$/, "$1"); // keep from first { if preamble is short
+
+ // 3. Extract outermost JSON object (or array)
+ const objMatch = cleanedText.match(/\{[\s\S]*\}/);
+ const arrMatch = cleanedText.match(/\[[\s\S]*\]/);
+ if (objMatch && (!arrMatch || (objMatch.index ?? 0) <= (arrMatch.index ?? 0))) {
+  cleanedText = objMatch[0];
+ } else if (arrMatch) {
+  cleanedText = arrMatch[0];
+ } else {
+  throw new Error("No JSON object found in the response.");
+ }
+
+ // 4. Trailing commas before } or ]
+ cleanedText = cleanedText.replace(/,\s*([\]}])/g, "$1");
+
+ // 5. Fix bad escapes / literal newlines in strings (Bad escaped character)
+ cleanedText = sanitizeJsonStringEscapes(cleanedText);
+
+ // 6. Smart quotes → ASCII (LLMs often emit these)
+ cleanedText = cleanedText
+  .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+  .replace(/[\u2018\u2019\u201A\u201B]/g, "'");
+
+ const attempts = [
+  cleanedText,
+  repairTruncatedJson(cleanedText),
+  repairTruncatedJson(sanitizeJsonStringEscapes(cleanedText)),
+ ];
+
+ let lastErr: Error | null = null;
+ for (const attempt of attempts) {
+  try {
+   return JSON.parse(attempt);
+  } catch (e) {
+   lastErr = e as Error;
+  }
+ }
+
+ // 7. Last resort: escape remaining raw control chars globally inside strings via repair
  try {
- return JSON.parse(cleaned);
- } catch {
- /* continue */
+  const aggressive = cleanedText
+   .replace(/\u2028/g, "\\n")
+   .replace(/\u2029/g, "\\n")
+   .replace(/[\x00-\x1F]/g, (ch) => {
+    if (ch === "\n") return "\\n";
+    if (ch === "\r") return "\\r";
+    if (ch === "\t") return "\\t";
+    return "";
+   });
+  return JSON.parse(repairTruncatedJson(sanitizeJsonStringEscapes(aggressive)));
+ } catch (e) {
+  lastErr = e as Error;
  }
- const firstBrace = cleaned.indexOf("{");
- if (firstBrace === -1) {
- throw new Error(`Failed to parse JSON: no object found. Snippet: ${cleaned.slice(0, 180)}`);
- }
- const lastBrace = cleaned.lastIndexOf("}");
- const extracted =
- lastBrace > firstBrace
- ? cleaned.substring(firstBrace, lastBrace + 1)
- : cleaned.substring(firstBrace);
- try {
- return JSON.parse(extracted);
- } catch {
- /* try repair */
- }
- try {
- return JSON.parse(repairTruncatedJson(extracted));
- } catch (err) {
+
  throw new Error(
- `Failed to parse JSON: ${(err as Error).message}. Snippet: ${cleaned.slice(0, 200)}`
+  `Failed to parse JSON: ${lastErr?.message || "unknown"}. Snippet: ${cleanedText.slice(0, 180)}`
  );
+}
+
+/** @deprecated name kept for call sites — always uses extractAndParseJSON */
+function cleanAndParseJSON(text: string): any {
+ return extractAndParseJSON(text);
+}
+
+/** Never throws — returns null on failure (stable fallbacks). */
+function tryParseJsonLoose(text: unknown): any | null {
+ try {
+  return extractAndParseJSON(text);
+ } catch {
+  return null;
  }
 }
 
@@ -406,6 +537,9 @@ function humanizeProviderError(raw: unknown): string {
  }
  if (/timed out/i.test(msg)) {
  return "AI timed out. Showing a complete offline draft — try again with a shorter word count.";
+ }
+ if (/Failed to parse JSON|Bad escaped character|No JSON object|Unexpected token/i.test(msg)) {
+  return "AI returned malformed structured data (fixed automatically when possible). Showing the best recovered or offline draft — regenerate for a fresh AI article.";
  }
  const cleaned = msg
  .replace(/\{[\s\S]{0,2000}"error"[\s\S]{0,4000}\}/g, "")
@@ -2285,6 +2419,10 @@ function buildSeoBlogWriterSystemPrompt(masterTone: "Conversational" | "Professi
 
  return `You are a senior SEO content writer and strategist. Your articles rank on Google and get cited by ChatGPT, Perplexity, and AI Overviews.
 
+URL-FIRST RULE (non-negotiable):
+Before writing, lock onto TARGET_URL crawl + brand niche + services from the user message.
+The article must read as researched for THAT site. If a paragraph could sit on any competitor blog unchanged, rewrite it with brand-specific detail.
+
 ${toneCraft}
 
 WRITE LIKE A HUMAN EDITOR, NOT A TEMPLATE:
@@ -2334,10 +2472,14 @@ ALTERNATE OUTPUT (only if the user asks for JSON): return a JSON object with req
 /** Compact research brief system prompt (phase 1). */
 function buildBlogResearchSystemPrompt(): string {
  return `You are an elite SEO content strategist preparing a brief a senior writer will execute.
-Return tight JSON only. No article body.
-Focus on: search intent, outline that beats competitors, unique angle for THIS brand, proof points, worked examples, PAA questions, secondary/long-tail keywords.
-Be specific to the niche and site context — never generic "SEO tips" outlines.
-ASCII only. No markdown fences.`;
+
+STEP 0 (mandatory): Analyze the TARGET_URL crawl data first — brand, niche, services, headings, keywords, strengths/weaknesses.
+Only then map KEYWORD intent and competitor gaps.
+Never produce a generic SEO outline that could apply to any site.
+
+Return compact valid JSON only (no markdown fences, no commentary before/after).
+Use double quotes. Escape newlines inside strings as \\n. No trailing commas.
+ASCII only.`;
 }
 
 /** @deprecated use buildSeoBlogSystemPrompt(tone) — kept name for call sites */
@@ -4360,78 +4502,108 @@ app.post("/api/generate-blog", async (req, res) => {
       .join("\n")
    : "(none from analysis — derive from niche and competitor)";
 
- const analysisBlock = `## LIVE SEO ANALYSIS (ground truth)
-TOPIC=${topicResolved}
-KEYWORD=${kw}
-AUDIENCE=${resolvedAudience}
-TONE=${masterTone}
-BRAND=${brandName}
-TARGET=https://${domain}/
-COMPETITOR=${compDomain || "(peers from analysis)"}
-Analysis keywords: ${analysisKeywords.join(", ") || secondary || "derive"}
-Niche: ${analysisNiche || siteBrief?.niche || "from crawl"}
-Strengths: ${analysisStrengths.join("; ") || "(crawl)"}
-Weaknesses: ${analysisWeaknesses.join("; ") || "(crawl)"}
-Competitors: ${analysisCompetitors.join(", ") || "(none)"}
-Content gaps:
+ const analysisBlock = `## STEP 0 — TARGET URL ANALYSIS (mandatory ground truth — write ONLY for this site)
+TARGET_URL: https://${domain}/
+BRAND: ${brandName}
+CRAWL SOURCE: ${siteBrief?.source || "unknown"}
+NICHE: ${analysisNiche || siteBrief?.niche || "infer strictly from crawl"}
+DESCRIPTION: ${String(siteContext.description || "").slice(0, 400)}
+SERVICES/OFFERS: ${(siteContext.services || []).join("; ") || "(from crawl headings)"}
+PAGE TITLES: ${(siteContext.pageTitles || []).slice(0, 6).join(" | ") || "(none)"}
+HEADINGS SEEN: ${(siteContext.headings || []).slice(0, 12).join(" | ") || "(none)"}
+SITE KEYWORDS: ${(siteContext.relatedKeywords || []).slice(0, 12).join(", ") || "(none)"}
+STRENGTHS: ${analysisStrengths.join("; ") || "(from crawl)"}
+WEAKNESSES / OPPORTUNITIES: ${analysisWeaknesses.join("; ") || "(from crawl)"}
+RAW SNIPPET: ${String(siteContext.rawSnippet || "").slice(0, 500)}
+
+## KEYWORD + AUDIENCE TARGETING
+TOPIC: ${topicResolved}
+PRIMARY KEYWORD: ${kw}
+SECONDARY: ${secondary || "derive 2-3 from site keywords"}
+LONG-TAILS: ${analysisKeywords.slice(0, 12).join("; ") || (siteBrief?.keywords || []).slice(0, 12).join("; ") || "derive from niche"}
+AUDIENCE: ${resolvedAudience}
+TONE: ${masterTone}
+DENSITY: ${densityLow}-${densityHigh} natural uses of primary keyword (~1.0-1.5% of ${targetWords} words)
+
+## COMPETITOR + CONTENT GAPS (outrank / differentiate)
+COMPETITOR_URL: ${compDomain ? `https://${compDomain}/` : "(use peers from analysis)"}
+COMPETITORS: ${analysisCompetitors.join(", ") || "(none listed)"}
+COMPETITOR CRAWL: ${JSON.stringify(competitorContext)}
+CONTENT GAPS TO COVER:
 ${gapLines}
 
-## TARGET crawl
-${JSON.stringify(siteContext)}
-
-## COMPETITOR crawl
-${JSON.stringify(competitorContext)}
-
-Secondary: ${secondary || "derive 2-3"}
-Long-tails: ${analysisKeywords.slice(0, 12).join("; ") || (siteBrief?.keywords || []).slice(0, 12).join("; ") || "derive"}
-Density target: ${densityLow}-${densityHigh} primary uses at 1.0-1.5% of ${targetWords} words.
-Strategy flavor: ${strategy.id} / ${strategy.style}
+## EDITORIAL SEED (optional flavor — content must stay on TARGET_URL niche)
+Strategy: ${strategy.id} / ${strategy.style}
 Title seed: ${strategy.titlePrefix(kw)}`;
 
- // PHASE 1: AI research brief (outline, angles, gaps, proof points)
+ // PHASE 1: AI research brief — URL-first, JSON with robust parse
  let researchBrief: any = null;
  try {
-  const researchPrompt = `Build a research brief for an SEO article. Return ONLY JSON:
+  const researchPrompt = `STEP 0: Study TARGET URL analysis first. Then build the SEO research brief for THIS brand only.
+
+Return ONLY valid compact JSON (no markdown fences, no commentary):
 {
+  "targetUrlInsights": {
+    "brand": "${brandName}",
+    "niche": "from crawl",
+    "whatTheySell": ["..."],
+    "contentOpportunities": ["..."]
+  },
   "searchIntent": "informational|commercial|transactional|navigational",
   "primaryKeyword": "${kw}",
-  "secondaryKeywords": ["..."],
-  "longTail": ["..."],
-  "titleOptions": ["3 click-worthy H1 options with primary keyword"],
-  "outline": ["6-8 H2 titles mapped to intent"],
-  "competitorGaps": ["what to cover better than peers"],
-  "proofPoints": ["3-5 benchmarks or ranges to use"],
-  "workedExamples": ["2 mini case scenarios for this niche"],
-  "paaQuestions": ["4-6 People Also Ask style questions"],
-  "uniqueAngle": "one sentence differentiation for ${brandName}"
+  "secondaryKeywords": ["2-4 terms from site + keyword research"],
+  "longTail": ["6-10 long-tails"],
+  "titleOptions": ["3 H1 options with primary keyword near front"],
+  "outline": ["6-8 H2 titles that beat competitor gaps"],
+  "competitorGaps": ["specific gaps from competitor/content gap list"],
+  "proofPoints": ["3-5 ranges/benchmarks relevant to niche"],
+  "workedExamples": ["2 mini cases using this brand niche"],
+  "paaQuestions": ["4-6 PAA-style questions"],
+  "uniqueAngle": "how ${brandName} is different — one sentence",
+  "internalLinkTargets": ["https://${domain}/...", "https://${domain}/services", "https://${domain}/contact"]
 }
 
 ${analysisBlock}
 
-Stay on-niche for ${brandName} / ${siteContext.niche || topicResolved}. No article body.`;
+Rules: Stay on-niche for ${brandName}. No article body. Escape any quotes inside strings. ASCII only.`;
   const researchResult = await withTimeout(
    callAI(providerConfig, researchPrompt, buildBlogResearchSystemPrompt(), {
     responseMimeType: "application/json",
-    temperature: 0.35,
+    temperature: 0.3,
     maxOutputTokens: 2500,
    }),
    35000,
    "Blog research"
   );
-  researchBrief = cleanAndParseJSON(extractAiText(researchResult));
+  const researchRaw = extractAiText(researchResult);
+  researchBrief = tryParseJsonLoose(researchRaw);
+  if (!researchBrief || typeof researchBrief !== "object") {
+   throw new Error("Research JSON unusable after sanitize");
+  }
  } catch (researchErr) {
   console.warn("[Blog] Research phase failed, continuing with analysis context:", researchErr);
   researchBrief = {
+   targetUrlInsights: {
+    brand: brandName,
+    niche: siteContext.niche || analysisNiche || topicResolved,
+    whatTheySell: siteContext.services || [],
+    contentOpportunities: analysisWeaknesses.slice(0, 4),
+   },
    searchIntent: "informational",
    primaryKeyword: kw,
    secondaryKeywords: secondaryMerged.slice(0, 4),
    outline: strategy.heads(kw, brandName),
    competitorGaps: analysisGaps.map((g) => g.topic || g.keyword).filter(Boolean),
    uniqueAngle: `Practical ${kw} guidance for ${brandName} in ${siteContext.niche || "this niche"}`,
+   internalLinkTargets: [
+    `https://${domain}/`,
+    `https://${domain}/services`,
+    `https://${domain}/contact`,
+   ],
   };
  }
 
- // PHASE 2: Markdown-first full article (better quality than JSON-wrapped thin sections)
+ // PHASE 2: Markdown-first full article (avoids JSON escape/truncation for long content)
  const writerSystem = buildSeoBlogWriterSystemPrompt(masterTone);
  const titlePick =
   Array.isArray(researchBrief?.titleOptions) && researchBrief.titleOptions[0]
@@ -4448,44 +4620,50 @@ Previous outline: ${prevOutline.join(" | ") || "(none)"}
 Previous excerpt (upgrade far beyond; do not copy):
 """${prevClip}"""
 Rewrite as a premium original article. Same primary keyword "${kw}" and brand ${brandName}.`
-  : `MODE: NEW premium article — research-backed, niche-specific, master-prompt compliant.`;
+  : `MODE: NEW premium article — TARGET_URL researched first, then keyword-optimized.`;
 
- const writePrompt = `${isEnhance ? "Rewrite" : "Write"} the COMPLETE publishable blog post in MARKDOWN only.
+ const writePrompt = `${isEnhance ? "Rewrite" : "Write"} the COMPLETE publishable SEO blog post in MARKDOWN only.
 
 ${modeBlock}
 
-INPUTS
+## PHASE ORDER (do not skip)
+1) Internalize TARGET URL analysis (brand, niche, services, gaps) — article must clearly be about THIS site.
+2) Map primary keyword + intent from research brief.
+3) Write full article that could only belong to https://${domain}/ (not a generic SEO essay).
+
+## INPUTS
 TOPIC: ${topicResolved}
-PRIMARY KEYWORD: ${kw} (must appear in H1 and first 100 words; density ~1.0-1.5%)
-WORD COUNT TARGET: ${targetWords} (minimum 2000 real prose words)
+PRIMARY KEYWORD: ${kw} (H1 + first 100 words; density ~1.0-1.5%)
+WORD COUNT: ${targetWords} (minimum 2000 real prose words)
 AUDIENCE: ${resolvedAudience}
 TONE: ${masterTone}
 BRAND: ${brandName}
-SITE: https://${domain}/
+TARGET_URL: https://${domain}/
 Suggested H1: ${titlePick}
-Suggested H2 outline (adapt if needed for better flow):
+Suggested H2 outline:
 ${outlinePick}
 
-RESEARCH BRIEF (use proof points, examples, gaps, PAA):
+## RESEARCH BRIEF (from URL analysis)
 ${JSON.stringify(researchBrief)}
 
 ${analysisBlock}
 
-CRAFT REQUIREMENTS (master SEO blog guidelines)
-- Sound like a skilled human editor who researched this brand — not a generic SEO bot.
-- **Quick answer:** block in the intro (2-3 sentences).
-- ## Key Takeaways with 4-6 complete sentences as bullets.
-- 6-8 H2 sections; each opens with a direct answer, then deep prose (≥220 words/section).
-- One "Common mistakes" / pitfalls section with fixes.
-- One markdown comparison table + 2-3 [IMAGE:...] + 1 [CHART:bar ...].
-- ## Frequently Asked Questions with ### questions (4-6) and solid answers.
-- ## Conclusion with specific next step + links to https://${domain}/ , /services, /contact or real paths from crawl.
-- Weave secondary keywords naturally: ${(researchBrief?.secondaryKeywords || secondaryMerged).slice(0, 5).join(", ") || secondary}.
-- Include 2+ external links to reputable sources (.gov, .edu, official docs, major industry pubs).
-- Include the unique angle: ${researchBrief?.uniqueAngle || `how ${brandName} approaches ${kw} in practice`}.
-- ZERO banned clichés. ZERO brand-agnostic filler.
+## CRAFT (master SEO blog guidelines)
+- Human editor quality: specific facts, trade-offs, worked examples for ${brandName}'s niche.
+- Intro with **Quick answer:** (2-3 sentences) after hook.
+- ## Key Takeaways — 4-6 complete sentence bullets.
+- 6-8 ## H2s; each opens with a direct answer then ≥220 words of prose.
+- One Common mistakes / pitfalls section with fixes.
+- One markdown comparison table + 2-3 [IMAGE: ... Alt Text: "..."] + 1 [CHART:bar title="..." labels="a,b,c" values="1,2,3"].
+- ## Frequently Asked Questions with ### questions (4-6).
+- ## Conclusion + CTA linking to real paths on https://${domain}/ (and services/contact if relevant).
+- Secondary keywords: ${(researchBrief?.secondaryKeywords || secondaryMerged).slice(0, 5).join(", ") || secondary}.
+- Unique angle: ${researchBrief?.uniqueAngle || `how ${brandName} approaches ${kw}`}.
+- 2+ external links to reputable sources. Zero banned clichés. Zero brand-agnostic filler.
 
-OUTPUT: Markdown only. Start with # Title. No JSON. No preamble.`;
+## OUTPUT FORMAT (critical — prevents parse failures)
+Return MARKDOWN only. Start with # Title.
+Do NOT return JSON. Do NOT wrap in \`\`\` fences. No preamble ("Here is the article").`;
 
  const writeResult = await withTimeout(
   callAI(providerConfig, writePrompt, writerSystem, {
@@ -4503,28 +4681,39 @@ OUTPUT: Markdown only. Start with # Title. No JSON. No preamble.`;
  }
 
  let parsed: any = null;
- // Prefer pure markdown path
- if (!rawText.trim().startsWith("{")) {
-  parsed = parseMarkdownArticle(rawText, kw, domain, brandName, topicResolved);
- } else {
-  // Model returned JSON despite instructions — support both shapes
-  try {
-   const asJson = cleanAndParseJSON(rawText);
-   if (asJson?.content && countContentWords(String(asJson.content)) >= 400) {
-    parsed = asJson;
-    parsed.content = polishBlogProse(String(asJson.content));
-   } else if (asJson?.sections || asJson?.intro) {
-    parsed = asJson;
-   } else {
-    parsed = parseMarkdownArticle(rawText, kw, domain, brandName, topicResolved);
-   }
-  } catch {
-   parsed = parseMarkdownArticle(rawText, kw, domain, brandName, topicResolved);
+ const trimmedRaw = rawText.trim();
+ // Prefer pure markdown (primary path). JSON only if model ignored instructions.
+ if (trimmedRaw.startsWith("{") || /```json/i.test(trimmedRaw.slice(0, 80))) {
+  const asJson = tryParseJsonLoose(rawText);
+  if (asJson?.content && countContentWords(String(asJson.content)) >= 400) {
+   parsed = asJson;
+   parsed.content = polishBlogProse(String(asJson.content));
+  } else if (asJson?.sections || asJson?.intro) {
+   parsed = asJson;
+  } else if (asJson?.content) {
+   parsed = parseMarkdownArticle(String(asJson.content), kw, domain, brandName, topicResolved);
   }
  }
-
  if (!parsed) {
-  throw new Error("Could not parse AI article output");
+  // Markdown path — also works if JSON wrapper failed but body is readable
+  parsed = parseMarkdownArticle(rawText, kw, domain, brandName, topicResolved);
+ }
+ // If model put the article inside a string field only
+ if (!parsed && tryParseJsonLoose(rawText)?.article) {
+  parsed = parseMarkdownArticle(
+   String(tryParseJsonLoose(rawText).article),
+   kw,
+   domain,
+   brandName,
+   topicResolved
+  );
+ }
+
+ if (!parsed || !parsed.content || countContentWords(String(parsed.content)) < 80) {
+  // Do not throw — fall through to offline unique article with clear reason
+  throw new Error(
+   "AI article output could not be recovered as publishable content (parse/structure)."
+  );
  }
 
  if ((!parsed.outline || !parsed.outline.length) && researchBrief?.outline) {
@@ -4592,15 +4781,15 @@ Markdown only. Start with # Title.`;
    );
    const repairText = extractAiText(repairResult);
    if (repairText.trim()) {
-    let repairParsed =
-     parseMarkdownArticle(repairText, kw, domain, brandName, topicResolved) ||
-     (() => {
-      try {
-       return cleanAndParseJSON(repairText);
-      } catch {
-       return null;
-      }
-     })();
+    let repairParsed = parseMarkdownArticle(repairText, kw, domain, brandName, topicResolved);
+    if (!repairParsed) {
+     const asJ = tryParseJsonLoose(repairText);
+     if (asJ?.content) {
+      repairParsed = parseMarkdownArticle(String(asJ.content), kw, domain, brandName, topicResolved) || asJ;
+     } else if (asJ) {
+      repairParsed = asJ;
+     }
+    }
     if (repairParsed) {
      if (!repairParsed.title) repairParsed.title = parsed.title;
      if (repairParsed.content) repairParsed.content = polishBlogProse(String(repairParsed.content));
