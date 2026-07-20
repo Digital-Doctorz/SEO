@@ -11,7 +11,7 @@ export const AI_PROVIDER_DEFAULTS: Record<
   },
   /** NVIDIA NIM / build.nvidia.com — OpenAI-compatible */
   nvidia: {
-    model: "meta/llama-3.1-70b-instruct",
+    model: "meta/llama-3.3-70b-instruct",
     endpoint: "https://integrate.api.nvidia.com/v1",
   },
   custom: { model: "gpt-4o-mini", endpoint: "" },
@@ -225,14 +225,22 @@ export function normalizeAiConfig(
     }
   }
 
+  // Prefer explicit partial credentials; never silently drop a login that was set
+  const dataforseoLogin =
+    (typeof partial?.dataforseoLogin === "string" && partial.dataforseoLogin.trim()) ||
+    undefined;
+  const dataforseoPassword =
+    (typeof partial?.dataforseoPassword === "string" && partial.dataforseoPassword.trim()) ||
+    undefined;
+
   return {
     apiKey,
     provider,
     apiEndpoint,
     apiModel,
     customFormat,
-    dataforseoLogin: partial?.dataforseoLogin?.trim() || undefined,
-    dataforseoPassword: partial?.dataforseoPassword?.trim() || undefined,
+    dataforseoLogin,
+    dataforseoPassword,
     locationCode: partial?.locationCode,
     languageCode: partial?.languageCode,
   };
@@ -339,6 +347,17 @@ export function resolveAiConfig(
         ? String(override.apiModel).trim()
         : stored.apiModel,
     customFormat: override?.customFormat || stored.customFormat,
+    // Always keep DataForSEO BYOK from override or storage so live SEO stays synced
+    dataforseoLogin:
+      (override?.dataforseoLogin !== undefined && String(override.dataforseoLogin).trim()) ||
+      stored.dataforseoLogin,
+    dataforseoPassword:
+      (override?.dataforseoPassword !== undefined && String(override.dataforseoPassword).trim()) ||
+      stored.dataforseoPassword,
+    locationCode:
+      override?.locationCode !== undefined ? override.locationCode : stored.locationCode,
+    languageCode:
+      override?.languageCode !== undefined ? override.languageCode : stored.languageCode,
   });
 
   if (!merged.apiKey || !isValidApiKeyShape(merged.apiKey)) {

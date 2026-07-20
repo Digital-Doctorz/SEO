@@ -60,6 +60,41 @@ export function normalizeDomainMetrics(
   };
 }
 
+function normalizeTrend(raw: unknown): Keyword["trend"] {
+  // Live DataForSEO often sends monthly volume arrays; map to rising/stable/declining
+  if (Array.isArray(raw) && raw.length >= 2) {
+    const vols = raw.map((v) => Number(v) || 0);
+    const recent = vols.slice(-3).reduce((a, b) => a + b, 0) / Math.min(3, vols.length);
+    const older = vols.slice(0, 3).reduce((a, b) => a + b, 0) / Math.min(3, vols.length);
+    if (older <= 0) return recent > 0 ? "rising" : "stable";
+    if (recent > older * 1.15) return "rising";
+    if (recent < older * 0.85) return "declining";
+    return "stable";
+  }
+  const trendRaw = str(raw, "stable").toLowerCase();
+  if (trendRaw === "rising" || trendRaw === "up" || trendRaw === "growing") return "rising";
+  if (trendRaw === "declining" || trendRaw === "down" || trendRaw === "falling") return "declining";
+  return "stable";
+}
+
+function normalizeIntent(raw: unknown): Keyword["intent"] {
+  const intentRaw = str(raw, "Informational");
+  const cap =
+    intentRaw.charAt(0).toUpperCase() + intentRaw.slice(1).toLowerCase();
+  // Handle full lowercase payloads from partial API merges ("informational")
+  const map: Record<string, Keyword["intent"]> = {
+    commercial: "Commercial",
+    informational: "Informational",
+    transactional: "Transactional",
+    navigational: "Navigational",
+    Commercial: "Commercial",
+    Informational: "Informational",
+    Transactional: "Transactional",
+    Navigational: "Navigational",
+  };
+  return map[intentRaw] || map[cap] || "Informational";
+}
+
 export function normalizeKeywords(raw: unknown): Keyword[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -68,28 +103,38 @@ export function normalizeKeywords(raw: unknown): Keyword[] {
       if (!keyword) return null;
       const difficulty = Math.max(0, Math.min(100, Math.round(num(k?.difficulty, 40))));
       const volume = Math.max(0, Math.round(num(k?.volume, 100)));
-      const intentRaw = str(k?.intent, "Informational");
-      const intent = (
-        ["Commercial", "Informational", "Transactional", "Navigational"].includes(intentRaw)
-          ? intentRaw
-          : "Informational"
-      ) as Keyword["intent"];
-      const typeRaw = str(k?.type, keyword.includes("?") ? "Question" : keyword.split(/\s+/).length > 2 ? "Long-tail" : "Short-tail");
+      const intent = normalizeIntent(k?.intent);
+      const typeRaw = str(
+        k?.type,
+        keyword.includes("?") ? "Question" : keyword.split(/\s+/).length > 2 ? "Long-tail" : "Short-tail"
+      );
+      // Map invalid types like "organic" to real taxonomy
       const type = (
-        ["Short-tail", "Long-tail", "Question"].includes(typeRaw) ? typeRaw : "Long-tail"
+        ["Short-tail", "Long-tail", "Question"].includes(typeRaw)
+          ? typeRaw
+          : keyword.includes("?")
+            ? "Question"
+            : keyword.split(/\s+/).length > 2
+              ? "Long-tail"
+              : "Short-tail"
       ) as Keyword["type"];
       const competitionRaw = str(k?.competition, difficulty < 30 ? "Low" : difficulty < 60 ? "Medium" : "High");
+      const competitionCap =
+        competitionRaw.charAt(0).toUpperCase() + competitionRaw.slice(1).toLowerCase();
       const competition = (
-        ["Low", "Medium", "High"].includes(competitionRaw) ? competitionRaw : "Medium"
+        ["Low", "Medium", "High"].includes(competitionCap) ? competitionCap : "Medium"
       ) as Keyword["competition"];
-      const trendRaw = str(k?.trend, "stable");
-      const trend = (
-        ["rising", "stable", "declining"].includes(trendRaw) ? trendRaw : "stable"
-      ) as Keyword["trend"];
+      const trend = normalizeTrend(k?.trend);
       const stageRaw = str(k?.buyerJourneyStage, i < 2 ? "Awareness" : i < 4 ? "Consideration" : "Decision");
       const buyerJourneyStage = (
         ["Awareness", "Consideration", "Decision"].includes(stageRaw) ? stageRaw : "Awareness"
       ) as Keyword["buyerJourneyStage"];
+
+      // Ensure clusters always have a parent topic (never blank → "Unassigned" junk pile)
+      const parentTopic = str(
+        k?.parentTopic,
+        keyword.split(/\s+/).slice(0, 2).join(" ") || keyword.split(/\s+/)[0] || "General"
+      );
 
       return {
         keyword,
@@ -110,7 +155,7 @@ export function normalizeKeywords(raw: unknown): Keyword[] {
         relatedKeywords: Array.isArray(k?.relatedKeywords)
           ? k.relatedKeywords.map((x: unknown) => str(x)).filter(Boolean)
           : [],
-        parentTopic: str(k?.parentTopic, keyword.split(/\s+/)[0] || "General"),
+        parentTopic,
         buyerJourneyStage,
         opportunityScore: Math.max(0, Math.min(100, Math.round(num(k?.opportunityScore, 70 - i * 5)))),
         isPillarOpportunity: Boolean(k?.isPillarOpportunity ?? i < 3),
@@ -154,6 +199,16 @@ export function normalizeContentGaps(raw: unknown): ContentGap[] {
         recommendedType: str(g?.recommendedType || g?.contentType, "Pillar Blog Post"),
         difficultyCategory,
         isQuickWin: Boolean(g?.isQuickWin ?? g?.quickWin ?? difficulty < 35),
+        cityMention: str(g?.cityMention, ""),
+        localIntent: (["local_direct", "local_aware", "national", "mixed"].includes(g?.localIntent)
+          ? g?.localIntent
+          : undefined) as ContentGap["localIntent"],
+        neighborhoods: Array.isArray(g?.neighborhoods)
+          ? g.neighborhoods.filter(Boolean).slice(0, 10)
+          : [],
+        localSearchVolume: Boolean(g?.localSearchVolume),
+        localDirectoryRelevant: Boolean(g?.localDirectoryRelevant),
+        gbpCategory: str(g?.gbpCategory, ""),
       };
     })
     .filter((g): g is ContentGap => g != null);
@@ -296,6 +351,10 @@ export function normalizeDiscoveredCompetitors(
         ),
         threatLevel,
         domainRating: Math.max(1, Math.min(100, Math.round(num(c?.domainRating ?? c?.dr, 45 + ((sim / 2) | 0) - i)))),
+        backlinksCount: Math.max(0, Math.round(num(c?.backlinksCount, 0))),
+        referringDomains: Math.max(0, Math.round(num(c?.referringDomains, 0))),
+        organicKeywords: Math.max(0, Math.round(num(c?.organicKeywords, 0))),
+        isSerpDiscovered: Boolean(c?.isSerpDiscovered),
         contentCadence: str(c?.contentCadence || c?.publishingFrequency, i % 2 === 0 ? "2–4 posts / week" : "1–2 posts / week"),
         strengths: strList(c?.strengths, 4).length
           ? strList(c?.strengths, 4)
@@ -566,9 +625,9 @@ export function normalizeLocalLocation(
   const domain = str(opts.domain, "example.com");
   const brand = str(opts.brand, domain.split(".")[0] || "Brand");
   const niche = str(opts.niche, "local services");
-  const city = str(l.city, "Local service area");
-  const state = str(l.state, "");
-  const country = str(l.country, "United States");
+ const city = str(l.city, "Kolkata");
+ const state = str(l.state, "");
+ const country = str(l.country, "India");
   const primaryService = niche.split(/[&,|·]/)[0]?.trim() || "services";
 
   const localCompetitors: LocalCompetitor[] = Array.isArray(l.localCompetitors)

@@ -1,20 +1,20 @@
+// ─── AI Provider ──────────────────────────────────────────────────────────────
+
 export interface AiProviderConfig {
-  apiKey: string;
-  /** gemini | openrouter | nvidia (NIM) | custom (OpenAI/Anthropic/Gemini/NVIDIA-compatible) */
   provider: "gemini" | "openrouter" | "nvidia" | "custom";
-  apiEndpoint: string;
+  apiKey: string;
   apiModel: string;
-  /** Used when provider === "custom" (and optional override for nvidia-compatible proxies) */
+  apiEndpoint: string;
   customFormat: "openai" | "anthropic" | "gemini" | "nvidia";
-  /** DataForSEO API login (optional — enables live SEO data when both are set) */
   dataforseoLogin?: string;
-  /** DataForSEO API password (auto-generated, different from account password) */
   dataforseoPassword?: string;
-  /** Auto-detected location code from target domain TLD (e.g. 2840 = US, 2356 = India) */
   locationCode?: number;
-  /** Auto-detected language code from target domain TLD (e.g. "en", "de", "fr") */
   languageCode?: string;
 }
+
+export type ProviderConfig = AiProviderConfig;
+
+// ─── Domain Metrics ───────────────────────────────────────────────────────────
 
 export interface PageMetric {
   url: string;
@@ -34,22 +34,30 @@ export interface DomainMetrics {
   topPages: PageMetric[];
 }
 
+// ─── Keywords ─────────────────────────────────────────────────────────────────
+
 export interface Keyword {
   keyword: string;
   volume: number;
-  difficulty: number; // 0 to 100
+  difficulty: number;
   cpc: number;
   intent: "Commercial" | "Informational" | "Transactional" | "Navigational";
   type: "Short-tail" | "Long-tail" | "Question";
   competition: "Low" | "Medium" | "High";
   trend: "rising" | "stable" | "declining";
-  serpRankings: Array<{ rank: number; title: string; url: string }>;
+  serpRankings: Array<{
+    rank: number;
+    title: string;
+    url: string;
+  }>;
   relatedKeywords: string[];
   parentTopic: string;
   buyerJourneyStage: "Awareness" | "Consideration" | "Decision";
-  opportunityScore: number; // 0-100 calculated score
+  opportunityScore: number;
   isPillarOpportunity: boolean;
 }
+
+// ─── Content Gaps (with Kolkata local SEO fields) ─────────────────────────────
 
 export interface ContentGap {
   competitorKeyword: string;
@@ -61,7 +69,21 @@ export interface ContentGap {
   recommendedType: string;
   difficultyCategory: "Easy" | "Medium" | "Hard";
   isQuickWin: boolean;
+  /** City this gap targets — e.g. "Kolkata" */
+  cityMention?: string;
+  /** Local search intent classification */
+  localIntent?: "local_direct" | "local_aware" | "national" | "mixed";
+  /** Neighborhoods / localities this gap can reference */
+  neighborhoods?: string[];
+  /** Whether this keyword has meaningful local search volume */
+  localSearchVolume?: boolean;
+  /** Whether directory listings (Google Business, Justdial, etc.) help rank */
+  localDirectoryRelevant?: boolean;
+  /** Suggested Google Business Profile category */
+  gbpCategory?: string;
 }
+
+// ─── SERP Features ────────────────────────────────────────────────────────────
 
 export interface SerpFeature {
   type: "Featured Snippet" | "People Also Ask" | "Video Carousel" | "Local Pack";
@@ -69,6 +91,8 @@ export interface SerpFeature {
   opportunity: string;
   actionability: string;
 }
+
+// ─── Backlinks ────────────────────────────────────────────────────────────────
 
 export interface BacklinkSource {
   sourceUrl: string;
@@ -85,6 +109,36 @@ export interface BacklinkOpportunity {
   description: string;
   actionPlan: string;
 }
+
+// ─── Discovered Competitors ───────────────────────────────────────────────────
+
+export interface DiscoveredCompetitor {
+  domain: string;
+  nicheSimilarity: number;
+  nicheFocus: string;
+  estimatedMonthlyTraffic: number;
+  popularBlogUrl: string;
+  latestArticleTitle: string;
+  latestArticleUrl: string;
+  analyzedTakeaway: string;
+  targetKeywords: string[];
+  seoStrategy: string;
+  aiRankStrategy: string;
+  schemaRecommendation: string;
+  threatLevel: "High" | "Medium" | "Low";
+  domainRating: number;
+  backlinksCount: number;
+  referringDomains: number;
+  organicKeywords: number;
+  isSerpDiscovered: boolean;
+  contentCadence: string;
+  strengths: string[];
+  weaknesses: string[];
+  contentAngles: string[];
+  counterMove: string;
+}
+
+// ─── Local SEO ────────────────────────────────────────────────────────────────
 
 export interface LocalCompetitor {
   name: string;
@@ -113,7 +167,7 @@ export interface RankingBlueprint {
   priorityActions: Array<{
     action: string;
     impact: "High" | "Medium" | "Low";
-    effort: "Low" | "Medium" | "High";
+    effort: "High" | "Medium" | "Low";
     timeframe: string;
   }>;
   localKeywordsToTarget: Array<{
@@ -131,91 +185,50 @@ export interface LocalLocation {
   confidenceScore: number;
   googleMapPackScore: number;
   citationConsistency: number;
-  /** Cities/neighborhoods the business serves */
-  serviceAreas?: string[];
-  primaryLocalCompetitors: Array<{ name: string; domain: string; localRank: number; mapDistance: string }>;
+  serviceAreas: string[];
+  primaryLocalCompetitors: Array<{
+    name: string;
+    domain: string;
+    localRank: number;
+    mapDistance: string;
+  }>;
   localCompetitors: LocalCompetitor[];
   rankingBlueprint: RankingBlueprint;
-  localKeywordOpportunities: Array<{ keyword: string; searchVolume: number; intent: string }>;
+  localKeywordOpportunities: Array<{
+    keyword: string;
+    searchVolume: number;
+    intent: string;
+  }>;
   localOptimizationsNeeded: string[];
   localSeoVerdict: string;
 }
 
-export interface AnalysisResult {
-  target: DomainMetrics;
-  competitor: DomainMetrics | null;
-  keywords: Keyword[];
-  contentGaps: ContentGap[];
-  serpFeatures: SerpFeature[];
-  backlinkSources: BacklinkSource[];
-  backlinkOpportunities: BacklinkOpportunity[];
-  discoveredCompetitors?: DiscoveredCompetitor[];
-  targetAnalysis?: TargetAnalysis;
-  /** Convenience alias — also nested under targetAnalysis.marketResearch */
-  marketResearch?: MarketResearchReport;
-  autonomousBlog?: BlogPost;
-  localLocation?: LocalLocation;
-  rankingBlueprint?: RankingBlueprint;
-  /** "dataforseo" | "dataforseo+ai" | "ai" | "simulated" */
-  dataSource?: string;
-  /** Estimated cost of the DataForSEO query (USD) */
-  estimatedCost?: { amount: number; currency: string };
-  pageSpeed?: {
-    performance: number;
-    accessibility: number;
-    best_practices: number;
-    seo: number;
-    fcp_ms?: number;
-    lcp_ms?: number;
-    tbt_ms?: number;
-    cls?: number;
-    si_ms?: number;
-    tti_ms?: number;
-  };
-}
+// ─── Market Research ──────────────────────────────────────────────────────────
 
-export interface DiscoveredCompetitor {
-  domain: string;
-  nicheSimilarity: number; // 0 to 100 percentage
-  nicheFocus: string; // e.g. "Technical Documentation, API integrations"
-  estimatedMonthlyTraffic: number;
-  popularBlogUrl: string;
-  latestArticleTitle: string;
-  latestArticleUrl: string;
-  analyzedTakeaway: string; // analysis of their content/blog strategy
-  targetKeywords?: string[]; // Specific search terms targeted
-  seoStrategy?: string; // SEO optimization approach
-  aiRankStrategy?: string; // Actionable playbook to rank #1 in AI Search engines
-  schemaRecommendation?: string; // Recommended structured data/schemas (JSON-LD)
-  /** Competitive threat: High | Medium | Low */
-  threatLevel?: "High" | "Medium" | "Low";
-  /** Domain rating estimate 0–100 */
-  domainRating?: number;
-  /** Content publishing cadence summary */
-  contentCadence?: string;
-  /** Where they win */
-  strengths?: string[];
-  /** Where they are weak / exploitable */
-  weaknesses?: string[];
-  /** Content angles they dominate */
-  contentAngles?: string[];
-  /** How target can differentiate */
-  counterMove?: string;
-}
-
-/** Structured market research pack for Phase 2 report UI */
 export interface MarketResearchReport {
   executiveSummary: string;
   marketOverview: string;
   demandDrivers: string[];
-  buyerSegments: Array<{ segment: string; intent: string; priority: "Primary" | "Secondary" | "Emerging" }>;
+  buyerSegments: Array<{
+    segment: string;
+    intent: string;
+    priority: "Primary" | "Secondary" | "Emerging";
+  }>;
   competitiveIntensity: "Low" | "Moderate" | "High" | "Very High";
   intensityRationale: string;
   categoryLeaders: string[];
   whitespaceOpportunities: string[];
   positioningRecommendation: string;
-  channelMix: Array<{ channel: string; role: string; priority: "High" | "Medium" | "Low" }>;
-  ninetyDayPlays: Array<{ play: string; why: string; effort: "Low" | "Medium" | "High" }>;
+  channelMix: Array<{
+    channel: string;
+    role: string;
+    priority: "High" | "Medium" | "Low";
+  }>;
+  ninetyDayPlays: Array<{
+    play: string;
+    why: string;
+    effort: "Low" | "Medium" | "High";
+  }>;
   swot: {
     strengths: string[];
     weaknesses: string[];
@@ -224,97 +237,77 @@ export interface MarketResearchReport {
   };
 }
 
+// ─── Target Analysis ──────────────────────────────────────────────────────────
+
 export interface TargetAnalysis {
   coreNiche: string;
   audiencePersona: string;
   contentStrengths: string[];
   contentWeaknesses: string[];
-  detailedBreakdown: string; // detailed qualitative summary of their content
-  socialPresenceSummary?: string;
-  socialMentionKeywords?: string[];
-  competitorSocialInsights?: string;
-  /** Full market research narrative pack (Phase 2) */
-  marketResearch?: MarketResearchReport;
+  detailedBreakdown: string;
+  socialPresenceSummary: string;
+  socialMentionKeywords: string[];
+  competitorSocialInsights: string;
+  marketResearch: MarketResearchReport;
 }
 
-export interface SocialPost {
-  platform: "Twitter/X" | "LinkedIn" | "Newsletter" | "Reddit" | "Quora" | "Google Business";
-  content: string;
-  hashtags?: string[];
-  visualRecommendations?: string;
-  schemaMarkup?: string;
-  optimalPostingTime?: string;
-  engagementStrategy?: string;
-  seoNotes?: string;
-  complianceCheck?: string;
-}
+// ─── Blog Post ────────────────────────────────────────────────────────────────
 
-/** Seo-Promt-Master style 9-point checklist item (generation-phase audit). */
 export interface SeoMasterChecklistItem {
-  id: string;
-  label: string;
-  status: "pass" | "warn" | "fail";
-  detail: string;
-  recommendation: string;
-}
-
-export interface SeoMasterChecklist {
   score: number;
   passed: number;
   total: number;
-  items: SeoMasterChecklistItem[];
-  source?: string;
+  source: string;
+  status: "pass" | "warn" | "fail";
+  items: Array<{
+    id: string;
+    label: string;
+    detail: string;
+    recommendation: string;
+    status: "pass" | "warn" | "fail";
+  }>;
 }
 
 export interface BlogPost {
   title: string;
   metaDescription: string;
-  slugSuggestion?: string;
-  outline: string[];
+  slugSuggestion: string;
   content: string;
-  schemaMarkup: string; // JSON-LD
-  /** Present when server/client recovered from AI failure */
-  isFallback?: boolean;
-  fallbackReason?: string;
-  errorMsg?: string;
-  /** 5–7 long-tail keywords from URL-first generation */
+  outline: string[];
+  schemaMarkup: string;
+  faqSection: Array<{
+    question: string;
+    answer: string;
+  }>;
   targetKeywords?: string[];
-  /** AI-suggested image placements + alt text */
-  imageAssets?: Array<{ placement?: string; alt?: string; caption?: string }>;
-  /** 9-point public-page checklist (Seo-Promt-Master methodology) */
-  seoMasterChecklist?: SeoMasterChecklist;
-  seoAnalysis?: { targetNiche?: string; targetAudience?: string } | null;
-  generationMode?: string;
-  aiGenerated?: boolean;
-  researchUsed?: boolean;
-  preWritingAnalysis?: {
-    avgLength: number;
-    optimalStructure: string;
-    subtopics: string[];
-    contentGaps: string[];
-    topRankingPages: Array<{ rank: number; title: string; url: string; wordCount: number; dr: number }>;
+  seoMasterChecklist?: SeoMasterChecklistItem;
+  seoAnalysis?: {
+    targetNiche?: string;
+    targetAudience?: string;
   };
+  imageAssets?: Array<{
+    placement?: string;
+    alt?: string;
+  }>;
   linkingRecommendations?: {
-    internal: Array<{ anchor: string; url: string; type: string }>;
-    external: Array<{ anchor: string; url: string; authority: string }>;
+    internal: Array<{
+      anchor: string;
+      url: string;
+      type: string;
+    }>;
+    external: Array<{
+      anchor: string;
+      url: string;
+      authority: string;
+    }>;
   };
-  tables?: Array<{
-    title: string;
-    type: string;
-    headers: string[];
-    rows: string[][];
-  }>;
-  visualizations?: Array<{
-    type: string;
-    title: string;
-    data: any[];
-  }>;
   technicalSeo?: {
-    canonicalUrl: string;
-    ogTags: Record<string, string>;
-    twitterTags: Record<string, string>;
-    mobileNotes: string;
-    speedNotes: string;
+    canonicalUrl?: string;
+    robots?: string;
+    ogTags?: Record<string, string>;
+    twitterTags?: Record<string, string>;
+    mobileNotes?: string;
+    speedNotes?: string;
     aiEngineOptimization?: {
       targetLlmEngines: string[];
       factualDensityScore: number;
@@ -330,70 +323,236 @@ export interface BlogPost {
       proximitySignals: string;
     };
   };
-  faqSection?: Array<{ question: string; answer: string }>;
-  seoAuditorReport?: {
-    seoScoreBreakdown: {
-      keywordOptimization: number;
-      contentStructure: number;
-      readability: number;
-      technicalSeo: number;
-      multimediaUsage: number;
-      internalLinking: number;
-      schemaMarkup: number;
-      mobileOptimization: number;
-      total: number;
-    };
-    contentQualityMetrics: {
+  preWritingAnalysis?: {
+    avgLength: number;
+    optimalStructure: string;
+    subtopics: string[];
+    contentGaps: string[];
+    topRankingPages: Array<{
+      rank: number;
+      title: string;
+      url: string;
       wordCount: number;
-      readingTime: number;
-      fleschReadingEase: number;
-      gradeLevel: number;
-      passiveVoicePercent: number;
-      transitionWordsPercent: number;
-      sentenceVarietyScore: number;
-    };
-    keywordDensityReport: {
-      primaryKeywordDensity: number;
-      secondaryKeywords: Array<{ keyword: string; density: number }>;
-      lsiKeywordsCount: number;
-      longTailKeywordsCount: number;
-    };
-    competitiveComparison: {
-      contentLengthComparison: string;
-      keywordCoverageAnalysis: string;
-      uniqueValuePropositions: string[];
-      contentGapsFilled: string[];
-    };
+      dr: number;
+    }>;
+  };
+  tables?: Array<{
+    title: string;
+    type: string;
+    headers: string[];
+    rows: string[][];
+  }>;
+  visualizations?: Array<{
+    type: string;
+    title: string;
+    data: Array<Record<string, unknown>>;
+  }>;
+  seoAuditorReport?: {
+    seoScoreBreakdown?: Record<string, number>;
+    contentQualityMetrics?: Record<string, number>;
+    keywordDensityReport?: Record<string, unknown>;
+    competitiveComparison?: Record<string, unknown>;
+  };
+  isFallback?: boolean;
+  fallbackReason?: string;
+  errorMsg?: string;
+  keywordStrategy?: {
+    secondary?: string[];
   };
 }
 
+// ─── Social Post ──────────────────────────────────────────────────────────────
+
+export interface SocialPost {
+  platform: "Twitter/X" | "LinkedIn" | "Newsletter" | "Reddit" | "Quora" | "Google Business";
+  content: string;
+  hashtags: string[];
+  optimalPostingTime: string;
+  engagementStrategy: string;
+  seoNotes: string;
+  visualRecommendations?: string;
+  complianceCheck?: string;
+  schemaMarkup?: string;
+  isFallback?: boolean;
+  fallbackReason?: string;
+}
+
+// ─── Deep Keyword Audit ───────────────────────────────────────────────────────
+
 export interface DeepKeywordAudit {
-  keyword: string;
+  averageContentLength: number;
+  freshnessRequirements: {
+    level: "High" | "Medium" | "Low";
+    recommendedUpdateFrequency: string;
+    explanation: string;
+  };
+  contentTypeAnalysis: {
+    dominantType: string;
+    percentageBreakdown: Array<{
+      type: string;
+      percentage: number;
+    }>;
+  };
+  featuredSnippet: {
+    format: string;
+    extractedText: string;
+    optimizedOpportunity: string;
+  };
   topResults: Array<{
     rank: number;
     title: string;
     url: string;
+    contentType: string;
     contentLength: number;
-    contentType: "Blog Post" | "YouTube Video" | "Interactive Tool" | "Product Page" | "Comparison Guide" | "Documentation" | "Forum Thread" | "News/PR";
-    freshnessScore: "Fresh" | "Stable" | "Legacy";
     domainRating: number;
+    freshnessScore: "Fresh" | "Stable" | "Stale";
   }>;
-  averageContentLength: number;
-  commonSubtopics: Array<{ subtopic: string; relevance: number; description: string }>;
-  featuredSnippet: {
-    format: "Paragraph" | "List" | "Table" | "None";
-    extractedText: string;
-    optimizedOpportunity: string;
-  };
-  peopleAlsoAsk: Array<{ question: string; answer: string; sourceUrl?: string }>;
+  commonSubtopics: Array<{
+    subtopic: string;
+    relevance: number;
+    description: string;
+  }>;
+  peopleAlsoAsk: Array<{
+    question: string;
+    answer: string;
+    sourceUrl?: string;
+  }>;
   relatedSearches: string[];
-  contentTypeAnalysis: {
-    dominantType: string;
-    percentageBreakdown: Array<{ type: string; percentage: number }>;
+  isFallback?: boolean;
+}
+
+// ─── Analysis Result (top-level) ──────────────────────────────────────────────
+
+export interface AnalysisResult {
+  [key: string]: unknown;
+  target: DomainMetrics;
+  competitor: DomainMetrics | null;
+  keywords: Keyword[];
+  contentGaps: ContentGap[];
+  serpFeatures: SerpFeature[];
+  backlinkSources: BacklinkSource[];
+  backlinkOpportunities: BacklinkOpportunity[];
+  discoveredCompetitors: DiscoveredCompetitor[];
+  targetAnalysis: TargetAnalysis;
+  marketResearch: MarketResearchReport;
+  autonomousBlog?: BlogPost;
+  localLocation: LocalLocation;
+  rankingBlueprint?: RankingBlueprint;
+  dataSource: string;
+  estimatedCost?: { amount: number; currency: string };
+  pageSpeed?: {
+    performance: number;
+    accessibility: number;
+    best_practices: number;
+    seo: number;
   };
-  freshnessRequirements: {
-    level: "High" | "Medium" | "Low";
-    explanation: string;
-    recommendedUpdateFrequency: string;
+}
+
+// ─── DataForSEO raw interfaces (kept for API layer) ──────────────────────────
+
+export interface DfSerpItem {
+  se_domain?: string;
+  rank_group?: number;
+  rank_absolute?: number;
+  domain?: string;
+  title?: string;
+  description?: string;
+  url?: string;
+  snippet?: string;
+  breadcrumb?: string;
+}
+
+export interface DfKeywordData {
+  keyword: string;
+  search_volume?: number;
+  cpc?: number;
+  competition?: string | number;
+  competition_index?: number;
+  trend?: number[];
+  monthly_searches?: Array<{ year?: number; month?: number; search_volume?: number }>;
+}
+
+export interface DfDomainBacklinksResult {
+  target?: string;
+  domain?: string;
+  backlinks?: number;
+  dofollow?: number;
+  referring_domains?: number;
+  referring_domains_change?: number;
+  rank?: number;
+  domain_rank?: number;
+}
+
+export interface DfBacklinkItem {
+  domain_from?: string;
+  url_from?: string;
+  url_to?: string;
+  anchor?: string;
+  domain_from_rank?: number;
+  page_from_authority_score?: number;
+  domain_to?: string;
+  target_url?: string;
+  first_seen?: string;
+  rank?: number;
+  domain_rank?: number;
+  platform_type?: string;
+  page_authority_score?: number;
+  domain_authority_score?: number;
+  text_pre?: string;
+  text_post?: string;
+  dominant_platform_type?: string;
+  firstly_found?: string;
+  lost?: string;
+  status_code?: number;
+  status_text?: string;
+  spider?: string;
+  crawl_depth?: number;
+}
+
+export interface DataForSeoBundle {
+  serp: {
+    organic: Array<{ position: number; title: string; url: string; snippet: string; domain: string }>;
+    featured_snippet?: string;
+    local_pack: unknown[];
+    people_also_ask: unknown[];
+    related_searches: unknown[];
   };
+  keywordLandscape: Array<{
+    keyword: string;
+    volume: number;
+    difficulty: number;
+    cpc: number;
+    trend: number[];
+    opportunity: "high" | "medium" | "low";
+    intent?: string;
+  }>;
+  backlinks: {
+    total_backlinks: number;
+    referring_domains: number;
+    domain_rating: number;
+    dofollow_ratio: number;
+    link_growth: number;
+    top_referring_domains: Array<{
+      source_url: string;
+      source_domain: string;
+      anchor: string;
+      domain_rating: number;
+      first_seen: string;
+    }>;
+  };
+  pageSpeed?: {
+    performance: number;
+    accessibility: number;
+    best_practices: number;
+    seo: number;
+  };
+  rawSerpItems?: DfSerpItem[];
+  rawBacklinkItems?: DfBacklinkItem[];
+  rawKeywordData?: DfKeywordData[];
+  estimatedCost?: { amount: number; currency: string };
+}
+
+export interface DfsCredentials {
+  login: string;
+  password: string;
 }

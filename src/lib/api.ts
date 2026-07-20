@@ -42,22 +42,42 @@ export async function postApi<T = unknown>(
       : null;
   // Prefer explicit body config, else storage — never drop a valid key
   const live = resolveAiConfig(fromBody) || resolveAiConfig(null);
+  // DataForSEO credentials: body → live resolve → localStorage (always pass when present)
+  const storedLogin =
+    typeof window !== "undefined"
+      ? localStorage.getItem("seo_dataforseo_login") || undefined
+      : undefined;
+  const storedPassword =
+    typeof window !== "undefined"
+      ? localStorage.getItem("seo_dataforseo_password") || undefined
+      : undefined;
+  const dfsLogin =
+    fromBody?.dataforseoLogin || live?.dataforseoLogin || storedLogin || undefined;
+  const dfsPassword =
+    fromBody?.dataforseoPassword || live?.dataforseoPassword || storedPassword || undefined;
+
   const payload: Record<string, unknown> = {
     ...body,
-    // Keep DataForSEO / geo fields from body if live resolve omitted them
+    // Keep DataForSEO / geo fields so live SEO endpoints always receive BYOK creds
     aiConfig: live
       ? {
           ...live,
-          ...(fromBody?.dataforseoLogin
-            ? {
-                dataforseoLogin: fromBody.dataforseoLogin,
-                dataforseoPassword: fromBody.dataforseoPassword,
-              }
+          ...(dfsLogin && dfsPassword
+            ? { dataforseoLogin: dfsLogin, dataforseoPassword: dfsPassword }
             : {}),
           ...(fromBody?.locationCode != null ? { locationCode: fromBody.locationCode } : {}),
           ...(fromBody?.languageCode ? { languageCode: fromBody.languageCode } : {}),
         }
-      : fromBody || undefined,
+      : fromBody
+        ? {
+            ...fromBody,
+            ...(dfsLogin && dfsPassword
+              ? { dataforseoLogin: dfsLogin, dataforseoPassword: dfsPassword }
+              : {}),
+          }
+        : dfsLogin && dfsPassword
+          ? { dataforseoLogin: dfsLogin, dataforseoPassword: dfsPassword }
+          : undefined,
   };
 
   const response = await fetch(path, {

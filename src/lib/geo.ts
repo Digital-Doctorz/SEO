@@ -5,8 +5,8 @@ interface GeoLocation {
 }
 
 const TLD_MAP: Record<string, GeoLocation> = {
-  "in":    { locationCode: 2356, languageCode: "en", country: "India" },
-  "co.in": { locationCode: 2356, languageCode: "en", country: "India" },
+  "in":    { locationCode: 1007810, languageCode: "en", country: "India" },
+  "co.in": { locationCode: 1007810, languageCode: "en", country: "India" },
   "uk":    { locationCode: 2826, languageCode: "en", country: "United Kingdom" },
   "co.uk": { locationCode: 2826, languageCode: "en", country: "United Kingdom" },
   "de":    { locationCode: 2276, languageCode: "de", country: "Germany" },
@@ -46,15 +46,15 @@ const TLD_MAP: Record<string, GeoLocation> = {
 };
 
 const DEFAULT_LOCATION: GeoLocation = {
-  locationCode: 2840,
-  languageCode: "en",
-  country: "United States",
+ locationCode: 1007810,
+ languageCode: "en",
+ country: "India",
 };
 
 /**
  * Detects the DataForSEO location code and language from a domain's TLD.
- * Example: "optm.in" → { locationCode: 2356, languageCode: "en", country: "India" }
- * Generic TLDs (.com, .org, .net) default to US.
+ * Example: "optm.in" → { locationCode: 1007810, languageCode: "en", country: "India" }
+ * Generic TLDs (.com, .org, .net) default to India.
  */
 export function detectLocationFromDomain(domain: string): GeoLocation {
   const hostname = domain.replace(/^https?:\/\//, "").split("/")[0].toLowerCase();
