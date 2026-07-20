@@ -8,5 +8,14 @@ coverage/
 .env*
 !.env.example
 
+# Backup / stray dumps
+*.bak
+*.bak2
+*.old
+new_header.txt
+stderr.txt
+stdout.txt
+dev-server*.log
+
 .vercel
-.env*
+

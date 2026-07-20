@@ -29,8 +29,20 @@ export interface SavedArticle {
 
 /** Live SEO analysis snapshot passed into blog generation so articles stay on-niche + local. */
 export interface BlogAnalysisContext {
-  keywords?: string[];
-  contentGaps?: Array<{ topic?: string; keyword?: string; opportunity?: string }>;
+  keywords?: Array<string | { keyword: string; volume?: number; difficulty?: number; intent?: string }>;
+  contentGaps?: Array<{
+    topic?: string;
+    keyword?: string;
+    opportunity?: string;
+    competitorKeyword?: string;
+    competitorRank?: number;
+    competitorVolume?: number;
+    difficultyCategory?: string;
+    isQuickWin?: boolean;
+    recommendedType?: string;
+    localIntent?: string;
+    neighborhoods?: string[];
+  }>;
   competitors?: string[];
   niche?: string;
   audience?: string;

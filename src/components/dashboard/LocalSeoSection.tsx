@@ -34,13 +34,13 @@ export default function LocalSeoSection({
                 <p className="text-xs text-slate-500 font-medium">
                   Local SEO focus: NAP, Map Pack, geo keywords &amp; city competitors for{" "}
                   <span className="text-blue-600 font-semibold">{target.domain}</span>
-                  {localLocation.city ? (
+                  {localLocation?.city ? (
                     <>
                       {" "}
                       · market:{" "}
                       <span className="text-slate-700 font-semibold">
-                        {localLocation.city}
-                        {localLocation.state ? `, ${localLocation.state}` : ""}
+                        {localLocation?.city}
+                        {localLocation?.state ? `, ${localLocation?.state}` : ""}
                       </span>
                     </>
                   ) : null}
@@ -51,7 +51,7 @@ export default function LocalSeoSection({
             {/* Status Pill */}
             <div className="flex items-center gap-1.5 bg-blue-50 text-blue-700 border border-blue-150 rounded-full px-3.5 py-1 text-xs font-bold uppercase tracking-wider self-start md:self-center shadow-2xs">
               <Navigation className="h-3.5 w-3.5" />
-              <span>Location-Aware Target: {localLocation.city}, {localLocation.state}</span>
+              <span>Location-Aware Target: {localLocation?.city}, {localLocation?.state}</span>
             </div>
           </div>
 
@@ -65,9 +65,9 @@ export default function LocalSeoSection({
                 <div className="flex items-start gap-3">
                   <MapPin className="h-5 w-5 text-blue-600 mt-1 shrink-0" />
                   <div>
-                    <p className="text-base font-bold text-slate-800 leading-snug">{localLocation.detectedAddress}</p>
+                    <p className="text-base font-bold text-slate-800 leading-snug">{localLocation?.detectedAddress}</p>
                     <p className="text-xs font-semibold text-slate-500 mt-1.5">
-                      Detected Region: <span className="text-slate-700 font-bold">{localLocation.city}</span>, {localLocation.state}, {localLocation.country}
+                      Detected Region: <span className="text-slate-700 font-bold">{localLocation?.city}</span>, {localLocation?.state}, {localLocation?.country}
                     </p>
                   </div>
                 </div>
@@ -77,7 +77,7 @@ export default function LocalSeoSection({
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-slate-400 font-semibold">Address Confidence Score:</span>
                   <span className="px-2.5 py-0.5 bg-emerald-50 border border-emerald-200 text-emerald-700 font-mono font-bold rounded-lg text-xs">
-                    {localLocation.confidenceScore}% Accuracy
+                    {localLocation?.confidenceScore}% Accuracy
                   </span>
                 </div>
                 <div className="text-[10px] text-slate-400 font-medium italic">
@@ -92,10 +92,10 @@ export default function LocalSeoSection({
               <div className="space-y-1.5">
                 <div className="flex justify-between items-center text-xs font-bold text-slate-600">
                   <span className="uppercase tracking-wider">Local Map Pack Score</span>
-                  <span className="text-blue-600 font-mono text-sm">{localLocation.googleMapPackScore} / 100</span>
+                  <span className="text-blue-600 font-mono text-sm">{localLocation?.googleMapPackScore} / 100</span>
                 </div>
                 <div className="w-full bg-slate-200/60 h-2.5 rounded-full overflow-hidden">
-                  <div className="bg-blue-600 h-full rounded-full transition-all duration-500" style={{ width: `${localLocation.googleMapPackScore}%` }} />
+                  <div className="bg-blue-600 h-full rounded-full transition-all duration-500" style={{ width: `${localLocation?.googleMapPackScore}%` }} />
                 </div>
               </div>
 
@@ -103,10 +103,10 @@ export default function LocalSeoSection({
               <div className="space-y-1.5">
                 <div className="flex justify-between items-center text-xs font-bold text-slate-600">
                   <span className="uppercase tracking-wider">Citation Consistency (NAP)</span>
-                  <span className="text-emerald-600 font-mono text-sm">{localLocation.citationConsistency}%</span>
+                  <span className="text-emerald-600 font-mono text-sm">{localLocation?.citationConsistency}%</span>
                 </div>
                 <div className="w-full bg-slate-200/60 h-2.5 rounded-full overflow-hidden">
-                  <div className="bg-emerald-500 h-full rounded-full transition-all duration-500" style={{ width: `${localLocation.citationConsistency}%` }} />
+                  <div className="bg-emerald-500 h-full rounded-full transition-all duration-500" style={{ width: `${localLocation?.citationConsistency}%` }} />
                 </div>
               </div>
               
@@ -118,12 +118,12 @@ export default function LocalSeoSection({
           </div>
 
           {/* Service areas + verdict strip */}
-          {(localLocation.serviceAreas && localLocation.serviceAreas.length > 0) && (
+          {(localLocation?.serviceAreas && localLocation?.serviceAreas.length > 0) && (
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">
                 Service areas
               </span>
-              {localLocation.serviceAreas.map((area) => (
+              {localLocation?.serviceAreas.map((area) => (
                 <span
                   key={area}
                   className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100"
@@ -144,12 +144,12 @@ export default function LocalSeoSection({
                   <Globe className="h-4 w-4" />
                 </span>
                 <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
-                  Primary Regional Competitors ({localLocation.city})
+                  Primary Regional Competitors ({localLocation?.city})
                 </h4>
               </div>
 
               <div className="divide-y divide-slate-100 border border-slate-200 rounded-2xl overflow-hidden bg-slate-50/20">
-                {(localLocation.primaryLocalCompetitors || []).map((comp, idx) => (
+                {(localLocation?.primaryLocalCompetitors || []).map((comp, idx) => (
                   <div key={idx} className="p-4 bg-white hover:bg-slate-50/50 transition-all flex items-center justify-between gap-4">
                     <div className="space-y-1">
                       <p className="font-bold text-slate-800 text-sm">{comp.name}</p>
@@ -178,7 +178,7 @@ export default function LocalSeoSection({
               </div>
 
               <div className="divide-y divide-slate-100 border border-slate-200 rounded-2xl overflow-hidden bg-slate-50/20">
-                {(localLocation.localKeywordOpportunities || []).map((kw, idx) => (
+                {(localLocation?.localKeywordOpportunities || []).map((kw, idx) => (
                   <div key={idx} className="p-4 bg-white hover:bg-slate-50/50 transition-all flex items-center justify-between gap-4">
                     <div className="space-y-1">
                       <p className="font-bold text-slate-800 text-xs font-mono bg-slate-100 px-2 py-0.5 rounded-md inline-block">
@@ -205,7 +205,7 @@ export default function LocalSeoSection({
               <span>AI Local Search Positioning Assessment</span>
             </h4>
             <p className="text-sm text-slate-700 leading-relaxed font-medium">
-              {localLocation.localSeoVerdict}
+              {localLocation?.localSeoVerdict}
             </p>
           </div>
 
@@ -217,7 +217,7 @@ export default function LocalSeoSection({
             </h4>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {(localLocation.localOptimizationsNeeded || []).map((opt, i) => (
+              {(localLocation?.localOptimizationsNeeded || []).map((opt, i) => (
                 <div key={i} className="bg-white p-4 rounded-xl border border-slate-200/80 flex items-start gap-3 shadow-3xs">
                   <CheckCircle2 className="h-5 w-5 text-emerald-500 mt-0.5 shrink-0" />
                   <p className="text-xs text-slate-600 font-medium leading-relaxed">{opt}</p>

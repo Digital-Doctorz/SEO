@@ -26,6 +26,12 @@ interface DashboardOverviewProps {
   localLocation?: LocalLocation;
   rankingBlueprint?: RankingBlueprint;
   aiConfig: AiProviderConfig;
+  pageSpeed?: {
+    performance: number;
+    accessibility: number;
+    best_practices: number;
+    seo: number;
+  };
   onViewAutonomousBlog?: () => void;
   onSelectCompetitor?: (domain: string) => void;
 }
@@ -42,6 +48,7 @@ export default function DashboardOverview({
   localLocation,
   rankingBlueprint,
   aiConfig,
+  pageSpeed,
   onViewAutonomousBlog,
   onSelectCompetitor 
 }: DashboardOverviewProps) {
@@ -111,6 +118,49 @@ export default function DashboardOverview({
               View Publication-Ready Article
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
             </button>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Page Speed Card */}
+      {pageSpeed && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs"
+        >
+          <div className="flex items-center gap-2 mb-4">
+            <Zap className="h-4 w-4 text-amber-500" />
+            <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Page Performance</h3>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {([
+              { label: "Performance", value: pageSpeed.performance },
+              { label: "Accessibility", value: pageSpeed.accessibility },
+              { label: "Best Practices", value: pageSpeed.best_practices },
+              { label: "SEO", value: pageSpeed.seo },
+            ] as const).map((metric) => (
+              <div key={metric.label} className="text-center">
+                <div className={`text-2xl font-extrabold ${
+                  metric.value >= 90 ? "text-emerald-600" :
+                  metric.value >= 50 ? "text-amber-500" :
+                  "text-red-500"
+                }`}>
+                  {metric.value}
+                </div>
+                <div className="text-xs text-slate-400 font-semibold mt-1">{metric.label}</div>
+                <div className="w-full bg-slate-100 rounded-full h-1.5 mt-2">
+                  <div
+                    className={`h-1.5 rounded-full ${
+                      metric.value >= 90 ? "bg-emerald-500" :
+                      metric.value >= 50 ? "bg-amber-400" :
+                      "bg-red-400"
+                    }`}
+                    style={{ width: `${metric.value}%` }}
+                  />
+                </div>
+              </div>
+            ))}
           </div>
         </motion.div>
       )}

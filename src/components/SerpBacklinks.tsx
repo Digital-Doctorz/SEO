@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { SerpFeature, BacklinkSource, BacklinkOpportunity } from "../types";
 import { 
-  Award, Link, Mail, Star, ExternalLink, HelpCircle,
+  Award, Link, Mail, Star, ExternalLink, HelpCircle, Search,
   Video, MapPin, TrendingUp, ShieldCheck, Zap, AlertTriangle, CheckCircle2 
 } from "lucide-react";
 import { motion } from "motion/react";
@@ -46,6 +46,7 @@ export default function SerpBacklinks({
   const serpFeatures = Array.isArray(serpFeaturesProp) ? serpFeaturesProp : [];
   const backlinkSources = Array.isArray(backlinkSourcesProp) ? backlinkSourcesProp : [];
   const backlinkOpportunities = Array.isArray(backlinkOpportunitiesProp) ? backlinkOpportunitiesProp : [];
+  const isEmpty = serpFeatures.length === 0 && backlinkSources.length === 0 && backlinkOpportunities.length === 0;
   const [activeSubTab, setActiveSubTab] = useState<"serp" | "backlinks">("serp");
 
   const getSerpIcon = (type: string) => {
@@ -219,6 +220,13 @@ export default function SerpBacklinks({
 
   return (
     <div className="space-y-6">
+      {isEmpty && (
+        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-10 text-center">
+          <Search className="h-8 w-8 text-slate-300 mx-auto mb-3" />
+          <p className="text-sm font-semibold text-slate-500">No SERP or backlink data available yet.</p>
+          <p className="text-xs text-slate-400 mt-1">Connect DataForSEO in Settings for live search data.</p>
+        </div>
+      )}
       {/* Sub tabs switcher */}
       <div className="flex border-b border-slate-200">
         <button

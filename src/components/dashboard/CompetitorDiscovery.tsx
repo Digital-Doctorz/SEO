@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "motion/react";
-import { Globe, TrendingUp, ChevronUp, Sparkles, Zap, ExternalLink, CheckCircle2, BookOpen, FileText, Code } from "lucide-react";
+import { Globe, TrendingUp, ChevronUp, Sparkles, Zap, ExternalLink, CheckCircle2, BookOpen, FileText, Code, Link2, Search } from "lucide-react";
 import type { DiscoveredCompetitor } from "../../types";
 import { formatNum } from "./utils";
 
@@ -21,26 +21,29 @@ export default function CompetitorDiscovery({
  id="discovered-competitors-landscape"
  >
  <div className="flex items-center justify-between pb-4 border-b border-slate-100 flex-wrap gap-4">
- <div className="flex items-center gap-2">
- <span className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
- <Globe className="h-5 w-5" />
- </span>
- <div>
- <h3 className="text-lg font-bold text-slate-900">
- Competitor Deep-Dive Cards
- </h3>
- <p className="text-xs text-slate-500">
- Card view of peers from Phase 2 market research — expand for SEO &amp; AI rank playbooks
- </p>
- </div>
- </div>
- <span className="text-xs bg-blue-50 border border-blue-100 text-blue-700 px-3 py-1 rounded-full font-bold uppercase tracking-wider">
- {discoveredCompetitors.length} Competitors Tracked
- </span>
+  <div className="flex items-center gap-2">
+   <span className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
+    <Globe className="h-5 w-5" />
+   </span>
+   <div>
+    <h3 className="text-lg font-bold text-slate-900">
+     Competitor Deep-Dive Cards
+    </h3>
+    <p className="text-xs text-slate-500">
+     Local competitors discovered from Google SERP + industry analysis — expand for SEO & AI rank playbooks
+    </p>
+   </div>
+  </div>
+  <span className="text-xs bg-blue-50 border border-blue-100 text-blue-700 px-3 py-1 rounded-full font-bold uppercase tracking-wider">
+   {(discoveredCompetitors || []).length} Competitors Tracked
+   {(discoveredCompetitors || []).some(c => c.isSerpDiscovered) && (
+    <span className="ml-1 text-emerald-600">· {(discoveredCompetitors || []).filter(c => c.isSerpDiscovered).length} from SERP</span>
+   )}
+  </span>
  </div>
 
  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
- {discoveredCompetitors.map((comp, idx) => {
+ {(discoveredCompetitors || []).map((comp, idx) => {
  const isExpanded = expandedComp === idx;
  return (
  <div 
@@ -54,16 +57,38 @@ export default function CompetitorDiscovery({
  
  <div className="space-y-3">
  <div className="flex items-start justify-between gap-2">
- <div>
- <h4 className="font-bold text-slate-900 text-base break-all flex items-center gap-1.5">
- <span className="inline-block w-2 h-2 rounded-full bg-blue-500"></span>
- {comp.domain}
- </h4>
- <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">
- Est. Traffic: {formatNum(comp.estimatedMonthlyTraffic)} / mo
- {comp.domainRating != null ? ` · DR ${comp.domainRating}` : ""}
- </p>
- </div>
+  <div>
+   <h4 className="font-bold text-slate-900 text-base break-all flex items-center gap-1.5">
+    <span className="inline-block w-2 h-2 rounded-full bg-blue-500"></span>
+    {comp.domain}
+    {comp.isSerpDiscovered && (
+     <span className="text-[9px] font-bold bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-full border border-emerald-100 uppercase tracking-wider ml-1">
+      Live SERP
+     </span>
+    )}
+   </h4>
+   <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">
+    Est. Traffic: {formatNum(comp.estimatedMonthlyTraffic)} / mo
+    {comp.domainRating != null ? ` · DR ${comp.domainRating}` : ""}
+   </p>
+   {/* Real DataForSEO metrics row */}
+   {(comp.backlinksCount != null && comp.backlinksCount > 0) || (comp.referringDomains != null && comp.referringDomains > 0) ? (
+    <div className="flex items-center gap-3 mt-1 text-[10px] text-slate-500 font-medium">
+     {comp.backlinksCount != null && comp.backlinksCount > 0 && (
+      <span className="flex items-center gap-1">
+       <Link2 className="h-3 w-3 text-slate-400" />
+       {formatNum(comp.backlinksCount)} backlinks
+      </span>
+     )}
+     {comp.referringDomains != null && comp.referringDomains > 0 && (
+      <span className="flex items-center gap-1">
+       <Globe className="h-3 w-3 text-slate-400" />
+       {formatNum(comp.referringDomains)} referring domains
+      </span>
+     )}
+    </div>
+   ) : null}
+  </div>
  <div className="flex flex-col items-end gap-1 shrink-0">
  <span className="text-[10px] font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-100">
  {comp.nicheSimilarity}% Match

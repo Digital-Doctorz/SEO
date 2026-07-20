@@ -1,5 +1,0 @@
-A server error has occurred
-
-FUNCTION_INVOCATION_FAILED
-
-bom1::xfbbx-1784143080284-3f049264e4f8

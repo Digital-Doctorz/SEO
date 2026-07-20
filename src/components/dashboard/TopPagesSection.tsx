@@ -18,12 +18,12 @@ export default function TopPagesSection({ target, competitor }: TopPagesSectionP
               <span>Top Content: {target.domain}</span>
             </h3>
             <span className="text-xs bg-blue-50 text-blue-700 px-2.5 py-1 rounded-full font-semibold">
-              {target.topPages.length} Pages Audited
+              {(target.topPages || []).length} Pages Audited
             </span>
           </div>
 
           <div className="space-y-4">
-            {target.topPages.map((page, idx) => (
+            {(target.topPages || []).map((page, idx) => (
               <div key={idx} className="p-4 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-all flex flex-col justify-between gap-2">
                 <div>
                   <h4 className="font-semibold text-slate-800 text-sm line-clamp-1">{page.title}</h4>
@@ -51,12 +51,12 @@ export default function TopPagesSection({ target, competitor }: TopPagesSectionP
                   <span>Top Content: {competitor.domain}</span>
                 </h3>
                 <span className="text-xs bg-slate-100 text-slate-700 px-2.5 py-1 rounded-full font-semibold">
-                  {competitor.topPages.length} Pages Audited
+                  {(competitor.topPages || []).length} Pages Audited
                 </span>
               </div>
 
               <div className="space-y-4">
-                {competitor.topPages.map((page, idx) => (
+                {(competitor.topPages || []).map((page, idx) => (
                   <div key={idx} className="p-4 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-all flex flex-col justify-between gap-2">
                     <div>
                       <h4 className="font-semibold text-slate-800 text-sm line-clamp-1">{page.title}</h4>

@@ -426,7 +426,7 @@ export default function ContentHub({
       setCustomTargetUrl("");
       setIsCustomLinkOpen(false);
     } else {
-      alert(`The exact text "${anchor}" was not found in the article body. Please select a word or phrase that actually exists in your draft.`);
+      pushToast("error", "Text not found", `The exact text "${anchor}" was not found in the article body. Please select a word or phrase that actually exists in your draft.`);
     }
   };
 
@@ -536,7 +536,7 @@ export default function ContentHub({
       setTargetAudience(analysisContext?.audience || config.targetAudience);
       setToneOfVoice(config.toneOfVoice);
       const fromAnalysis = (analysisContext?.keywords || [])
-        .map((k) => String(k || "").trim())
+        .map((k) => typeof k === "string" ? k : k?.keyword || "")
         .filter((k) => k && k.toLowerCase() !== (initialKeyword || initialTopic).toLowerCase())
         .slice(0, 6);
       setSecondaryKeywords(

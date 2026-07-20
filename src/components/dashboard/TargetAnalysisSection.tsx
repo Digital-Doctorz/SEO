@@ -233,7 +233,7 @@ export default function TargetAnalysisSection({
                   <span>Content Strengths Inventory</span>
                 </h4>
                 <ul className="space-y-3">
-                  {targetAnalysis.contentStrengths.map((strength, i) => (
+                  {(targetAnalysis.contentStrengths || []).map((strength, i) => (
                     <li key={i} className="text-sm text-slate-600 flex items-start gap-2.5">
                       <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0 mt-2" />
                       <span className="font-medium">{strength}</span>
@@ -247,7 +247,7 @@ export default function TargetAnalysisSection({
                   <span>Content Defects & Gaps Identified</span>
                 </h4>
                 <ul className="space-y-3">
-                  {targetAnalysis.contentWeaknesses.map((weakness, i) => (
+                  {(targetAnalysis.contentWeaknesses || []).map((weakness, i) => (
                     <li key={i} className="text-sm text-slate-600 flex items-start gap-2.5">
                       <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0 mt-2" />
                       <span className="font-medium">{weakness}</span>
@@ -678,7 +678,7 @@ export default function TargetAnalysisSection({
                 </p>
                 {(targetAnalysis.socialMentionKeywords || []).length > 0 && (
                   <div className="flex flex-wrap gap-1.5 pt-1">
-                    {targetAnalysis.socialMentionKeywords!.map((tag, idx) => (
+                    {(targetAnalysis.socialMentionKeywords || []).map((tag, idx) => (
                       <span
                         key={idx}
                         className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 bg-white border border-indigo-100 text-indigo-700 rounded-lg"
@@ -809,7 +809,7 @@ export default function TargetAnalysisSection({
 
                             {(comp.targetKeywords || []).length > 0 && (
                               <div className="flex flex-wrap gap-1.5">
-                                {comp.targetKeywords!.slice(0, 6).map((kw, k) => (
+                                {(comp.targetKeywords || []).slice(0, 6).map((kw, k) => (
                                   <span
                                     key={k}
                                     className="text-[10px] font-mono bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200"
@@ -979,7 +979,7 @@ export default function TargetAnalysisSection({
                       key={idx}
                       className="p-4 rounded-xl border border-slate-200 bg-white shadow-3xs space-y-3 hover:border-blue-400 transition-all"
                     >
-                      <div className="flex items-center justify-between gap-2">
+                       <div className="flex items-center justify-between gap-2">
                         <span className="font-mono text-xs font-extrabold text-slate-800 bg-slate-100 px-2.5 py-1 rounded-lg truncate max-w-[70%]">
                           {gap?.competitorKeyword || "keyword"}
                         </span>
@@ -987,6 +987,16 @@ export default function TargetAnalysisSection({
                           {gap?.isQuickWin && (
                             <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-100">
                               Quick win
+                            </span>
+                          )}
+                          {gap?.localIntent === "local_direct" && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100">
+                              Local SEO
+                            </span>
+                          )}
+                          {gap?.localIntent === "local_aware" && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">
+                              Geo-Aware
                             </span>
                           )}
                           <span
@@ -1009,6 +1019,16 @@ export default function TargetAnalysisSection({
                         <p className="text-sm font-bold text-slate-800 line-clamp-2 mt-0.5">
                           {gap?.recommendedTopic || "Topic opportunity"}
                         </p>
+                        {gap?.neighborhoods && gap.neighborhoods.length > 0 && (
+                          <p className="text-[10px] text-indigo-600 mt-0.5">
+                            Areas: {gap.neighborhoods.join(", ")}
+                          </p>
+                        )}
+                        {gap?.gbpCategory && (
+                          <p className="text-[10px] text-teal-600 mt-0.5">
+                            GBP: {gap.gbpCategory}
+                          </p>
+                        )}
                       </div>
                       <div className="flex items-center justify-between text-xs text-slate-500 pt-2 border-t border-slate-100">
                         <span>

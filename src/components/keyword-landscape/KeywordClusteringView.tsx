@@ -41,6 +41,14 @@ export default function KeywordClusteringView({
  </div>
 
  <div className="space-y-4 pt-2">
+ {clusters.length === 0 && (
+ <div className="p-6 rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-center space-y-2">
+   <p className="text-sm font-bold text-slate-700">No topic clusters yet</p>
+   <p className="text-xs text-slate-500 max-w-md mx-auto">
+     Run analysis with your AI key (and DataForSEO for live volumes). Keywords need a parent topic so we can build hub-and-spoke clusters.
+   </p>
+ </div>
+ )}
  {clusters.map((cluster, idx) => (
  <div 
  key={idx} 

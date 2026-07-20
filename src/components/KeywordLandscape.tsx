@@ -246,6 +246,18 @@ export default function KeywordLandscape({ keywords: keywordsProp, targetDomain,
  }
  };
 
+ if (keywords.length === 0) {
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center space-y-3 shadow-xs">
+      <Compass className="h-8 w-8 text-slate-300 mx-auto" />
+      <h3 className="text-lg font-bold text-slate-800">No keywords in this analysis yet</h3>
+      <p className="text-sm text-slate-500 max-w-md mx-auto">
+        Re-run analysis with an AI API key in Settings. Add DataForSEO credentials for live search volumes, difficulty, and CPC on the Keyword Map and Topic Clusters tabs.
+      </p>
+    </div>
+  );
+ }
+
  return (
  <div className="space-y-6">
  {/* Tab Switcher */}

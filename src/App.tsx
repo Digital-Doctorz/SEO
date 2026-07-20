@@ -1,4 +1,4 @@
-import { useState, useEffect, FormEvent, lazy, Suspense } from "react";
+import { useState, useEffect, useRef, FormEvent, lazy, Suspense } from "react";
 import { motion } from "motion/react";
 import { 
   Search, Globe, TrendingUp, Link, BarChart2, Calendar, 
@@ -10,7 +10,7 @@ import {
 import { AnalysisResult, AiProviderConfig } from "./types";
 import SettingsModal from "./components/SettingsModal";
 import ErrorBoundary from "./components/ErrorBoundary";
-import { postApi } from "./lib/api";
+import { postApi, ApiError } from "./lib/api";
 import { normalizeAnalysisResult } from "./lib/normalizeAnalysis";
 import { detectLocationFromDomain } from "./lib/geo";
 import {
@@ -27,6 +27,7 @@ const SerpBacklinks = lazy(() => import("./components/SerpBacklinks"));
 const ContentHub = lazy(() => import("./components/ContentHub"));
 
 type AppTab = "overview" | "keywords" | "gaps" | "serp" | "hub";
+type ErrorInfo = { message: string; severity: "error" | "warning" | "info" } | null;
 
 const NAV_ITEMS: Array<{ id: AppTab; label: string; icon: typeof BarChart2 }> = [
   { id: "overview", label: "Overview", icon: BarChart2 },
@@ -45,7 +46,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>("overview");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
-  const [errorMsg, setErrorMsg] = useState("");
+  const [errorMsg, setErrorMsg] = useState<ErrorInfo>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Settings / API Key state (persisted to localStorage — provider-specific keys)
@@ -74,6 +75,8 @@ export default function App() {
   // Content Hub Inter-tab Communication state
   const [selectedTopic, setSelectedTopic] = useState("");
   const [selectedKeyword, setSelectedKeyword] = useState("");
+  const isSubmittingRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Quick Load Presets
   const presets = [
@@ -84,9 +87,10 @@ export default function App() {
 
   // Run SEO Analysis Request — always uses saved BYOK key for live AI + crawl
   const runAnalysis = async (target: string, competitor: string) => {
-    if (!target) return;
+    if (!target || isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
     setIsAnalyzing(true);
-    setErrorMsg("");
+    setErrorMsg(null);
     setAnalysisResult(null);
 
     // Always resolve latest key from storage so OpenRouter/Gemini match what user saved
@@ -94,9 +98,10 @@ export default function App() {
     const liveConfig = resolveAiConfig(aiConfig) || resolveAiConfig(null);
     if (!liveConfig?.apiKey) {
       setIsAnalyzing(false);
-      setErrorMsg(
-        "Add your AI API key in Settings (OpenRouter or Gemini) to run live analysis and blog generation. Demo mode is disabled for full real-time data."
-      );
+      setErrorMsg({
+        message: "Add your AI API key in Settings (OpenRouter or Gemini) to run live analysis and blog generation. Demo mode is disabled for full real-time data.",
+        severity: "warning",
+      });
       setSettingsModalOpen(true);
       return;
     }
@@ -107,6 +112,10 @@ export default function App() {
     };
 
     try {
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+      const timeoutId = setTimeout(() => controller.abort(), 120000);
+
       const data = await postApi<AnalysisResult & {
         isFallback?: boolean;
         needsApiKey?: boolean;
@@ -120,7 +129,9 @@ export default function App() {
         competitorUrl: competitor || undefined,
         aiConfig: configWithGeo,
         requireAi: true,
-      });
+      }, { signal: controller.signal });
+
+      clearTimeout(timeoutId);
 
       const meta = data as AnalysisResult & {
         isFallback?: boolean;
@@ -135,36 +146,60 @@ export default function App() {
 
       if (meta.needsApiKey) {
         setAnalysisResult(null);
-        setErrorMsg(
-          "API key was not accepted. Open Settings, re-save your OpenRouter or Gemini key, then analyze again."
-        );
+        setErrorMsg({
+          message: "API key was not accepted. Open Settings, re-save your OpenRouter or Gemini key, then analyze again.",
+          severity: "error",
+        });
         setSettingsModalOpen(true);
         return;
+      }
+
+      // Surface DataForSEO auth failures as warnings (non-blocking)
+      if ((meta as any).dfsAuthFailed) {
+        setErrorMsg({
+          message: (meta as any).dfsAuthHint ||
+            "DataForSEO credentials rejected. Analysis ran with AI fallback data. Update your DataForSEO login in Settings for live search volumes and backlinks.",
+          severity: "warning",
+        });
       }
 
       if (meta.isFallback) {
         // Still show crawl-based result but warn — AI enrichment may have failed
         setAnalysisResult(safeResult);
-        setErrorMsg(
-          meta.errorMsg ||
+        setErrorMsg({
+          message: meta.errorMsg ||
             meta.fallbackReason ||
-            "Partial analysis: live crawl ran, but AI enrichment failed (quota or timeout). Check Settings model/billing and retry for full AI keywords & gaps."
-        );
+            "Partial analysis: live crawl ran, but AI enrichment failed (quota or timeout). Check Settings model/billing and retry for full AI keywords & gaps.",
+          severity: "warning",
+        });
         setActiveTab("overview");
         return;
       }
 
       if (meta.error) throw new Error(String(meta.error));
-      if (meta.errorMsg) setErrorMsg(String(meta.errorMsg));
-      else setErrorMsg("");
+      if (meta.errorMsg) setErrorMsg({ message: String(meta.errorMsg), severity: "warning" });
+      else setErrorMsg(null);
 
       setAnalysisResult(safeResult);
       setActiveTab("overview");
     } catch (err: unknown) {
       console.error("Analysis request failed:", err);
-      setErrorMsg(err instanceof Error ? err.message : "Something went wrong during domain parsing.");
+      if (err instanceof ApiError && err.status === 401 && (err.details as any)?.needsApiKey) {
+        setErrorMsg({ message: "API key was not accepted. Open Settings, re-save your OpenRouter or Gemini key, then try again.", severity: "error" });
+        setSettingsModalOpen(true);
+      } else {
+        const msg = err instanceof Error ? err.message : "Something went wrong during domain parsing.";
+        setErrorMsg({
+          message: /abort|timeout/i.test(msg)
+            ? "Analysis timed out after 2 minutes. The server may be overloaded or the domain may be slow to crawl. Try a simpler URL or try again."
+            : msg,
+          severity: "error",
+        });
+      }
     } finally {
       setIsAnalyzing(false);
+      isSubmittingRef.current = false;
+      abortControllerRef.current = null;
     }
   };
 
@@ -233,6 +268,17 @@ export default function App() {
                   Executing real-time search grounding queries to analyze Domain Authority, top ranking paths, and backlink distributions...
                 </p>
               </div>
+              <button
+                onClick={() => {
+                  abortControllerRef.current?.abort();
+                  setIsAnalyzing(false);
+                  isSubmittingRef.current = false;
+                  setErrorMsg({ message: "Analysis cancelled.", severity: "info" });
+                }}
+                className="px-5 py-2.5 text-sm font-bold text-slate-500 hover:text-slate-800 border border-slate-200 hover:border-slate-300 rounded-xl transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
             </div>
           ) : (
             /* Main Landing Page */
@@ -297,11 +343,19 @@ export default function App() {
 
                 {/* Error Alert Box */}
                 {errorMsg && (
-                  <div className="p-4 bg-rose-50 border border-rose-100 rounded-xl text-rose-700 text-xs flex gap-2.5 items-start">
+                  <div className={`p-4 rounded-xl text-xs flex gap-2.5 items-start ${
+                    errorMsg.severity === "warning"
+                      ? "bg-amber-50 border border-amber-100 text-amber-700"
+                      : errorMsg.severity === "info"
+                        ? "bg-blue-50 border border-blue-100 text-blue-700"
+                        : "bg-rose-50 border border-rose-100 text-rose-700"
+                  }`}>
                     <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
                     <div>
-                      <strong className="font-bold block mb-0.5">Analysis failed</strong>
-                      {errorMsg}
+                      <strong className="font-bold block mb-0.5">
+                        {errorMsg.severity === "warning" ? "Warning" : errorMsg.severity === "info" ? "Notice" : "Analysis failed"}
+                      </strong>
+                      {errorMsg.message}
                     </div>
                   </div>
                 )}
@@ -385,6 +439,32 @@ export default function App() {
 
             {/* Nav Menu Links */}
             <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+              {/* Mobile: Re-analyze form */}
+              <form onSubmit={handleFormSubmit} className="lg:hidden space-y-2 mb-4 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <input
+                  type="text"
+                  placeholder="Target domain"
+                  value={targetUrl}
+                  onChange={(e) => setTargetUrl(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+                />
+                <input
+                  type="text"
+                  placeholder="Competitor (optional)"
+                  value={competitorUrl}
+                  onChange={(e) => setCompetitorUrl(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+                />
+                <button
+                  type="submit"
+                  disabled={isAnalyzing || !targetUrl.trim()}
+                  className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white text-xs font-bold px-3 py-2 rounded-lg transition-all flex items-center justify-center gap-1"
+                >
+                  {isAnalyzing ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
+                  <span>{isAnalyzing ? "Analyzing..." : "Re-Analyze"}</span>
+                </button>
+              </form>
+
               {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
                 <button
                   key={id}
@@ -476,6 +556,15 @@ export default function App() {
                   </button>
                 </form>
 
+                {/* Mobile: compact re-analyze button */}
+                <button
+                  onClick={() => setMobileMenuOpen(true)}
+                  className="lg:hidden text-slate-500 hover:text-blue-600 p-2 rounded-lg hover:bg-blue-50 transition-all"
+                  title="Re-analyze domain"
+                >
+                  <Search className="h-4 w-4" />
+                </button>
+
                 {/* Profile Avatars Cluster */}
                 <div className="flex items-center gap-2">
                   <button
@@ -537,19 +626,19 @@ export default function App() {
                   {/* Data source indicator */}
                   {analysisResult.dataSource && (
                     <div className="mb-3 flex items-center gap-2 text-xs">
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium ${
+                      <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-semibold border ${
                         analysisResult.dataSource === "dataforseo" || analysisResult.dataSource === "dataforseo+ai"
-                          ? "bg-emerald-900/40 text-emerald-300 border border-emerald-700/50"
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                           : analysisResult.dataSource === "ai"
-                          ? "bg-blue-900/40 text-blue-300 border border-blue-700/50"
-                          : "bg-slate-800/60 text-slate-400 border border-slate-700/50"
+                          ? "bg-blue-50 text-blue-700 border-blue-200"
+                          : "bg-slate-100 text-slate-600 border-slate-200"
                       }`}>
                         {analysisResult.dataSource === "dataforseo" || analysisResult.dataSource === "dataforseo+ai" ? (
                           <><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> Live SEO Data</>
                         ) : analysisResult.dataSource === "ai" ? (
                           <><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg> AI Analysis</>
                         ) : (
-                          <><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg> Demo Data</>
+                          <><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg> Demo / Crawl Data</>
                         )}
                       </span>
                       {analysisResult.dataSource === "dataforseo+ai" && (
@@ -594,6 +683,7 @@ export default function App() {
                       localLocation={analysisResult.localLocation}
                       rankingBlueprint={analysisResult.rankingBlueprint}
                       aiConfig={aiConfig}
+                      pageSpeed={analysisResult.pageSpeed}
                       onViewAutonomousBlog={() => setActiveTab("hub")}
                       onSelectCompetitor={(domain) => {
                         setCompetitorUrl(domain);
@@ -663,9 +753,13 @@ export default function App() {
                       aiConfig={aiConfig}
                       analysisContext={{
                         keywords: (analysisResult.keywords || [])
-                          .map((k) => k.keyword)
-                          .filter(Boolean)
-                          .slice(0, 20),
+                          .slice(0, 20)
+                          .map((k) => ({
+                            keyword: k.keyword,
+                            volume: k.volume,
+                            difficulty: k.difficulty,
+                            intent: k.intent,
+                          })),
                         contentGaps: (analysisResult.contentGaps || [])
                           .slice(0, 10)
                           .map((g) => ({
@@ -674,6 +768,14 @@ export default function App() {
                             opportunity: g.isQuickWin
                               ? "Quick win content gap"
                               : `${g.recommendedType || "content"} opportunity`,
+                            competitorKeyword: g.competitorKeyword,
+                            competitorRank: g.competitorRank,
+                            competitorVolume: g.competitorVolume,
+                            difficultyCategory: g.difficultyCategory,
+                            isQuickWin: g.isQuickWin,
+                            recommendedType: g.recommendedType,
+                            localIntent: g.localIntent,
+                            neighborhoods: g.neighborhoods,
                           })),
                         competitors: [
                           analysisResult.competitor?.domain,

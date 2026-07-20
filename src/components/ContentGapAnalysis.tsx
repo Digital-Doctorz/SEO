@@ -11,11 +11,6 @@ interface ContentGapAnalysisProps {
   onSelectTopic: (topic: string, keyword: string) => void;
 }
 
-/** @deprecated use normalizeContentGaps from lib/normalizeAnalysis */
-export function normalizeGapsClient(raw: unknown): ContentGap[] {
-  return normalizeContentGaps(raw);
-}
-
 function formatVolume(n: number): string {
   if (!Number.isFinite(n)) return "0";
   try {
@@ -162,6 +157,21 @@ export default function ContentGapAnalysis({
                         <Zap className="h-3 w-3 fill-amber-500 text-amber-500" /> Quick-Win
                       </span>
                     )}
+                    {gap.localIntent === "local_direct" && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100 uppercase tracking-wider">
+                        Local SEO
+                      </span>
+                    )}
+                    {gap.localIntent === "local_aware" && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100 uppercase tracking-wider">
+                        Geo-Aware
+                      </span>
+                    )}
+                    {gap.localDirectoryRelevant && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-100 uppercase tracking-wider">
+                        Directory
+                      </span>
+                    )}
                     <span
                       className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
                         gap.difficultyCategory === "Easy"
@@ -195,6 +205,21 @@ export default function ContentGapAnalysis({
                       Keyword Difficulty:{" "}
                       <strong className="text-slate-700">{gap.competitorDifficulty}/100</strong>
                     </span>
+                    {gap.localSearchVolume && (
+                      <span className="text-blue-600 font-semibold">
+                        Local volume in {gap.cityMention || "Kolkata"}
+                      </span>
+                    )}
+                    {gap.neighborhoods && gap.neighborhoods.length > 0 && (
+                      <span className="text-indigo-600">
+                        Areas: <strong>{gap.neighborhoods.join(", ")}</strong>
+                      </span>
+                    )}
+                    {gap.gbpCategory && (
+                      <span className="text-teal-600">
+                        GBP: <strong>{gap.gbpCategory}</strong>
+                      </span>
+                    )}
                   </div>
                 </div>
 
