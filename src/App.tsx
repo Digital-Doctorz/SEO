@@ -93,25 +93,24 @@ export default function App() {
     setErrorMsg(null);
     setAnalysisResult(null);
 
-    // Always resolve latest key from storage so OpenRouter/Gemini match what user saved
-    const geo = detectLocationFromDomain(target);
-    const liveConfig = resolveAiConfig(aiConfig) || resolveAiConfig(null);
-    if (!liveConfig?.apiKey) {
-      setIsAnalyzing(false);
-      setErrorMsg({
-        message: "Add your AI API key in Settings (OpenRouter or Gemini) to run live analysis and blog generation. Demo mode is disabled for full real-time data.",
-        severity: "warning",
-      });
-      setSettingsModalOpen(true);
-      return;
-    }
-    const configWithGeo: AiProviderConfig = {
-      ...liveConfig,
-      locationCode: geo.locationCode,
-      languageCode: geo.languageCode,
-    };
-
     try {
+      // Always resolve latest key from storage so OpenRouter/Gemini match what user saved
+      const geo = detectLocationFromDomain(target);
+      const liveConfig = resolveAiConfig(aiConfig) || resolveAiConfig(null);
+      if (!liveConfig?.apiKey) {
+        setErrorMsg({
+          message: "Add your AI API key in Settings (OpenRouter or Gemini) to run live analysis and blog generation. Demo mode is disabled for full real-time data.",
+          severity: "warning",
+        });
+        setSettingsModalOpen(true);
+        return;
+      }
+      const configWithGeo: AiProviderConfig = {
+        ...liveConfig,
+        locationCode: geo.locationCode,
+        languageCode: geo.languageCode,
+      };
+
       const controller = new AbortController();
       abortControllerRef.current = controller;
       const timeoutId = setTimeout(() => controller.abort(), 120000);
@@ -197,6 +196,7 @@ export default function App() {
         });
       }
     } finally {
+      // Always unlock submit — including early returns (missing key, auth, fallback)
       setIsAnalyzing(false);
       isSubmittingRef.current = false;
       abortControllerRef.current = null;
@@ -285,13 +285,13 @@ export default function App() {
             <div className="flex-1 max-w-4xl w-full mx-auto p-6 md:p-12 flex flex-col justify-center space-y-12">
               <div className="text-center space-y-4">
                 <span className="px-3.5 py-1 bg-blue-50 text-blue-700 font-bold text-xs rounded-full border border-blue-100 uppercase tracking-wider inline-block">
-                  ⚡ Powered by Gemini & Search Grounding
+                  ⚡ Kolkata-first Local SEO · Gemini &amp; BYOK AI
                 </span>
                 <h2 className="text-4xl font-extrabold text-slate-900 tracking-tight sm:text-5xl leading-tight">
                   Competitive Intelligence & <span className="text-blue-600">Content Strategy</span>
                 </h2>
                 <p className="text-slate-500 text-base max-w-2xl mx-auto">
-                  Audit any website's search engine authority, discover high-converting long-tail keywords, map content gaps, and write SEO-first blog articles. Open Settings and add <strong>your own</strong> AI API key — no shared keys; every user brings their own.
+                  Audit search authority, win high-intent Kolkata / West Bengal keywords, map content gaps, and write SEO-first blog articles. Open Settings and add <strong>your own</strong> AI API key — no shared keys; every user brings their own.
                 </p>
               </div>
 

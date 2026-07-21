@@ -3,6 +3,14 @@ import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
+import {
+  DEFAULT_LOCATION_CODE,
+  DEFAULT_LANGUAGE_CODE,
+  KOLKATA_CITY,
+  KOLKATA_STATE,
+  KOLKATA_COUNTRY,
+  KOLKATA_NEIGHBORHOODS,
+} from "./config/location";
 
 dotenv.config();
 dotenv.config({ path: ".env.local", override: true });
@@ -10,7 +18,8 @@ dotenv.config({ path: ".env.local", override: true });
 const HAS_DFSEO = Boolean(process.env.DATAFORSEO_LOGIN && process.env.DATAFORSEO_PASSWORD);
 
 // ============================================================
-// DataForSEO helpers (inlined ΓÇö Vercel serverless cannot import ./lib/* reliably)
+// DataForSEO helpers (inlined — Vercel serverless cannot import ./lib/* reliably)
+// Default location = Kolkata (api/config/location.ts), not US 2840
 // ============================================================
 const DFSEO_BASE = "https://api.dataforseo.com/v3";
 
@@ -119,7 +128,7 @@ async function dfseoPost<T>(endpoint: string, body: unknown[], credentials?: Dfs
   return json.tasks?.[0]?.result?.[0] as T;
 }
 
-async function fetchSerp(keyword: string, locationCode = 2840, languageCode = "en", credentials?: DfsCredentials): Promise<DfSerpItem[]> {
+async function fetchSerp(keyword: string, locationCode = DEFAULT_LOCATION_CODE, languageCode = DEFAULT_LANGUAGE_CODE, credentials?: DfsCredentials): Promise<DfSerpItem[]> {
   const result = await dfseoPost<{ items?: DfSerpItem[]; search_dataframe?: DfSerpItem[] }>(
     "/serp/google/organic/live/advanced",
     [{ keyword, location_code: locationCode, language_code: languageCode, device: "desktop", os: "windows", depth: 10 }],
@@ -128,7 +137,7 @@ async function fetchSerp(keyword: string, locationCode = 2840, languageCode = "e
   return result.items ?? result.search_dataframe ?? [];
 }
 
-async function fetchKeywordVolumes(keywords: string[], locationCode = 2840, languageCode = "en", credentials?: DfsCredentials): Promise<DfKeywordData[]> {
+async function fetchKeywordVolumes(keywords: string[], locationCode = DEFAULT_LOCATION_CODE, languageCode = DEFAULT_LANGUAGE_CODE, credentials?: DfsCredentials): Promise<DfKeywordData[]> {
   if (!keywords.length) return [];
   const tasks = keywords.map((kw) => ({ keyword: kw, location_code: locationCode, language_code: languageCode }));
   const result = await dfseoPost<{ keywords?: DfKeywordData[] }>(
@@ -139,13 +148,13 @@ async function fetchKeywordVolumes(keywords: string[], locationCode = 2840, lang
   return result.keywords ?? [];
 }
 
-async function fetchDomainOverview(domain: string, locationCode = 2840, languageCode = "en", credentials?: DfsCredentials): Promise<DfDomainBacklinksResult> {
+async function fetchDomainOverview(domain: string, locationCode = DEFAULT_LOCATION_CODE, languageCode = DEFAULT_LANGUAGE_CODE, credentials?: DfsCredentials): Promise<DfDomainBacklinksResult> {
   return dfseoPost<DfDomainBacklinksResult>("/backlinks/domain/overview", [
     { target: domain, location_code: locationCode, language_code: languageCode },
   ], credentials);
 }
 
-async function fetchBacklinks(domain: string, limit = 100, locationCode = 2840, languageCode = "en", credentials?: DfsCredentials): Promise<DfBacklinkItem[]> {
+async function fetchBacklinks(domain: string, limit = 100, locationCode = DEFAULT_LOCATION_CODE, languageCode = DEFAULT_LANGUAGE_CODE, credentials?: DfsCredentials): Promise<DfBacklinkItem[]> {
   const result = await dfseoPost<{ backlinks?: DfBacklinkItem[] }>("/backlinks/domain/backlinks", [
     { target: domain, limit, location_code: locationCode, language_code: languageCode },
   ], credentials);
@@ -169,8 +178,8 @@ async function fetchPageSpeed(url: string, credentials?: DfsCredentials): Promis
 
 async function fetchFullBundle(domain: string, seedKeywords: string[], options?: { credentials?: DfsCredentials; locationCode?: number; languageCode?: string }): Promise<DataForSeoBundle> {
   const creds = options?.credentials;
-  const loc = options?.locationCode ?? 2840;
-  const lang = options?.languageCode ?? "en";
+  const loc = options?.locationCode ?? DEFAULT_LOCATION_CODE;
+  const lang = options?.languageCode ?? DEFAULT_LANGUAGE_CODE;
   const primaryKeyword =
     seedKeywords[0] ?? domain.replace(/\.(com|in|org|net|co\.in)$/i, "").replace(/-/g, " ");
   const [serpItems, domainOverview, backlinks, pageSpeedResult, ...keywordResults] = await Promise.all([
@@ -3501,16 +3510,17 @@ const KNOWN_CITY_HINTS: Array<{ city: string; state: string; country: string; re
 ];
 
 function countryFromDomainTld(domain: string): string {
- const host = cleanDomain(domain).toLowerCase();
- if (/\.in$|\.co\.in$/.test(host)) return "India";
- if (/\.uk$|\.co\.uk$/.test(host)) return "United Kingdom";
- if (/\.au$|\.com\.au$/.test(host)) return "Australia";
- if (/\.ca$/.test(host)) return "Canada";
- if (/\.ae$/.test(host)) return "UAE";
- if (/\.sg$/.test(host)) return "Singapore";
- if (/\.de$/.test(host)) return "Germany";
- if (/\.fr$/.test(host)) return "France";
- return "United States";
+  const host = cleanDomain(domain).toLowerCase();
+  if (/\.in$|\.co\.in$/.test(host)) return KOLKATA_COUNTRY;
+  if (/\.uk$|\.co\.uk$/.test(host)) return "United Kingdom";
+  if (/\.au$|\.com\.au$/.test(host)) return "Australia";
+  if (/\.ca$/.test(host)) return "Canada";
+  if (/\.ae$/.test(host)) return "UAE";
+  if (/\.sg$/.test(host)) return "Singapore";
+  if (/\.de$/.test(host)) return "Germany";
+  if (/\.fr$/.test(host)) return "France";
+  // App default market is Kolkata / India (generic .com/.org/.net)
+  return KOLKATA_COUNTRY;
 }
 
 /** Extract address / city / phone signals from crawled HTML + text (Local SEO NAP). */
@@ -3594,21 +3604,26 @@ function extractLocationFromCorpus(
  if (!detectedAddress && city) {
   detectedAddress = `${city}${state ? `, ${state}` : ""}, ${country}`;
  }
- if (!city) {
-  // TLD-based soft default for local framing
-  if (country === "India") {
-   city = "Local service area";
-   state = "India";
-   confidence = Math.max(confidence, 40);
-  } else {
-   city = "Local service area";
-   state = country;
-   confidence = Math.max(confidence, 38);
+  if (!city) {
+    // Product default market: Kolkata (Local SEO by Digital Doctors)
+    if (country === KOLKATA_COUNTRY || country === "India") {
+      city = KOLKATA_CITY;
+      state = KOLKATA_STATE;
+      confidence = Math.max(confidence, 45);
+    } else {
+      city = KOLKATA_CITY;
+      state = country;
+      confidence = Math.max(confidence, 38);
+    }
   }
- }
 
- const serviceAreas: string[] = [];
- if (city && city !== "Local service area") serviceAreas.push(city);
+  const serviceAreas: string[] = [];
+  if (city && city !== "Local service area") serviceAreas.push(city);
+  if (city === KOLKATA_CITY) {
+    for (const n of KOLKATA_NEIGHBORHOODS.slice(0, 6)) {
+      if (!serviceAreas.includes(n)) serviceAreas.push(n);
+    }
+  }
  for (const hint of KNOWN_CITY_HINTS) {
   if (hint.country === country && hint.re.test(text) && !serviceAreas.includes(hint.city)) {
    serviceAreas.push(hint.city);
@@ -5660,14 +5675,38 @@ Write a Google Business Profile update (~100–300 words).
 }
 
 app.get("/api/health", (_req, res) => {
- res.json({
- status: "ok",
- timestamp: new Date().toISOString(),
- node: process.version,
- env: process.env.NODE_ENV || "not set",
- distExists: fs.existsSync(path.join(process.cwd(), "dist")),
- vercel: process.env.VERCEL || null,
- });
+  const distPathCheck = path.join(process.cwd(), "dist");
+  res.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    node: process.version,
+    env: process.env.NODE_ENV || "not set",
+    distExists: fs.existsSync(distPathCheck),
+    promptsExist: fs.existsSync(path.join(process.cwd(), "prompts", "SEO-BLOG-MASTER-PROMPT.md")),
+    defaultLocation: {
+      city: KOLKATA_CITY,
+      state: KOLKATA_STATE,
+      country: KOLKATA_COUNTRY,
+      locationCode: DEFAULT_LOCATION_CODE,
+      languageCode: DEFAULT_LANGUAGE_CODE,
+    },
+    dataforseoEnvConfigured: HAS_DFSEO,
+    vercel: process.env.VERCEL || null,
+    endpoints: [
+      "/api/health",
+      "/api/analyze",
+      "/api/generate-blog",
+      "/api/generate-social",
+      "/api/analyze-keyword-deep",
+      "/api/generate-meta-snippets",
+      "/api/seo/keyword-volume",
+      "/api/seo/serp",
+      "/api/seo/domain-overview",
+      "/api/seo/backlinks",
+      "/api/seo/page-speed",
+      "/api/seo/full-bundle",
+    ],
+  });
 });
 
 app.post("/api/analyze", async (req, res) => {
@@ -7114,39 +7153,107 @@ Use realistic SERP-style data for the niche. JSON only.`;
  }
 });
 
+function buildOfflineMetaSnippets(
+  keyword: string,
+  articleTitle: string,
+  domain: string
+): Array<{ type: string; title: string; description: string }> {
+  const kw = sanitizeText(keyword || "SEO services") || "SEO services";
+  const brand = (domain.split(".")[0] || "Brand").replace(/^\w/, (c) => c.toUpperCase());
+  const titleBase = sanitizeText(articleTitle) || kw;
+  const city = "Kolkata";
+  const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n - 1).trim()}…`);
+  return [
+    {
+      type: "default",
+      title: clip(`${kw} | ${brand} ${city}`, 60),
+      description: clip(
+        `Learn ${kw} with practical steps for ${city} businesses. Expert tips from ${brand}. Start improving visibility today.`,
+        155
+      ),
+    },
+    {
+      type: "question",
+      title: clip(`What Is ${kw}? ${city} Guide`, 60),
+      description: clip(
+        `Answers to common questions about ${kw} in ${city}. Clear definitions, local examples, and next steps from ${brand}.`,
+        155
+      ),
+    },
+    {
+      type: "benefit",
+      title: clip(`${kw}: Results for ${city} Brands`, 60),
+      description: clip(
+        `Grow traffic and trust with ${kw}. ${brand} covers strategy, content, and local SEO for ${city} teams.`,
+        155
+      ),
+    },
+    {
+      type: "how-to",
+      title: clip(`How to Master ${kw} in ${city}`, 60),
+      description: clip(
+        `Step-by-step ${kw} playbook for ${city}. Actionable checklist, tools, and mistakes to avoid — by ${brand}.`,
+        155
+      ),
+    },
+    {
+      type: "list",
+      title: clip(`${titleBase}: Top Tips (${city})`, 60),
+      description: clip(
+        `Top tips on ${kw} for ${city} searchers. Compare options, check proof points, and pick a clear next action with ${brand}.`,
+        155
+      ),
+    },
+  ];
+}
+
 app.post("/api/generate-meta-snippets", async (req, res) => {
- const domain = resolveDomain(req.body);
- const { keyword = "SEO services", content = "", articleTitle = "" } = req.body || {};
- if (!domain || domain === "target-website.com") {
- return res.status(400).json({ error: "Target URL / domain is required." });
- }
- const providerConfig = getProviderConfig(req);
- if (!providerConfig) {
- return res.status(401).json({
- error: "API key required",
- isFallback: true,
- needsApiKey: true,
- snippets: [],
- fallbackReason:
- "Add your own AI API key in Settings. No shared keys are stored on the server.",
- });
- }
- try {
- const excerpt = typeof content === "string" ? content.slice(0, 1500) : "";
- const prompt = `Generate 5 high-CTR SEO meta title and description variants for a page on "${domain}".
+  const domain = resolveDomain(req.body);
+  const { keyword = "SEO services", content = "", articleTitle = "" } = req.body || {};
+  if (!domain || domain === "target-website.com") {
+    return res.status(400).json({ error: "Target URL / domain is required." });
+  }
+  const providerConfig = getProviderConfig(req);
+  if (!providerConfig) {
+    return res.status(200).json({
+      isFallback: true,
+      needsApiKey: true,
+      snippets: buildOfflineMetaSnippets(String(keyword), String(articleTitle), domain),
+      fallbackReason:
+        "Offline meta variants. Add your AI API key in Settings for live AI-written titles and descriptions.",
+    });
+  }
+  try {
+    const excerpt = typeof content === "string" ? content.slice(0, 1500) : "";
+    const prompt = `Generate 5 high-CTR SEO meta title and description variants for a page on "${domain}".
 Primary keyword: "${keyword}"
 Article title: "${articleTitle}"
 Content excerpt: """${excerpt}"""
+Local market: Kolkata, West Bengal, India (use geo modifiers where natural).
 
-Rules: titles max 60 chars with keyword near start; descriptions 140ΓÇô155 chars with benefit + soft CTA; no clickbait.
+Rules: titles max 60 chars with keyword near start; descriptions 140-155 chars with benefit + soft CTA; no clickbait.
 Return ONLY JSON: { "snippets": [ { "type": "default|question|benefit|how-to|list", "title": "...", "description": "..." } ] }`;
- const result = await callAI(providerConfig, prompt, "", { responseMimeType: "application/json", temperature: 0.3 });
- const parsed = cleanAndParseJSON(result.text);
- if (Array.isArray(parsed)) return res.json({ snippets: parsed });
- res.json(parsed);
+    const result = await callAI(providerConfig, prompt, "", {
+      responseMimeType: "application/json",
+      temperature: 0.3,
+    });
+    const parsed = cleanAndParseJSON(result.text);
+    if (Array.isArray(parsed)) return res.json({ snippets: parsed });
+    if (parsed && Array.isArray((parsed as { snippets?: unknown }).snippets)) {
+      return res.json(parsed);
+    }
+    return res.json({
+      snippets: buildOfflineMetaSnippets(String(keyword), String(articleTitle), domain),
+      isFallback: true,
+      fallbackReason: "AI response unusable — offline meta variants returned.",
+    });
   } catch (err: unknown) {
     const message = redactSecrets(err instanceof Error ? err.message : String(err));
-    res.status(502).json({ isFallback: true, fallbackReason: message, snippets: [] });
+    res.status(200).json({
+      isFallback: true,
+      fallbackReason: message,
+      snippets: buildOfflineMetaSnippets(String(keyword), String(articleTitle), domain),
+    });
   }
 });
 
@@ -7156,9 +7263,16 @@ Return ONLY JSON: { "snippets": [ { "type": "default|question|benefit|how-to|lis
 
 function extractDfsCredentials(req: { body?: Record<string, unknown> }): DfsCredentials | undefined {
   const body = req.body ?? {};
-  const login = body.dataforseoLogin as string | undefined;
-  const password = body.dataforseoPassword as string | undefined;
-  if (login && password) return { login, password };
+  // Client postApi nests BYOK DataForSEO creds under aiConfig; also accept top-level
+  const aiCfg =
+    body.aiConfig && typeof body.aiConfig === "object"
+      ? (body.aiConfig as Record<string, unknown>)
+      : null;
+  const login = (body.dataforseoLogin || aiCfg?.dataforseoLogin) as string | undefined;
+  const password = (body.dataforseoPassword || aiCfg?.dataforseoPassword) as string | undefined;
+  if (typeof login === "string" && login.trim() && typeof password === "string" && password.trim()) {
+    return { login: login.trim(), password: password.trim() };
+  }
   return undefined;
 }
 
@@ -7170,7 +7284,7 @@ app.post("/api/seo/keyword-volume", async (req, res) => {
   if (!hasDfsAccess(req)) {
     return res.status(503).json({ error: "DataForSEO credentials not configured. Add them in Settings." });
   }
-  const { keywords = [], locationCode = 2840, languageCode = "en" } = req.body || {};
+  const { keywords = [], locationCode = DEFAULT_LOCATION_CODE, languageCode = DEFAULT_LANGUAGE_CODE } = req.body || {};
   const creds = extractDfsCredentials(req);
   if (!Array.isArray(keywords) || keywords.length === 0) {
     return res.status(400).json({ error: "keywords array is required." });
@@ -7188,7 +7302,7 @@ app.post("/api/seo/serp", async (req, res) => {
   if (!hasDfsAccess(req)) {
     return res.status(503).json({ error: "DataForSEO credentials not configured. Add them in Settings." });
   }
-  const { keyword = "", locationCode = 2840, languageCode = "en" } = req.body || {};
+  const { keyword = "", locationCode = DEFAULT_LOCATION_CODE, languageCode = DEFAULT_LANGUAGE_CODE } = req.body || {};
   const creds = extractDfsCredentials(req);
   if (!keyword) {
     return res.status(400).json({ error: "keyword is required." });
@@ -7206,7 +7320,7 @@ app.post("/api/seo/domain-overview", async (req, res) => {
   if (!hasDfsAccess(req)) {
     return res.status(503).json({ error: "DataForSEO credentials not configured. Add them in Settings." });
   }
-  const { domain = "", locationCode = 2840, languageCode = "en" } = req.body || {};
+  const { domain = "", locationCode = DEFAULT_LOCATION_CODE, languageCode = DEFAULT_LANGUAGE_CODE } = req.body || {};
   const creds = extractDfsCredentials(req);
   if (!domain) {
     return res.status(400).json({ error: "domain is required." });
@@ -7224,7 +7338,7 @@ app.post("/api/seo/backlinks", async (req, res) => {
   if (!hasDfsAccess(req)) {
     return res.status(503).json({ error: "DataForSEO credentials not configured. Add them in Settings." });
   }
-  const { domain = "", limit = 100, locationCode = 2840, languageCode = "en" } = req.body || {};
+  const { domain = "", limit = 100, locationCode = DEFAULT_LOCATION_CODE, languageCode = DEFAULT_LANGUAGE_CODE } = req.body || {};
   const creds = extractDfsCredentials(req);
   if (!domain) {
     return res.status(400).json({ error: "domain is required." });

@@ -92,18 +92,45 @@ The app works without DataForSEO using AI-estimated data. You'll see a banner su
 ## Production Build
 
 ```bash
-npm run build    # builds the frontend
-npm start        # serves on port 3000
+npm run predeploy   # typecheck + frontend build
+npm start           # production server on port 3000
 ```
+
+Or separately:
+
+```bash
+npm run build    # builds the frontend into dist/ (includes public/ SEO assets)
+npm start        # serves API + static on port 3000
+```
+
+### Pre-flight checklist
+
+| Check | Command / URL |
+|-------|----------------|
+| Types | `npm run typecheck` |
+| Build | `npm run build` |
+| Health | `GET /api/health` → `status: ok`, `defaultLocation.city: Kolkata` |
+| Robots | `GET /robots.txt` |
+| Sitemap | `GET /sitemap.xml` |
+| Analyze (no key) | Returns structured fallback + `needsApiKey` |
+| Blog (no key) | Returns offline draft + `needsApiKey` |
 
 ### Deploying on Vercel
 
 The API is a serverless function (`api/index.ts`). It is configured in `vercel.json` with `maxDuration: 300`, which **requires a Vercel Pro plan** (Hobby caps functions at 60s; the blog generation pipeline runs multiple sequential AI calls and needs headroom).
 
-- The function reads `dist/**` and `prompts/**` at runtime, so the master blog prompt (`prompts/SEO-BLOG-MASTER-PROMPT.md`) is editable and takes effect on the next deploy — no code change needed to tweak article generation.
+- `outputDirectory` is `dist` (Vite build + `public/` assets: robots, sitemap, favicon).
+- The function includes `dist/**`, `prompts/**`, and `api/config/**` so Kolkata location defaults and the master blog prompt ship with each deploy.
+- Default DataForSEO location is **Kolkata** (`location_code` 1007810), not US.
 - If you deploy somewhere with a shorter function limit, set the `BLOG_FUNCTION_BUDGET_MS` environment variable (default `85000`) to skip the optional JSON-secondary and repair passes before the timeout, so a usable draft is always returned.
 
 Self-hosted: `npm run build && npm start` serves the API + built frontend on port 3000.
+
+### Kolkata / Local SEO defaults
+
+- Geo meta + `ProfessionalService` / `WebApplication` JSON-LD in `index.html`
+- Neighborhood modifiers and location codes in `api/config/location.ts`
+- Client TLD geo map in `src/lib/geo.ts` (India / generic TLDs → Kolkata market)
 
 ---
 

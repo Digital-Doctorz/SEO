@@ -1,0 +1,8 @@
+# Local SEO by Digital Doctors — Kolkata
+User-agent: *
+Allow: /
+
+# Prefer crawl of the app shell; API is not for search indexing
+Disallow: /api/
+
+Sitemap: https://seo-nine-phi.vercel.app/sitemap.xml

@@ -4,9 +4,12 @@ interface GeoLocation {
   country: string;
 }
 
+/** DataForSEO Kolkata city code — keep in sync with api/config/location.ts */
+const KOLKATA_LOCATION_CODE = 1007810;
+
 const TLD_MAP: Record<string, GeoLocation> = {
-  "in":    { locationCode: 1007810, languageCode: "en", country: "India" },
-  "co.in": { locationCode: 1007810, languageCode: "en", country: "India" },
+  "in":    { locationCode: KOLKATA_LOCATION_CODE, languageCode: "en", country: "India" },
+  "co.in": { locationCode: KOLKATA_LOCATION_CODE, languageCode: "en", country: "India" },
   "uk":    { locationCode: 2826, languageCode: "en", country: "United Kingdom" },
   "co.uk": { locationCode: 2826, languageCode: "en", country: "United Kingdom" },
   "de":    { locationCode: 2276, languageCode: "de", country: "Germany" },
@@ -46,9 +49,9 @@ const TLD_MAP: Record<string, GeoLocation> = {
 };
 
 const DEFAULT_LOCATION: GeoLocation = {
- locationCode: 1007810,
- languageCode: "en",
- country: "India",
+  locationCode: KOLKATA_LOCATION_CODE,
+  languageCode: "en",
+  country: "India",
 };
 
 /**
