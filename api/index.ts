@@ -5282,7 +5282,24 @@ async function generateFallbackData(targetRaw: string, competitorRaw?: string) {
 // Express App
 // ============================================================
 const app = express();
+
+// Vercel rewrite /api/* → /api may drop the subpath from req.url.
+// Restore originalUrl so Express routes (/api/health, /api/analyze) still match.
+app.use((req, _res, next) => {
+  const original = String(req.originalUrl || "");
+  const current = String(req.url || "");
+  if (original.startsWith("/api/") && !current.startsWith("/api")) {
+    req.url = original;
+  }
+  next();
+});
+
 app.use(express.json({ limit: "1mb" }));
+
+// Convenience: GET /api → same payload as health (routing smoke test)
+app.get(["/api", "/api/"], (_req, res) => {
+  res.redirect(307, "/api/health");
+});
 
 const SOCIAL_PLATFORMS = [
  "Twitter/X",
