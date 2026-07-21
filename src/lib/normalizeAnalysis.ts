@@ -19,6 +19,7 @@ import type {
   TargetAnalysis,
 } from "../types";
 import { sanitizeDeep } from "./text";
+import { ensureOptimizedGapTitle, keywordHasGeo } from "./contentGapTitles";
 
 function num(v: unknown, fallback = 0): number {
   const n = Number(v);
@@ -164,8 +165,13 @@ export function normalizeKeywords(raw: unknown): Keyword[] {
     .filter((k): k is Keyword => k != null);
 }
 
-export function normalizeContentGaps(raw: unknown): ContentGap[] {
+export function normalizeContentGaps(
+  raw: unknown,
+  opts: { city?: string; brand?: string } = {}
+): ContentGap[] {
   if (!Array.isArray(raw)) return [];
+  const defaultCity = str(opts.city, "Kolkata");
+  const brand = str(opts.brand, "");
   return raw
     .map((g: any, i: number): ContentGap | null => {
       const competitorKeyword = str(g?.competitorKeyword || g?.keyword || g?.query, "");
@@ -186,32 +192,65 @@ export function normalizeContentGaps(raw: unknown): ContentGap[] {
         targetRank = Number.isFinite(tr) ? Math.round(tr) : "Not Ranking";
       }
 
+      const volume = Math.max(0, Math.round(num(g?.competitorVolume ?? g?.volume, 500)));
+      const cityMention = str(g?.cityMention, defaultCity) || defaultCity;
+      const optimized = ensureOptimizedGapTitle(competitorKeyword, str(g?.recommendedTopic || g?.topic, ""), {
+        city: cityMention,
+        brand,
+        volume,
+        difficulty,
+        index: i,
+      });
+
+      const hasGeo = keywordHasGeo(competitorKeyword, cityMention);
+      let localIntent = (
+        ["local_direct", "local_aware", "national", "mixed"].includes(g?.localIntent)
+          ? g?.localIntent
+          : undefined
+      ) as ContentGap["localIntent"];
+      if (!localIntent) {
+        if (/\bnear me\b/i.test(competitorKeyword) || hasGeo) localIntent = "local_direct";
+        else if (optimized.title.toLowerCase().includes(cityMention.toLowerCase())) localIntent = "local_aware";
+        else localIntent = "mixed";
+      }
+
       return {
         competitorKeyword,
         competitorRank: Math.max(1, Math.round(num(g?.competitorRank ?? g?.rank, 5))),
-        competitorVolume: Math.max(0, Math.round(num(g?.competitorVolume ?? g?.volume, 500))),
+        competitorVolume: volume,
         competitorDifficulty: difficulty,
         targetRank,
-        recommendedTopic: str(
-          g?.recommendedTopic || g?.topic,
-          `Complete Guide to ${competitorKeyword}`
+        recommendedTopic: optimized.title,
+        recommendedType: str(
+          g?.recommendedType || g?.contentType,
+          localIntent === "local_direct" ? "Local Pillar / Service Page" : "Pillar Blog Post"
         ),
-        recommendedType: str(g?.recommendedType || g?.contentType, "Pillar Blog Post"),
         difficultyCategory,
         isQuickWin: Boolean(g?.isQuickWin ?? g?.quickWin ?? difficulty < 35),
-        cityMention: str(g?.cityMention, ""),
-        localIntent: (["local_direct", "local_aware", "national", "mixed"].includes(g?.localIntent)
-          ? g?.localIntent
-          : undefined) as ContentGap["localIntent"],
+        cityMention,
+        localIntent,
         neighborhoods: Array.isArray(g?.neighborhoods)
           ? g.neighborhoods.filter(Boolean).slice(0, 10)
           : [],
-        localSearchVolume: Boolean(g?.localSearchVolume),
-        localDirectoryRelevant: Boolean(g?.localDirectoryRelevant),
+        localSearchVolume: Boolean(
+          g?.localSearchVolume ?? (hasGeo || localIntent === "local_direct" || localIntent === "local_aware")
+        ),
+        localDirectoryRelevant: Boolean(
+          g?.localDirectoryRelevant ?? (/\bnear me\b|doctor|clinic|hospital|dentist|lawyer/i.test(competitorKeyword))
+        ),
         gbpCategory: str(g?.gbpCategory, ""),
+        serpTitlePreview: str(g?.serpTitlePreview, optimized.serpTitle),
+        titleAngle: str(g?.titleAngle, optimized.angle),
+        titleFormula: str(g?.titleFormula, optimized.formula),
+        trafficPotentialScore: Math.max(
+          1,
+          Math.min(100, Math.round(num(g?.trafficPotentialScore, optimized.trafficPotentialScore)))
+        ),
       };
     })
-    .filter((g): g is ContentGap => g != null);
+    .filter((g): g is ContentGap => g != null)
+    // Highest traffic opportunity first for the audit board
+    .sort((a, b) => (b.trafficPotentialScore || 0) - (a.trafficPotentialScore || 0));
 }
 
 const SERP_TYPES = new Set(["Featured Snippet", "People Also Ask", "Video Carousel", "Local Pack"]);
@@ -815,7 +854,13 @@ export function normalizeAnalysisResult(raw: unknown, fallbackTarget = "example.
     target,
     competitor,
     keywords: normalizeKeywords(sanitized.keywords).slice(0, 15),
-    contentGaps: normalizeContentGaps(sanitized.contentGaps),
+    contentGaps: normalizeContentGaps(sanitized.contentGaps, {
+      city: str(
+        (sanitized.localLocation as { city?: string } | undefined)?.city,
+        "Kolkata"
+      ),
+      brand: brandHint,
+    }),
     serpFeatures: normalizeSerpFeatures(sanitized.serpFeatures),
     backlinkSources: normalizeBacklinkSources(sanitized.backlinkSources, target.domain),
     backlinkOpportunities: normalizeBacklinkOpportunities(sanitized.backlinkOpportunities),

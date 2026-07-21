@@ -65,6 +65,7 @@ export interface ContentGap {
   competitorVolume: number;
   competitorDifficulty: number;
   targetRank: number | "Not Ranking";
+  /** High-CTR, keyword-first, localised article / H1 title */
   recommendedTopic: string;
   recommendedType: string;
   difficultyCategory: "Easy" | "Medium" | "Hard";
@@ -81,6 +82,14 @@ export interface ContentGap {
   localDirectoryRelevant?: boolean;
   /** Suggested Google Business Profile category */
   gbpCategory?: string;
+  /** ~50–60 char SERP-style title preview */
+  serpTitlePreview?: string;
+  /** Why this title formula was chosen */
+  titleAngle?: string;
+  /** near_me | cost | how_to | best_list | … */
+  titleFormula?: string;
+  /** 0–100 estimated traffic / CTR potential */
+  trafficPotentialScore?: number;
 }
 
 // ─── SERP Features ────────────────────────────────────────────────────────────

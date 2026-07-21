@@ -881,75 +881,246 @@ function buildArticleSchema(opts: {
 }
 
 /**
+ * High-CTR localised gap titles (server-side; keep in sync with src/lib/contentGapTitles.ts).
+ */
+function buildServerGapTitle(
+  keyword: string,
+  opts: { city?: string; brand?: string; volume?: number; difficulty?: number; index?: number; existing?: string } = {}
+): {
+  title: string;
+  serpTitle: string;
+  angle: string;
+  formula: string;
+  trafficPotentialScore: number;
+  city: string;
+} {
+  const year = new Date().getFullYear();
+  const city = sanitizeText(opts.city || KOLKATA_CITY) || KOLKATA_CITY;
+  const kw = sanitizeText(keyword);
+  const i = opts.index ?? 0;
+  const volume = Math.max(0, Number(opts.volume) || 0);
+  const difficulty = Math.max(1, Math.min(100, Number(opts.difficulty) || 40));
+  const k = kw.toLowerCase();
+  const hasGeo =
+    k.includes(city.toLowerCase()) ||
+    /\bnear me\b/i.test(k) ||
+    /\b(west bengal|salt lake|new town|howrah)\b/i.test(k);
+  const titleCase = kw.replace(/\b\w/g, (c) => c.toUpperCase());
+  const existing = sanitizeText(opts.existing || "");
+  const weak =
+    !existing ||
+    /^(complete guide to|guide to|everything about|all about)\b/i.test(existing) ||
+    existing.length < 20 ||
+    !existing.toLowerCase().includes(k.split(/\s+/)[0] || "___");
+
+  let title: string;
+  let formula = "local_guide";
+  let angle = `Local pillar angle — geo + keyword for ${city} organic growth.`;
+
+  if (!weak && existing.length >= 28 && existing.length <= 90) {
+    title = existing;
+    if (!hasGeo && !existing.toLowerCase().includes(city.toLowerCase()) && existing.length < 55) {
+      title = `${existing} in ${city}`;
+    }
+    angle = `Keyword-led H1 from analysis; tuned for ${city}.`;
+  } else if (/\bnear me\b/i.test(k)) {
+    title = hasGeo
+      ? `${titleCase}: Top-Rated Options in ${city} (${year})`
+      : `${titleCase} Near Me in ${city}: Top-Rated Options (${year})`;
+    formula = "near_me";
+    angle = "Map Pack + near-me intent — high conversion local traffic.";
+  } else if (/\b(cost|price|pricing|fees?|charges?)\b/i.test(k)) {
+    title = hasGeo
+      ? `${titleCase}: What ${city} Locals Actually Pay (${year})`
+      : `${titleCase} in ${city}: Real Prices & What Affects Cost (${year})`;
+    formula = "cost";
+    angle = "Commercial cost queries convert; price clarity wins clicks.";
+  } else if (/\b(how to|how do|steps? to)\b/i.test(k)) {
+    title = hasGeo
+      ? `${titleCase}: Step-by-Step Guide for ${city}`
+      : `How to Get ${titleCase} in ${city}: Step-by-Step (${year})`;
+    formula = "how_to";
+    angle = "Informational to transactional ladder with clear steps.";
+  } else if (/\b(best|top \d+)\b/i.test(k)) {
+    title = hasGeo
+      ? `${titleCase}: Expert Picks for ${city} (${year})`
+      : `Best ${titleCase} in ${city} (${year}): Compared & Ranked`;
+    formula = "best_list";
+    angle = "Listicle CTR — best + year + city = high SERP clicks.";
+  } else if (/\b(vs|versus|alternative|compare)\b/i.test(k)) {
+    title = hasGeo
+      ? `${titleCase}: Honest Comparison for ${city} Buyers`
+      : `${titleCase}: Which Option Wins in ${city}?`;
+    formula = "comparison";
+    angle = "Mid-funnel comparison captures switcher traffic.";
+  } else if (/\b(review|reviews|rating)\b/i.test(k)) {
+    title = hasGeo
+      ? `${titleCase}: Real ${city} Reviews & Ratings (${year})`
+      : `${titleCase} Reviews in ${city}: What Locals Actually Say`;
+    formula = "reviews";
+    angle = "Review intent = trust + booking proximity.";
+  } else {
+    const patterns = [
+      hasGeo
+        ? `${titleCase}: Complete Local Guide (${year})`
+        : `${titleCase} in ${city}: Complete Local Guide (${year})`,
+      hasGeo
+        ? `${titleCase}: What ${city} Families Should Know`
+        : `${titleCase} in ${city}: What Locals Should Know First`,
+      hasGeo
+        ? `${titleCase} — Trusted ${city} Resource (${year})`
+        : `Trusted ${titleCase} in ${city}: How to Choose Wisely`,
+      hasGeo
+        ? `${titleCase}: From First Search to Booked Visit`
+        : `${titleCase} ${city}: From First Search to Booked Visit`,
+    ];
+    title = patterns[i % patterns.length];
+    formula = "local_guide";
+  }
+
+  if (title.length > 88) title = `${title.slice(0, 85).trim()}…`;
+  const serpTitle = title.length <= 58 ? title : `${title.slice(0, 55).trim()}…`;
+  const volScore = Math.min(45, Math.log10(Math.max(volume, 10) + 1) * 14);
+  const easeScore = Math.max(0, 35 - difficulty * 0.35);
+  const formulaBonus =
+    formula === "near_me" || formula === "cost" || formula === "best_list" ? 14 : formula === "reviews" ? 12 : 8;
+  const geoBonus = hasGeo || title.toLowerCase().includes(city.toLowerCase()) ? 8 : 0;
+  const trafficPotentialScore = Math.round(
+    Math.max(12, Math.min(99, volScore + easeScore + formulaBonus + geoBonus))
+  );
+
+  return { title, serpTitle, angle, formula, trafficPotentialScore, city };
+}
+
+/**
  * Ensure every content-gap row has the full UI schema.
  * AI often returns partial objects (missing volume/rank) which crash the Gaps tab.
+ * Titles are rewritten into high-CTR, keyword-first, localised H1s.
  */
-function normalizeContentGaps(raw: unknown, fallbackKeywords: string[] = []): any[] {
- const source = Array.isArray(raw) ? raw : [];
- const items = source.length > 0
- ? source
- : fallbackKeywords.slice(0, 6).map((kw, i) => ({
- competitorKeyword: kw,
- recommendedTopic: `Complete Guide to ${String(kw).charAt(0).toUpperCase()}${String(kw).slice(1)}`,
- difficultyCategory: i < 2 ? "Easy" : i < 4 ? "Medium" : "Hard",
- isQuickWin: i < 3,
- }));
+function normalizeContentGaps(
+  raw: unknown,
+  fallbackKeywords: string[] = [],
+  opts: { city?: string; brand?: string } = {}
+): any[] {
+  const city = sanitizeText(opts.city || KOLKATA_CITY) || KOLKATA_CITY;
+  const brand = sanitizeText(opts.brand || "");
+  const source = Array.isArray(raw) ? raw : [];
+  const items =
+    source.length > 0
+      ? source
+      : fallbackKeywords.slice(0, 8).map((kw, i) => {
+          const built = buildServerGapTitle(kw, { city, brand, index: i, volume: 900 - i * 80, difficulty: 20 + i * 5 });
+          return {
+            competitorKeyword: kw,
+            recommendedTopic: built.title,
+            difficultyCategory: i < 2 ? "Easy" : i < 4 ? "Medium" : "Hard",
+            isQuickWin: i < 3,
+            cityMention: city,
+            serpTitlePreview: built.serpTitle,
+            titleAngle: built.angle,
+            titleFormula: built.formula,
+            trafficPotentialScore: built.trafficPotentialScore,
+          };
+        });
 
- return items
- .map((g: any, i: number) => {
- if (!g || typeof g !== "object") return null;
- const keyword = sanitizeText(
- g.competitorKeyword || g.keyword || g.query || fallbackKeywords[i] || `opportunity ${i + 1}`
- );
- if (!keyword) return null;
+  return items
+    .map((g: any, i: number) => {
+      if (!g || typeof g !== "object") return null;
+      const keyword = sanitizeText(
+        g.competitorKeyword || g.keyword || g.query || fallbackKeywords[i] || `opportunity ${i + 1}`
+      );
+      if (!keyword) return null;
 
- const difficultyRaw = Number(g.competitorDifficulty ?? g.difficulty ?? g.kd ?? 25 + (i % 5) * 10);
- const difficulty = Math.max(1, Math.min(100, Number.isFinite(difficultyRaw) ? Math.round(difficultyRaw) : 30));
+      const difficultyRaw = Number(g.competitorDifficulty ?? g.difficulty ?? g.kd ?? 25 + (i % 5) * 10);
+      const difficulty = Math.max(
+        1,
+        Math.min(100, Number.isFinite(difficultyRaw) ? Math.round(difficultyRaw) : 30)
+      );
 
- let difficultyCategory = sanitizeText(g.difficultyCategory || g.difficulty_category || "");
- if (!["Easy", "Medium", "Hard"].includes(difficultyCategory)) {
- difficultyCategory = difficulty < 30 ? "Easy" : difficulty < 55 ? "Medium" : "Hard";
- }
+      let difficultyCategory = sanitizeText(g.difficultyCategory || g.difficulty_category || "");
+      if (!["Easy", "Medium", "Hard"].includes(difficultyCategory)) {
+        difficultyCategory = difficulty < 30 ? "Easy" : difficulty < 55 ? "Medium" : "Hard";
+      }
 
- const volumeRaw = Number(g.competitorVolume ?? g.volume ?? g.searchVolume ?? 1200 - i * 100);
- const volume = Math.max(50, Number.isFinite(volumeRaw) ? Math.round(volumeRaw) : 500);
+      const volumeRaw = Number(g.competitorVolume ?? g.volume ?? g.searchVolume ?? 1200 - i * 100);
+      const volume = Math.max(50, Number.isFinite(volumeRaw) ? Math.round(volumeRaw) : 500);
 
- const rankRaw = Number(g.competitorRank ?? g.rank ?? g.position ?? 3 + (i % 7));
- const competitorRank = Math.max(1, Math.min(100, Number.isFinite(rankRaw) ? Math.round(rankRaw) : 5));
+      const rankRaw = Number(g.competitorRank ?? g.rank ?? g.position ?? 3 + (i % 7));
+      const competitorRank = Math.max(
+        1,
+        Math.min(100, Number.isFinite(rankRaw) ? Math.round(rankRaw) : 5)
+      );
 
- let targetRank: number | "Not Ranking" = "Not Ranking";
- if (g.targetRank === "Not Ranking" || g.targetRank === "unranked" || g.target_rank === "Not Ranking") {
- targetRank = "Not Ranking";
- } else if (g.targetRank != null && g.targetRank !== "") {
- const tr = Number(g.targetRank);
- targetRank = Number.isFinite(tr) ? Math.round(tr) : "Not Ranking";
- } else if (i % 3 !== 0) {
- targetRank = 15 + i * 4;
- }
+      let targetRank: number | "Not Ranking" = "Not Ranking";
+      if (g.targetRank === "Not Ranking" || g.targetRank === "unranked" || g.target_rank === "Not Ranking") {
+        targetRank = "Not Ranking";
+      } else if (g.targetRank != null && g.targetRank !== "") {
+        const tr = Number(g.targetRank);
+        targetRank = Number.isFinite(tr) ? Math.round(tr) : "Not Ranking";
+      } else if (i % 3 !== 0) {
+        targetRank = 15 + i * 4;
+      }
 
- const recommendedTopic = sanitizeText(
- g.recommendedTopic || g.topic || g.recommended_topic || `Complete Guide to ${keyword}`
- );
- const recommendedType = sanitizeText(
- g.recommendedType || g.contentType || g.recommended_type || (i % 2 === 0 ? "Pillar Blog Post" : "Comparison Guide")
- );
- const isQuickWin = Boolean(
- g.isQuickWin ?? g.quickWin ?? g.is_quick_win ?? (difficulty < 35 && i < 4)
- );
+      const cityMention = sanitizeText(g.cityMention || g.city || city) || city;
+      const built = buildServerGapTitle(keyword, {
+        city: cityMention,
+        brand,
+        volume,
+        difficulty,
+        index: i,
+        existing: g.recommendedTopic || g.topic || g.recommended_topic,
+      });
 
- return {
- competitorKeyword: keyword,
- competitorRank,
- competitorVolume: volume,
- competitorDifficulty: difficulty,
- targetRank,
- recommendedTopic: recommendedTopic || `Guide to ${keyword}`,
- recommendedType: recommendedType || "Pillar Blog Post",
- difficultyCategory,
- isQuickWin,
- };
- })
- .filter(Boolean);
+      const recommendedType = sanitizeText(
+        g.recommendedType ||
+          g.contentType ||
+          g.recommended_type ||
+          (/\bnear me\b/i.test(keyword) ? "Local Pillar / Service Page" : i % 2 === 0 ? "Pillar Blog Post" : "Geo Comparison Guide")
+      );
+      const isQuickWin = Boolean(
+        g.isQuickWin ?? g.quickWin ?? g.is_quick_win ?? (difficulty < 35 && i < 4)
+      );
+
+      const localIntent =
+        sanitizeText(g.localIntent || "") ||
+        (/\bnear me\b/i.test(keyword)
+          ? "local_direct"
+          : built.title.toLowerCase().includes(cityMention.toLowerCase())
+            ? "local_aware"
+            : "mixed");
+
+      return {
+        competitorKeyword: keyword,
+        competitorRank,
+        competitorVolume: volume,
+        competitorDifficulty: difficulty,
+        targetRank,
+        recommendedTopic: built.title,
+        recommendedType: recommendedType || "Pillar Blog Post",
+        difficultyCategory,
+        isQuickWin,
+        cityMention,
+        localIntent,
+        localSearchVolume: Boolean(g.localSearchVolume ?? localIntent !== "national"),
+        neighborhoods: Array.isArray(g.neighborhoods) ? g.neighborhoods.filter(Boolean).slice(0, 6) : [],
+        localDirectoryRelevant: Boolean(g.localDirectoryRelevant),
+        gbpCategory: sanitizeText(g.gbpCategory || ""),
+        serpTitlePreview: sanitizeText(g.serpTitlePreview || built.serpTitle),
+        titleAngle: sanitizeText(g.titleAngle || built.angle),
+        titleFormula: sanitizeText(g.titleFormula || built.formula),
+        trafficPotentialScore: Math.max(
+          1,
+          Math.min(
+            100,
+            Math.round(Number(g.trafficPotentialScore) || built.trafficPotentialScore)
+          )
+        ),
+      };
+    })
+    .filter(Boolean)
+    .sort(
+      (a: any, b: any) => (b.trafficPotentialScore || 0) - (a.trafficPotentialScore || 0)
+    );
 }
 
 /** Assemble full markdown from sectioned AI payload (more reliable than one giant string). */
@@ -5097,24 +5268,35 @@ async function generateFallbackData(targetRaw: string, competitorRaw?: string) {
  const contentGaps = normalizeContentGaps(
   keywordPool.slice(0, 12).map((kw, i) => {
    const difficulty = Math.min(75, (kw.includes("near me") ? 12 : 16) + i * 4);
-   const titleCase = kw.replace(/\b\w/g, (c) => c.toUpperCase());
+   const volume = Math.max(90, 1800 - i * 110);
+   const built = buildServerGapTitle(kw, {
+    city,
+    brand: brandLabel,
+    volume,
+    difficulty,
+    index: i,
+   });
    return {
     competitorKeyword: kw,
     competitorRank: 2 + (i % 8),
-    competitorVolume: Math.max(90, 1800 - i * 110),
+    competitorVolume: volume,
     competitorDifficulty: difficulty,
     targetRank: i % 3 === 0 ? "Not Ranking" : 12 + i * 3,
-    recommendedTopic:
-     i % 3 === 0
-      ? `${titleCase}: Local Guide for ${city} Families (2026)`
-      : i % 3 === 1
-        ? `Best ${titleCase} — What ${city} Patients Should Know`
-        : `${titleCase} Near Me: How ${brandLabel} Helps in ${city}`,
+    recommendedTopic: built.title,
     recommendedType: i % 2 === 0 ? "Local Pillar / Service Page" : "Geo Comparison Guide",
     difficultyCategory: difficulty < 30 ? "Easy" : difficulty < 55 ? "Medium" : "Hard",
     isQuickWin: difficulty < 38 && i < 6,
+    cityMention: city,
+    localIntent: /\bnear me\b/i.test(kw) ? "local_direct" : "local_aware",
+    localSearchVolume: true,
+    serpTitlePreview: built.serpTitle,
+    titleAngle: built.angle,
+    titleFormula: built.formula,
+    trafficPotentialScore: built.trafficPotentialScore,
    };
-  })
+  }),
+  [],
+  { city, brand: brandLabel }
  );
 
  const serpFeatures = [
@@ -5888,13 +6070,14 @@ Real metrics: ${JSON.stringify({
           serpTop3: dfseoData.serp.organic.slice(0, 3).map((r) => r.title),
         })}.
 Return compact JSON: {
-  contentGaps[{competitorKeyword,competitorRank,competitorVolume,competitorDifficulty,targetRank,recommendedTopic,recommendedType,difficultyCategory,isQuickWin}],
+  contentGaps[{competitorKeyword,competitorRank,competitorVolume,competitorDifficulty,targetRank,recommendedTopic,recommendedType,difficultyCategory,isQuickWin,cityMention,titleAngle,trafficPotentialScore}],
   rankingBlueprint{summary,priorityActions[{action,impact,effort,timeframe}],timelineEstimate},
   discoveredCompetitors[{domain,nicheSimilarity,nicheFocus,estimatedMonthlyTraffic,threatLevel,analyzedTakeaway,targetKeywords[],strengths[],weaknesses[],counterMove,seoStrategy}],
   marketResearch{executiveSummary,marketOverview,demandDrivers[],competitiveIntensity,intensityRationale,whitespaceOpportunities[],positioningRecommendation,swot{strengths[],weaknesses[],opportunities[],threats[]}},
   targetAnalysis{socialPresenceSummary,socialMentionKeywords[],competitorSocialInsights}
 }.
 contentGaps: 5-8 rows. targetRank number or "Not Ranking". difficultyCategory Easy|Medium|Hard.
+CRITICAL for recommendedTopic: catchy high-CTR H1s, keyword in first 40 chars, localised (city/near me when natural), year when useful, NO generic "Complete Guide to X". Prefer Best/How-to/Cost/Near Me/Reviews formulas.
 discoveredCompetitors: 8-12 real industry peer domains (no fake TLDs), nicheSimilarity 1-100, threatLevel High|Medium|Low.
 ASCII only. JSON only.`;
 
@@ -5915,7 +6098,11 @@ ASCII only. JSON only.`;
         }
         enriched.contentGaps = normalizeContentGaps(
           (parsed as any).contentGaps,
-          (base.keywords || []).map((k: any) => k.keyword).filter(Boolean)
+          (base.keywords || []).map((k: any) => k.keyword).filter(Boolean),
+          {
+            city: base.localLocation?.city || KOLKATA_CITY,
+            brand: base.siteProfile?.brand || base.target?.domain?.split(".")[0],
+          }
         );
         if (!enriched.contentGaps.length) enriched.contentGaps = base.contentGaps;
         enriched.rankingBlueprint = (parsed as any).rankingBlueprint || base.rankingBlueprint;
@@ -6013,12 +6200,18 @@ LOCAL SEO RULES:
 1. Detect/confirm business city, state/region, service areas from crawl.
 2. Keywords MUST be geo-modified for high local traffic: "near me", "in ${cityHint}", neighborhood + service, cost/reviews/appointments.
 3. Competitors should include local/regional peers that fight for the same city Map Pack — not only national publishers.
-4. Content gap titles must be location-aware (city in H1 angle when natural).
+4. Content gap recommendedTopic titles MUST be high-traffic SEO H1s:
+   - Front-load primary keyword in the first half of the title
+   - Catchy CTR formulas: Best … in ${cityHint}, … Near Me, Cost/Price, How to, Reviews, Compared
+   - Localise with ${cityHint} / neighborhoods when natural
+   - Include year (${new Date().getFullYear()}) when it boosts freshness CTR
+   - NEVER use weak titles like "Complete Guide to X" or "Everything About X"
+   - 45–75 characters ideal; max ~85
 5. rankingBlueprint and localLocation must prioritize GBP, NAP, reviews, geo pages, citations.
 
 Return ONLY valid compact JSON (no markdown fences) with:
 - keywords: exactly 15 LOCAL long-tails (3-7 words). Prefer "${cityHint}" / "near me" modifiers. Each: keyword, volume, difficulty, cpc, intent, type, opportunityScore, relatedKeywords[]
-- contentGaps: 10 items with recommendedTopic titles that mention ${cityHint} or local intent when natural
+- contentGaps: 10 items with competitorKeyword + recommendedTopic (high-CTR localised H1), cityMention, titleAngle, trafficPotentialScore 1-100, recommendedType, difficultyCategory, isQuickWin
 - discoveredCompetitors: 12-15 peers (mix local specialists + category leaders). Include nicheFocus noting local market, targetKeywords with geo modifiers, analyzedTakeaway with Local SEO counter-moves
 - localLocation: { detectedAddress, city, state, country, confidenceScore, googleMapPackScore, citationConsistency, primaryLocalCompetitors[{name,domain,localRank,mapDistance}], localCompetitors[{name,domain,address,distance,rating,reviewCount,localRank,services,domainRating,estimatedMonthlyTraffic}], localKeywordOpportunities[{keyword,searchVolume,intent}], localOptimizationsNeeded[], localSeoVerdict, rankingBlueprint{summary,priorityActions[{action,impact,effort,timeframe}],timelineEstimate,localSeo[],contentStrategy[]} }
 - marketResearch: include local demand drivers and whitespace for ${cityHint}
@@ -6072,9 +6265,18 @@ Keep numbers realistic. ASCII only. No off-topic keywords.`;
     }
 
     const kwFallback = (base.keywords || []).map((k: any) => k.keyword).filter(Boolean);
+    const gapCity =
+      (parsed as any)?.localLocation?.city ||
+      base.localLocation?.city ||
+      siteCtx.city ||
+      KOLKATA_CITY;
+    const gapBrand =
+      base.siteProfile?.brand || domain.split(".")[0] || "";
+    const gapOpts = { city: gapCity, brand: gapBrand };
     const gaps = normalizeContentGaps(
       Array.isArray(parsed.contentGaps) && parsed.contentGaps.length ? parsed.contentGaps : base.contentGaps,
-      kwFallback
+      kwFallback,
+      gapOpts
     );
     res.json(
       sanitizeDeep({
@@ -6086,7 +6288,7 @@ Keep numbers realistic. ASCII only. No off-topic keywords.`;
           Array.isArray(parsed.keywords) && parsed.keywords.length >= 8
             ? parsed.keywords.slice(0, 15)
             : base.keywords,
-        contentGaps: gaps.length ? gaps : normalizeContentGaps(base.contentGaps, kwFallback),
+        contentGaps: gaps.length ? gaps : normalizeContentGaps(base.contentGaps, kwFallback, gapOpts),
         serpFeatures: Array.isArray(parsed.serpFeatures) && parsed.serpFeatures.length ? parsed.serpFeatures : base.serpFeatures,
         backlinkSources: Array.isArray(parsed.backlinkSources) && parsed.backlinkSources.length ? parsed.backlinkSources : base.backlinkSources,
         backlinkOpportunities:

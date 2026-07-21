@@ -720,6 +720,12 @@ export default function App() {
                       gaps={analysisResult.contentGaps || []} 
                       targetDomain={analysisResult.target?.domain || targetUrl || "your-site.com"}
                       competitorDomain={analysisResult.competitor?.domain || competitorUrl || "Competitor"}
+                      city={analysisResult.localLocation?.city || "Kolkata"}
+                      brandName={
+                        (analysisResult as { siteProfile?: { brand?: string } }).siteProfile?.brand ||
+                        analysisResult.target?.domain?.split(".")[0] ||
+                        undefined
+                      }
                       onSelectTopic={handleSelectTopicForBlog}
                     />
                     </Suspense>
