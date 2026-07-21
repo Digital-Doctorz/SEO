@@ -1,5 +1,7 @@
 /**
- * Vercel catch-all: routes /api/* (e.g. /api/health, /api/analyze) to the Express app.
- * Without this, only exact /api is handled and nested paths 404.
+ * Vercel catch-all for /api/* → Express app in api/index.ts
+ * (exact /api alone is not enough for /api/health, /api/analyze, …)
  */
-export { default } from "./index";
+import app from "./index";
+
+export default app;

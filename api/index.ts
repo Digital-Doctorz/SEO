@@ -3,14 +3,6 @@ import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
-import {
-  DEFAULT_LOCATION_CODE,
-  DEFAULT_LANGUAGE_CODE,
-  KOLKATA_CITY,
-  KOLKATA_STATE,
-  KOLKATA_COUNTRY,
-  KOLKATA_NEIGHBORHOODS,
-} from "./config/location";
 
 dotenv.config();
 dotenv.config({ path: ".env.local", override: true });
@@ -18,8 +10,40 @@ dotenv.config({ path: ".env.local", override: true });
 const HAS_DFSEO = Boolean(process.env.DATAFORSEO_LOGIN && process.env.DATAFORSEO_PASSWORD);
 
 // ============================================================
+// Kolkata defaults (inlined for Vercel cold-start reliability;
+// keep in sync with api/config/location.ts)
+// ============================================================
+const KOLKATA_CITY = "Kolkata";
+const KOLKATA_STATE = "West Bengal";
+const KOLKATA_COUNTRY = "India";
+const DEFAULT_LOCATION_CODE = 1007810;
+const DEFAULT_LANGUAGE_CODE = "en";
+const KOLKATA_NEIGHBORHOODS = [
+  "Salt Lake",
+  "New Town",
+  "Park Street",
+  "Ballygunge",
+  "Dum Dum",
+  "Howrah",
+  "Baranagar",
+  "Belgharia",
+  "Sealdah",
+  "Esplanade",
+  "Gariahat",
+  "Beleghata",
+  "Topsia",
+  "Maniktala",
+  "Shyambazar",
+  "Behala",
+  "Jadavpur",
+  "Garia",
+  "Rajarhat",
+  "Kamarhati",
+];
+
+// ============================================================
 // DataForSEO helpers (inlined — Vercel serverless cannot import ./lib/* reliably)
-// Default location = Kolkata (api/config/location.ts), not US 2840
+// Default location = Kolkata (1007810), not US 2840
 // ============================================================
 const DFSEO_BASE = "https://api.dataforseo.com/v3";
 
