@@ -3327,12 +3327,16 @@ function parseMarkdownArticle(
  brand: string,
  topicHint?: string
 ): any {
- let md = polishBlogProse(
-  String(mdRaw || "")
-   .replace(/^```(?:markdown|md)?\s*/i, "")
-   .replace(/\s*```$/i, "")
-   .trim()
- );
+ let rawStr = String(mdRaw || "").trim();
+ // Attempt to extract content inside ```markdown ... ``` or just ``` ... ``` if present
+ const fenceMatch = rawStr.match(/```(?:markdown|md)?\s*([\s\S]*?)\s*```/i);
+ if (fenceMatch && fenceMatch[1].trim().length > 100) {
+  rawStr = fenceMatch[1];
+ } else {
+  // Fallback: just strip leading/trailing fences if they exist
+  rawStr = rawStr.replace(/^```(?:markdown|md)?\s*/im, "").replace(/\s*```$/im, "");
+ }
+ let md = polishBlogProse(rawStr.trim());
  if (!md) return null;
 
  // Ensure H1
@@ -7098,9 +7102,8 @@ Return ONLY raw JSON. No markdown fences.`;
  }
 
  if (!parsed || !parsed.content || countContentWords(String(parsed.content)) < 80) {
-  throw new Error(
-   "AI article output could not be recovered as publishable content (parse/structure)."
-  );
+  console.warn("[Blog] AI article output could not be recovered as publishable content (parse/structure). Falling back to offline generation.");
+  parsed = parsed || {};
  }
 
  if ((!parsed.outline || !parsed.outline.length) && researchBrief?.outline) {
