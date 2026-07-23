@@ -95,7 +95,7 @@ export default function LocalSeoSection({
                   <span className="text-blue-600 font-mono text-sm">{localLocation?.googleMapPackScore} / 100</span>
                 </div>
                 <div className="w-full bg-slate-200/60 h-2.5 rounded-full overflow-hidden">
-                  <div className="bg-blue-600 h-full rounded-full transition-all duration-500" style={{ width: `${localLocation?.googleMapPackScore}%` }} />
+                  <div className="bg-blue-600 h-full rounded-full transition-all duration-500" style={{ width: `${localLocation?.googleMapPackScore || 0}%` }} />
                 </div>
               </div>
 
@@ -106,7 +106,7 @@ export default function LocalSeoSection({
                   <span className="text-emerald-600 font-mono text-sm">{localLocation?.citationConsistency}%</span>
                 </div>
                 <div className="w-full bg-slate-200/60 h-2.5 rounded-full overflow-hidden">
-                  <div className="bg-emerald-500 h-full rounded-full transition-all duration-500" style={{ width: `${localLocation?.citationConsistency}%` }} />
+                  <div className="bg-emerald-500 h-full rounded-full transition-all duration-500" style={{ width: `${localLocation?.citationConsistency || 0}%` }} />
                 </div>
               </div>
               

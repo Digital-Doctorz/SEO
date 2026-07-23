@@ -112,6 +112,7 @@ export default function CompetitorDiscovery({
 
  {/* Blog and Article links */}
  <div className="space-y-2 pt-2 border-t border-slate-100 text-xs">
+ {comp.popularBlogUrl && (
  <a 
  href={comp.popularBlogUrl} 
  target="_blank" 
@@ -121,7 +122,7 @@ export default function CompetitorDiscovery({
  <BookOpen className="h-3.5 w-3.5 text-blue-500 shrink-0" />
  <span className="truncate">Blog: {comp.popularBlogUrl}</span>
  </a>
- 
+ )}
  {comp.latestArticleTitle && (
  <a 
  href={comp.latestArticleUrl} 

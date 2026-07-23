@@ -311,10 +311,6 @@ export function saveAiConfigToStorage(config: AiProviderConfig): AiProviderConfi
     localStorage.removeItem("seo_dataforseo_password");
   }
 
-  for (const p of PROVIDERS) {
-    if (p === normalized.provider) continue;
-  }
-
   return normalized;
 }
 

@@ -6,6 +6,9 @@ interface GeoLocation {
 
 /** DataForSEO Kolkata city code — keep in sync with api/config/location.ts */
 const KOLKATA_LOCATION_CODE = 1007810;
+export const KOLKATA_CITY = "Kolkata";
+export const KOLKATA_STATE = "West Bengal";
+export const KOLKATA_COUNTRY = "India";
 
 const TLD_MAP: Record<string, GeoLocation> = {
   "in":    { locationCode: KOLKATA_LOCATION_CODE, languageCode: "en", country: "India" },

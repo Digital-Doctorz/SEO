@@ -693,6 +693,7 @@ export default function ContentHub({
               contentGaps: analysisContext.contentGaps,
               competitors: analysisContext.competitors,
               niche: analysisContext.niche,
+              backlinkSummary: analysisContext.backlinkSummary,
               audience: analysisContext.audience || audienceToUse,
               strengths: analysisContext.strengths,
               weaknesses: analysisContext.weaknesses,

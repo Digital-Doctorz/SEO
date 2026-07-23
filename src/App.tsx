@@ -12,7 +12,7 @@ import SettingsModal from "./components/SettingsModal";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { postApi, ApiError } from "./lib/api";
 import { normalizeAnalysisResult } from "./lib/normalizeAnalysis";
-import { detectLocationFromDomain } from "./lib/geo";
+import { detectLocationFromDomain, KOLKATA_CITY } from "./lib/geo";
 import {
   loadAiConfigFromStorage,
   saveAiConfigToStorage,
@@ -720,7 +720,7 @@ export default function App() {
                       gaps={analysisResult.contentGaps || []} 
                       targetDomain={analysisResult.target?.domain || targetUrl || "your-site.com"}
                       competitorDomain={analysisResult.competitor?.domain || competitorUrl || "Competitor"}
-                      city={analysisResult.localLocation?.city || "Kolkata"}
+                      city={analysisResult.localLocation?.city || KOLKATA_CITY}
                       brandName={
                         (analysisResult as { siteProfile?: { brand?: string } }).siteProfile?.brand ||
                         analysisResult.target?.domain?.split(".")[0] ||

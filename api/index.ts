@@ -46,6 +46,49 @@ const KOLKATA_NEIGHBORHOODS = [
 // Default location = Kolkata (1007810), not US 2840
 // ============================================================
 const DFSEO_BASE = "https://api.dataforseo.com/v3";
+const DFSEO_CACHE_TTL = 5 * 60 * 1000; // 5-minute in-memory cache
+
+function cacheKey(endpoint: string, payload: string): string {
+  return `${endpoint}::${payload}`;
+}
+
+const dfseoCache = new Map<string, { timestamp: number; data: any }>();
+const DFSEO_CACHE_MAX = 500;
+
+function evictStaleCache(): void {
+  const now = Date.now();
+  for (const [key, entry] of dfseoCache) {
+    if (now - entry.timestamp >= DFSEO_CACHE_TTL) {
+      dfseoCache.delete(key);
+    }
+  }
+  if (dfseoCache.size > DFSEO_CACHE_MAX) {
+    const sorted = [...dfseoCache.entries()].sort((a, b) => a[1].timestamp - b[1].timestamp);
+    const toDelete = sorted.slice(0, sorted.length - DFSEO_CACHE_MAX);
+    for (const [key] of toDelete) {
+      dfseoCache.delete(key);
+    }
+  }
+}
+
+async function cachedDfseoPost<T>(
+  endpoint: string,
+  body: unknown[],
+  credentials?: DfsCredentials,
+  ttl = DFSEO_CACHE_TTL,
+): Promise<T> {
+  const key = cacheKey(endpoint, JSON.stringify({ body, login: credentials?.login }));
+  const hit = dfseoCache.get(key);
+  if (hit && Date.now() - hit.timestamp < ttl) {
+    return hit.data as T;
+  }
+  const data = await dfseoPost<T>(endpoint, body, credentials);
+  dfseoCache.set(key, { timestamp: Date.now(), data });
+  if (dfseoCache.size % 50 === 0) {
+    evictStaleCache();
+  }
+  return data as T;
+}
 
 interface DfSerpItem {
   se_domain?: string;
@@ -79,7 +122,15 @@ interface DfBacklinkItem {
   target_url?: string;
   anchor?: string;
   domain_rank?: number;
+  page_authority?: number;
   first_seen?: string;
+  lost?: string;
+  status_code?: number;
+  text_pre?: string;
+  text_post?: string;
+  external_link_attributes?: string[];
+  platform_type?: string;
+  domain_authority?: number;
 }
 interface DataForSeoBundle {
   serp: {
@@ -106,9 +157,16 @@ interface DataForSeoBundle {
     top_referring_domains: Array<{
       source_url: string;
       source_domain: string;
+      target_url?: string;
       anchor: string;
       domain_rating: number;
+      page_authority: number;
       first_seen: string;
+      is_dofollow: boolean;
+      is_lost: boolean;
+      text_pre: string;
+      text_post: string;
+      platform_type: string;
     }>;
   };
   pageSpeed?: {
@@ -149,11 +207,14 @@ async function dfseoPost<T>(endpoint: string, body: unknown[], credentials?: Dfs
   if (json.status_code && json.status_code !== 20000) {
     throw new Error(`DataForSEO error ${json.status_code}: ${json.status_message}`);
   }
-  return json.tasks?.[0]?.result?.[0] as T;
+  if (!json.tasks?.[0]?.result?.[0]) {
+    throw new Error(`DataForSEO ${endpoint} returned empty result (no tasks or results array)`);
+  }
+  return json.tasks[0].result[0];
 }
 
 async function fetchSerp(keyword: string, locationCode = DEFAULT_LOCATION_CODE, languageCode = DEFAULT_LANGUAGE_CODE, credentials?: DfsCredentials): Promise<DfSerpItem[]> {
-  const result = await dfseoPost<{ items?: DfSerpItem[]; search_dataframe?: DfSerpItem[] }>(
+  const result = await cachedDfseoPost<{ items?: DfSerpItem[]; search_dataframe?: DfSerpItem[] }>(
     "/serp/google/organic/live/advanced",
     [{ keyword, location_code: locationCode, language_code: languageCode, device: "desktop", os: "windows", depth: 10 }],
     credentials
@@ -164,7 +225,7 @@ async function fetchSerp(keyword: string, locationCode = DEFAULT_LOCATION_CODE, 
 async function fetchKeywordVolumes(keywords: string[], locationCode = DEFAULT_LOCATION_CODE, languageCode = DEFAULT_LANGUAGE_CODE, credentials?: DfsCredentials): Promise<DfKeywordData[]> {
   if (!keywords.length) return [];
   const tasks = keywords.map((kw) => ({ keyword: kw, location_code: locationCode, language_code: languageCode }));
-  const result = await dfseoPost<{ keywords?: DfKeywordData[] }>(
+  const result = await cachedDfseoPost<{ keywords?: DfKeywordData[] }>(
     "/keywords_data/google/keywords/search_volume",
     tasks,
     credentials
@@ -173,13 +234,13 @@ async function fetchKeywordVolumes(keywords: string[], locationCode = DEFAULT_LO
 }
 
 async function fetchDomainOverview(domain: string, locationCode = DEFAULT_LOCATION_CODE, languageCode = DEFAULT_LANGUAGE_CODE, credentials?: DfsCredentials): Promise<DfDomainBacklinksResult> {
-  return dfseoPost<DfDomainBacklinksResult>("/backlinks/domain/overview", [
+  return cachedDfseoPost<DfDomainBacklinksResult>("/backlinks/domain/overview", [
     { target: domain, location_code: locationCode, language_code: languageCode },
   ], credentials);
 }
 
-async function fetchBacklinks(domain: string, limit = 100, locationCode = DEFAULT_LOCATION_CODE, languageCode = DEFAULT_LANGUAGE_CODE, credentials?: DfsCredentials): Promise<DfBacklinkItem[]> {
-  const result = await dfseoPost<{ backlinks?: DfBacklinkItem[] }>("/backlinks/domain/backlinks", [
+async function fetchBacklinks(domain: string, limit = 50, locationCode = DEFAULT_LOCATION_CODE, languageCode = DEFAULT_LANGUAGE_CODE, credentials?: DfsCredentials): Promise<DfBacklinkItem[]> {
+  const result = await cachedDfseoPost<{ backlinks?: DfBacklinkItem[] }>("/backlinks/domain/backlinks", [
     { target: domain, limit, location_code: locationCode, language_code: languageCode },
   ], credentials);
   return result.backlinks ?? [];
@@ -192,7 +253,7 @@ async function fetchPageSpeed(url: string, credentials?: DfsCredentials): Promis
     }
   | undefined
 > {
-  const result = await dfseoPost<{ lighthouse_result?: { categories?: Record<string, { score?: number }>; audits?: Record<string, { numericValue?: number }> } }>(
+  const result = await cachedDfseoPost<{ lighthouse_result?: { categories?: Record<string, { score?: number }>; audits?: Record<string, { numericValue?: number }> } }>(
     "/page_speed/google/lighthouse/summary",
     [{ target: url, settings: { device: "desktop", locale: "en" } }],
     credentials
@@ -209,7 +270,7 @@ async function fetchFullBundle(domain: string, seedKeywords: string[], options?:
   const [serpItems, domainOverview, backlinks, pageSpeedResult, ...keywordResults] = await Promise.all([
     fetchSerp(primaryKeyword, loc, lang, creds).catch(() => [] as DfSerpItem[]),
     fetchDomainOverview(domain, loc, lang, creds).catch(() => ({} as DfDomainBacklinksResult)),
-    fetchBacklinks(domain, 200, loc, lang, creds).catch(() => [] as DfBacklinkItem[]),
+    fetchBacklinks(domain, 50, loc, lang, creds).catch(() => [] as DfBacklinkItem[]),
     fetchPageSpeed(`https://${domain}`, creds).catch(() => undefined),
     ...seedKeywords.slice(0, 10).map((kw) => fetchKeywordVolumes([kw], loc, lang, creds).catch(() => [] as DfKeywordData[])),
   ]);
@@ -251,12 +312,21 @@ async function fetchFullBundle(domain: string, seedKeywords: string[], options?:
         ? domainOverview.dofollow / (domainOverview.backlinks || 1)
         : 0.7,
       link_growth: domainOverview.referring_domains_change ?? 0,
-      top_referring_domains: (backlinks || []).slice(0, 20).map((b) => ({
+      top_referring_domains: (backlinks || [])
+        .filter((b) => b.status_code === undefined || b.status_code === 200)
+        .slice(0, 50).map((b) => ({
         source_url: b.referring_url ?? "",
         source_domain: b.referring_domain ?? "",
         anchor: b.anchor ?? "",
-        domain_rating: b.domain_rank ?? 0,
+        domain_rating: b.domain_rank ?? 50,
+        page_authority: b.page_authority ?? b.domain_rank ?? 50,
         first_seen: b.first_seen ?? "",
+        is_dofollow: !b.external_link_attributes?.some((a) => /nofollow/i.test(a)),
+        is_lost: Boolean(b.lost),
+        text_pre: b.text_pre ?? "",
+        text_post: b.text_post ?? "",
+        platform_type: b.platform_type ?? "",
+        target_url: b.target_url ?? `https://${domain}/`,
       })),
     },
     pageSpeed: pageSpeedResult
@@ -795,10 +865,10 @@ async function generateContentWithFallback(
  let delay = 1000;
  while (retries >= 0) {
  try {
- console.log(`[Gemini] Attempting model: "${model}"`);
+  console.debug(`[Gemini] Attempting model: "${model}"`);
  const response = await ai.models.generateContent({ model, contents, config });
  if (response && response.text) {
- console.log(`[Gemini] Success with model: "${model}"`);
+  console.debug(`[Gemini] Success with model: "${model}"`);
  return response;
  }
  throw new Error(`Empty response from model ${model}`);
@@ -3116,25 +3186,6 @@ OUTPUT: ONLY valid JSON matching the app schema (title, metaDescription, slugSug
 ===== END MASTER RULES =====`;
 
 function loadSeoBlogMasterPrompt(): string {
- // Prefer embedded rules (always available). Optionally append file extras if present.
- try {
-  const candidates = [
-   path.join(process.cwd(), "prompts", "SEO-BLOG-MASTER-PROMPT.md"),
-   path.join(__dirname, "..", "prompts", "SEO-BLOG-MASTER-PROMPT.md"),
-   path.join(process.cwd(), "..", "prompts", "SEO-BLOG-MASTER-PROMPT.md"),
-  ];
-  for (const p of candidates) {
-   if (fs.existsSync(p)) {
-    const text = fs.readFileSync(p, "utf-8");
-    // File is large; only note that disk copy exists — embedded rules already cover it
-    if (text && text.length > 500) {
-     return SEO_BLOG_MASTER_RULES_EMBEDDED;
-    }
-   }
-  }
- } catch {
-  /* ignore */
- }
  return SEO_BLOG_MASTER_RULES_EMBEDDED;
 }
 
@@ -5976,7 +6027,7 @@ app.post("/api/analyze", async (req, res) => {
         20000,
         "DataForSEO bundle"
       );
-      console.log(`[DataForSEO] Fetched real data for ${domain}: ${dfseoData.rawSerpItems.length} SERP items, ${dfseoData.keywordLandscape.length} keywords, ${dfseoData.backlinks.total_backlinks} backlinks`);
+       console.debug(`[DataForSEO] Fetched real data for ${domain}: ${dfseoData.rawSerpItems.length} SERP items, ${dfseoData.keywordLandscape.length} keywords, ${dfseoData.backlinks.total_backlinks} backlinks`);
     } catch (err: unknown) {
       console.error("[DataForSEO] Bundle fetch failed, falling back to AI/simulated data:", err instanceof Error ? err.message : err);
       dfseoData = null;
@@ -6031,14 +6082,21 @@ app.post("/api/analyze", async (req, res) => {
         : base.keywords,
       // Keep structured SERP feature opportunities (organic list is not the same schema)
       serpFeatures: base.serpFeatures,
-      // Real backlinks mapped to UI BacklinkSource shape
+      // Real backlinks mapped to UI BacklinkSource shape (50 raw → 15+ enriched)
       backlinkSources: dfseoData.backlinks.top_referring_domains.length > 0
-        ? dfseoData.backlinks.top_referring_domains.slice(0, 8).map((b) => ({
+        ? dfseoData.backlinks.top_referring_domains.slice(0, 50).map((b) => ({
             sourceUrl: b.source_url || `https://${b.source_domain}/`,
+            sourceDomain: b.source_domain || "",
             domainRating: b.domain_rating || 40,
-            targetUrl: `https://${domain}/`,
+            pageAuthority: b.page_authority || b.domain_rating || 40,
+            targetUrl: b.target_url || `https://${domain}/`,
             anchorText: b.anchor || domain,
-            linkType: "Follow" as const,
+            linkType: (b.is_dofollow ? "Follow" : "Nofollow") as "Follow" | "Nofollow",
+            firstSeen: b.first_seen || undefined,
+            isLost: b.is_lost || undefined,
+            textPre: b.text_pre || undefined,
+            textPost: b.text_post || undefined,
+            platformType: b.platform_type || undefined,
           }))
         : base.backlinkSources,
       contentGaps: normalizeContentGaps(base.contentGaps),
@@ -6061,6 +6119,13 @@ app.post("/api/analyze", async (req, res) => {
     // If AI key is available, enrich DataForSEO with live AI (user's model first)
     if (providerConfig) {
       try {
+        const backlinkSamples = dfseoData.backlinks.top_referring_domains.slice(0, 15).map((b) => ({
+          domain: b.source_domain,
+          dr: b.domain_rating,
+          anchor: (b.anchor || "").slice(0, 80),
+          is_follow: b.is_dofollow,
+          platform: b.platform_type,
+        }));
         const prompt = `Quick SEO enrichment for "${domain}" using real DataForSEO data.
 Real metrics: ${JSON.stringify({
           backlinks: dfseoData.backlinks.total_backlinks,
@@ -6069,12 +6134,30 @@ Real metrics: ${JSON.stringify({
           topKeywords: dfseoData.keywordLandscape.slice(0, 5).map((k) => k.keyword),
           serpTop3: dfseoData.serp.organic.slice(0, 3).map((r) => r.title),
         })}.
+
+BACKLINK QUALITY & SPAM ANALYSIS (15 backlink samples):
+${JSON.stringify(backlinkSamples, null, 1)}
+
+For each backlink domain above, assign:
+- relevanceScore (0-100): Niche/industry relevance to "${domain}" and the local ${KOLKATA_CITY}/${KOLKATA_STATE} market. Is this domain in a related industry?
+- trafficPotential (0-100): How much referral traffic could this link potentially drive? Higher DR = higher potential. Context matters.
+- qualityGrade ("A"/"B"/"C"/"D"/"F"): A=elite editorial, B=high quality niche, C=average directory, D=thin/low quality, F=spam/penalized
+- recommendation ("Keep"/"Disavow"/"Outreach"): Keep=valuable as-is, Disavow=toxic link to remove, Outreach=good opportunity to improve
+- spamScore (0-100): Likelihood this is a spam/PBN/paid link network. 0=clean, 100=certain spam.
+- contextMatch: One sentence describing what topic/theme the linking page covers.
+
+Also compute:
+- avgRelevance: average of all relevanceScore values
+- avgTrafficPotential: average of all trafficPotential values
+- topOpportunities: array of the 3-5 best backlink domains with highest combined relevance+traffic
+
 Return compact JSON: {
   contentGaps[{competitorKeyword,competitorRank,competitorVolume,competitorDifficulty,targetRank,recommendedTopic,recommendedType,difficultyCategory,isQuickWin,cityMention,titleAngle,trafficPotentialScore}],
   rankingBlueprint{summary,priorityActions[{action,impact,effort,timeframe}],timelineEstimate},
   discoveredCompetitors[{domain,nicheSimilarity,nicheFocus,estimatedMonthlyTraffic,threatLevel,analyzedTakeaway,targetKeywords[],strengths[],weaknesses[],counterMove,seoStrategy}],
   marketResearch{executiveSummary,marketOverview,demandDrivers[],competitiveIntensity,intensityRationale,whitespaceOpportunities[],positioningRecommendation,swot{strengths[],weaknesses[],opportunities[],threats[]}},
-  targetAnalysis{socialPresenceSummary,socialMentionKeywords[],competitorSocialInsights}
+  targetAnalysis{socialPresenceSummary,socialMentionKeywords[],competitorSocialInsights},
+  backlinkAnalysis{scoredLinks[{domain,relevanceScore,trafficPotential,qualityGrade,recommendation,spamScore,contextMatch}]}
 }.
 contentGaps: 5-8 rows. targetRank number or "Not Ranking". difficultyCategory Easy|Medium|Hard.
 CRITICAL for recommendedTopic: catchy high-CTR H1s, keyword in first 40 chars, localised (city/near me when natural), year when useful, NO generic "Complete Guide to X". Prefer Best/How-to/Cost/Near Me/Reviews formulas.
@@ -6138,6 +6221,42 @@ ASCII only. JSON only.`;
               (parsed as any).marketResearch ||
               base.targetAnalysis?.marketResearch,
           };
+        }
+        // Merge backlink AI scores into the enriched backlinkSources
+        const scoredLinks: Array<{ domain: string; relevanceScore: number; trafficPotential: number; qualityGrade: string; recommendation: string; spamScore: number; contextMatch: string }> =
+          (parsed as any)?.backlinkAnalysis?.scoredLinks;
+        if (Array.isArray(scoredLinks) && scoredLinks.length > 0 && Array.isArray(enriched.backlinkSources)) {
+          const scoreMap = new Map(scoredLinks.map((s: any) => [s.domain?.toLowerCase().replace(/^www\./, ""), s]));
+          enriched.backlinkSources = enriched.backlinkSources.map((b: any) => {
+            const domainKey = (b.sourceDomain || "").toLowerCase().replace(/^www\./, "");
+            const match = scoreMap.get(domainKey);
+            if (!match) return b;
+            return {
+              ...b,
+              relevanceScore: match.relevanceScore ?? b.relevanceScore,
+              trafficPotential: match.trafficPotential ?? b.trafficPotential,
+              qualityGrade: match.qualityGrade ?? b.qualityGrade,
+              recommendation: match.recommendation ?? "Keep",
+              spamScore: match.spamScore ?? b.spamScore,
+              contextMatch: match.contextMatch ?? b.contextMatch,
+            };
+          });
+          // Compute backlinkSummary
+          const scored = enriched.backlinkSources.filter((b: any) => typeof b.relevanceScore === "number");
+          if (scored.length > 0) {
+            const avgRel = Math.round(scored.reduce((s: number, b: any) => s + b.relevanceScore, 0) / scored.length);
+            const avgTraffic = Math.round(scored.reduce((s: number, b: any) => s + (b.trafficPotential || 0), 0) / scored.length);
+            const best = [...scored]
+              .sort((a: any, b: any) => ((b.relevanceScore || 0) + (b.trafficPotential || 0)) - ((a.relevanceScore || 0) + (a.trafficPotential || 0)))
+              .slice(0, 5);
+            enriched.backlinkSummary = {
+              avgRelevance: avgRel,
+              avgTrafficPotential: avgTraffic,
+              dofollowCount: enriched.backlinkSources.filter((b: any) => b.linkType === "Follow").length,
+              nofollowCount: enriched.backlinkSources.filter((b: any) => b.linkType === "Nofollow").length,
+              topOpportunities: best.map((b: any) => b.sourceDomain).filter(Boolean),
+            };
+          }
         }
         enriched.dataSource = "dataforseo+ai";
         enriched.isFallback = false;
@@ -6519,7 +6638,7 @@ app.post("/api/generate-blog", async (req, res) => {
  }
 
  // Log which provider will write (never log the key)
- console.log(
+ console.debug(
   `[Blog] Live AI write via ${providerConfig.provider} model=${providerConfig.apiModel || "(default)"} domain=${domain} kw=${kw}`
  );
  try {
@@ -6813,7 +6932,7 @@ DEPTH (non-negotiable on THIS first response):
 
 OUTPUT: ONLY the full article as Markdown. Start with # Title. No JSON. No preamble. No "Here is the article".`;
 
- console.log(
+ console.debug(
   `[Blog] Phase 2 master-prompt markdown write (first-go complete) provider=${providerConfig.provider}`
  );
 
@@ -7522,6 +7641,36 @@ function extractDfsCredentials(req: { body?: Record<string, unknown> }): DfsCred
 function hasDfsAccess(req: { body?: Record<string, unknown> }): boolean {
   return Boolean(extractDfsCredentials(req) || HAS_DFSEO);
 }
+
+// Test DataForSEO credentials (validates login/password without consuming API quota)
+app.post("/api/seo/test-credentials", async (req, res) => {
+  const creds = extractDfsCredentials(req);
+  if (!creds) {
+    return res.status(400).json({ valid: false, error: "No DataForSEO credentials provided. Add login and password in Settings." });
+  }
+  try {
+    // Ping DataForSEO keyword data API with a single known keyword; if auth fails we get 401/403.
+    const result = await dfseoPost<{ keywords?: DfKeywordData[] }>(
+      "/keywords_data/google/keywords/search_volume",
+      [{ keyword: "seo", location_code: DEFAULT_LOCATION_CODE, language_code: DEFAULT_LANGUAGE_CODE }],
+      creds
+    );
+    const hasData = Array.isArray((result as any)?.keywords) || typeof result === "object";
+    if (!hasData) {
+      return res.json({ valid: true, warning: "Credentials accepted but returned empty data." });
+    }
+    res.json({ valid: true });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/401|403|unauthorized|forbidden|invalid.*credential/i.test(message)) {
+      return res.status(200).json({ valid: false, error: "Invalid DataForSEO login or password. Check your credentials at app.dataforseo.com." });
+    }
+    if (/timeout|fetch|network|econnrefused|enotfound/i.test(message)) {
+      return res.status(200).json({ valid: false, error: "Cannot reach DataForSEO API. Check your network connection." });
+    }
+    res.status(200).json({ valid: false, error: `DataForSEO test failed: ${redactSecrets(message)}` });
+  }
+});
 
 app.post("/api/seo/keyword-volume", async (req, res) => {
   if (!hasDfsAccess(req)) {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { SerpFeature, BacklinkSource, BacklinkOpportunity } from "../types";
 import { 
   Award, Link, Mail, Star, ExternalLink, HelpCircle, Search,
@@ -480,43 +480,131 @@ export default function SerpBacklinks({
             id="backlink-trust-outreach-actions"
             className="grid grid-cols-1 lg:grid-cols-12 gap-8"
           >
-            {/* Left Area: Link Profile Sources (5 Cols) */}
+            {/* Left Area: Link Profile Sources (5 Cols) — enriched with AI scores */}
             <div className="lg:col-span-5 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-6">
-              <div>
-                <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                  <Link className="h-5 w-5 text-slate-400" />
-                  <span>Top Backlink References</span>
-                </h3>
-                <p className="text-xs text-slate-400 mt-1">High-value referring domains pointing to competitor landing pages.</p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                    <Link className="h-5 w-5 text-slate-400" />
+                    <span>Backlink Profile</span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1">AI-scored referring domains — relevance, traffic potential & quality.</p>
+                </div>
+                {backlinkSources.length > 0 && (
+                  <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded-full">
+                    {backlinkSources.length} sources
+                  </span>
+                )}
               </div>
 
-              <div className="space-y-4">
-                {backlinkSources.map((source, idx) => (
-                  <div key={idx} className="p-4 rounded-xl border border-slate-100 bg-slate-50/50 space-y-2 text-xs">
-                    <div className="flex justify-between items-center">
+              <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
+                {backlinkSources.slice(0, 15).map((source, idx) => (
+                  <div key={idx} className="p-3 rounded-xl border border-slate-100 bg-slate-50/50 space-y-2 text-xs hover:border-slate-200 transition-all">
+                    <div className="flex justify-between items-center gap-2">
                       <a 
                         href={source.sourceUrl} 
                         target="_blank" 
                         rel="noopener noreferrer" 
-                        className="text-blue-600 font-mono font-medium hover:underline truncate max-w-xs flex items-center gap-1"
+                        className="text-blue-600 font-mono font-medium hover:underline truncate flex items-center gap-1 max-w-[60%]"
                       >
-                        {source.sourceUrl.replace("https://", "")}
-                        <ExternalLink className="h-3 w-3 inline-block" />
+                        {source.sourceDomain || source.sourceUrl.replace("https://", "").split("/")[0]}
+                        <ExternalLink className="h-3 w-3 inline-block shrink-0" />
                       </a>
-                      <span className="bg-slate-200 text-slate-700 font-bold px-1.5 py-0.5 rounded font-mono">
-                        DR {source.domainRating}
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="bg-slate-200 text-slate-700 font-bold px-1.5 py-0.5 rounded font-mono text-[10px]">
+                          DR {source.domainRating}
+                          {typeof source.pageAuthority === "number" && source.pageAuthority !== source.domainRating && (
+                            <span className="text-slate-500 ml-1">PA {source.pageAuthority}</span>
+                          )}
+                        </span>
+                        <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                          source.linkType === "Follow" 
+                            ? "bg-emerald-100 text-emerald-700" 
+                            : "bg-slate-200 text-slate-500"
+                        }`}>
+                          {source.linkType === "Follow" ? "Follow" : "NoF"}
+                        </span>
+                      </div>
                     </div>
 
-                    <div className="text-slate-500 font-sans space-y-1">
+                    {/* AI scoring row */}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
+                      {typeof source.relevanceScore === "number" && (
+                        <span className="flex items-center gap-1">
+                          <span className="text-slate-400">Rel:</span>
+                          <span className={`font-bold ${source.relevanceScore >= 70 ? "text-emerald-600" : source.relevanceScore >= 40 ? "text-amber-600" : "text-slate-500"}`}>
+                            {source.relevanceScore}
+                          </span>
+                          <div className="w-12 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                            <div className={`h-full rounded-full ${source.relevanceScore >= 70 ? "bg-emerald-500" : source.relevanceScore >= 40 ? "bg-amber-500" : "bg-slate-400"}`}
+                              style={{ width: `${source.relevanceScore}%` }} />
+                          </div>
+                        </span>
+                      )}
+                      {typeof source.trafficPotential === "number" && (
+                        <span className="flex items-center gap-1">
+                          <span className="text-slate-400">Traffic:</span>
+                          <span className={`font-bold ${source.trafficPotential >= 70 ? "text-blue-600" : source.trafficPotential >= 40 ? "text-amber-600" : "text-slate-500"}`}>
+                            {source.trafficPotential}
+                          </span>
+                          <div className="w-12 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                            <div className={`h-full rounded-full ${source.trafficPotential >= 70 ? "bg-blue-500" : source.trafficPotential >= 40 ? "bg-amber-500" : "bg-slate-400"}`}
+                              style={{ width: `${source.trafficPotential}%` }} />
+                          </div>
+                        </span>
+                      )}
+                      {source.qualityGrade && (
+                        <span className={`px-1.5 py-0.5 rounded font-bold text-[10px] ${
+                          source.qualityGrade === "A" ? "bg-emerald-100 text-emerald-700" :
+                          source.qualityGrade === "B" ? "bg-blue-100 text-blue-700" :
+                          source.qualityGrade === "C" ? "bg-amber-100 text-amber-700" :
+                          source.qualityGrade === "D" ? "bg-orange-100 text-orange-700" :
+                          "bg-rose-100 text-rose-700"
+                        }`}>{source.qualityGrade}</span>
+                      )}
+                      {source.recommendation && (
+                        <span className={`px-1.5 py-0.5 rounded font-bold text-[10px] ${
+                          source.recommendation === "Keep" ? "bg-emerald-100 text-emerald-700" :
+                          source.recommendation === "Outreach" ? "bg-blue-100 text-blue-700" :
+                          "bg-rose-100 text-rose-700"
+                        }`}>
+                          {source.recommendation === "Outreach" ? "📩 Outreach" : source.recommendation}
+                        </span>
+                      )}
+                      {typeof source.spamScore === "number" && source.spamScore > 50 && (
+                        <span className="flex items-center gap-1 text-rose-600 font-bold">
+                          <AlertTriangle className="h-3 w-3" />
+                          Spam {source.spamScore}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="text-slate-500 space-y-0.5">
                       <div>Anchor: <strong className="text-slate-700">"{source.anchorText}"</strong></div>
-                      <div className="flex justify-between text-[10px] pt-1 text-slate-400">
-                        <span>Points to: <span className="font-mono">{source.targetUrl.replace("https://", "")}</span></span>
-                        <span className="uppercase font-bold tracking-wider">{source.linkType}</span>
-                      </div>
+                      {source.contextMatch && (
+                        <div className="text-slate-400 italic">{source.contextMatch}</div>
+                      )}
+                      {source.firstSeen && (
+                        <div className="text-[10px] text-slate-400">First seen: {source.firstSeen}</div>
+                      )}
+                      {source.isLost && (
+                        <div className="text-[10px] text-rose-500 font-bold flex items-center gap-1">
+                          <AlertTriangle className="h-3 w-3" /> Lost link
+                        </div>
+                      )}
+                      {source.textPre && source.textPost && (
+                        <div className="text-[10px] text-slate-400 italic truncate">
+                          "... {source.textPre.slice(-40)} ... {source.textPost.slice(0, 40)} ..."
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
+                {backlinkSources.length > 15 && (
+                  <div className="text-center text-[10px] text-slate-400 py-2 border-t border-slate-100">
+                    +{backlinkSources.length - 15} more backlink sources available
+                  </div>
+                )}
               </div>
             </div>
 
@@ -530,7 +618,7 @@ export default function SerpBacklinks({
                 <p className="text-xs text-slate-400 mt-1">Pitching opportunities to secure guest posts, fix broken resource links, and claim unlinked mentions.</p>
               </div>
 
-              <div className="space-y-5">
+              <div className="space-y-5 max-h-[600px] overflow-y-auto pr-1">
                 {backlinkOpportunities.map((opp, idx) => (
                   <div key={idx} className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs hover:border-slate-300 transition-all space-y-3">
                     <div className="flex flex-wrap justify-between items-center gap-2">

@@ -146,6 +146,15 @@ export async function generateBlogPost(params: {
     audience?: string;
     strengths?: string[];
     weaknesses?: string[];
+    backlinkSummary?: {
+      totalBacklinks?: number;
+      avgDomainRating?: number;
+      avgRelevance?: number;
+      avgTrafficPotential?: number;
+      topPlatforms?: string[];
+      spamSummary?: string;
+      recommendation?: string;
+    };
     /** Local SEO location pack from analysis */
     localLocation?: {
       city?: string;
@@ -437,7 +446,7 @@ export function ensureBlogEnrichment(
               [`Focused ${kw} plan`, "Teams with clear weekly goals and 1 person dedicated", "Medium", "4-8 weeks", "High (compounding)"],
               ["Ad-hoc experiments", "Quick hypothesis tests, limited bandwidth", "Low", "Unclear", "Low (no compounding)"],
               ["Full pillar/cluster rebuild", "Established brands with 3+ person content team", "High", "8-16 weeks", "Very high (long-term)"],
-              [`${brand}-aligned rollout`, "Buyers already evaluating ${niche} solutions", "Medium", "3-6 weeks", "High (intent-matched)"],
+              [`${brand}-aligned rollout`, "Buyers already evaluating ${kw} solutions", "Medium", "3-6 weeks", "High (intent-matched)"],
             ],
           },
         ];

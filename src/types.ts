@@ -105,10 +105,23 @@ export interface SerpFeature {
 
 export interface BacklinkSource {
   sourceUrl: string;
+  sourceDomain: string;
   domainRating: number;
+  pageAuthority?: number;
   targetUrl: string;
   anchorText: string;
   linkType: "Follow" | "Nofollow";
+  relevanceScore?: number;
+  trafficPotential?: number;
+  qualityGrade?: "A" | "B" | "C" | "D" | "F";
+  recommendation?: "Keep" | "Disavow" | "Outreach";
+  contextMatch?: string;
+  firstSeen?: string;
+  isLost?: boolean;
+  spamScore?: number;
+  textPre?: string;
+  textPost?: string;
+  platformType?: string;
 }
 
 export interface BacklinkOpportunity {
@@ -440,6 +453,13 @@ export interface AnalysisResult {
   contentGaps: ContentGap[];
   serpFeatures: SerpFeature[];
   backlinkSources: BacklinkSource[];
+  backlinkSummary?: {
+    avgRelevance: number;
+    avgTrafficPotential: number;
+    dofollowCount: number;
+    nofollowCount: number;
+    topOpportunities: string[];
+  };
   backlinkOpportunities: BacklinkOpportunity[];
   discoveredCompetitors: DiscoveredCompetitor[];
   targetAnalysis: TargetAnalysis;
@@ -493,23 +513,25 @@ export interface DfDomainBacklinksResult {
 }
 
 export interface DfBacklinkItem {
+  referring_domain?: string;
+  referring_url?: string;
+  target_url?: string;
+  anchor?: string;
+  domain_rank?: number;
+  page_authority?: number;
+  first_seen?: string;
+  /** @deprecated use `referring_domain` */
   domain_from?: string;
+  /** @deprecated use `referring_url` */
   url_from?: string;
   url_to?: string;
-  anchor?: string;
-  domain_from_rank?: number;
-  page_from_authority_score?: number;
   domain_to?: string;
-  target_url?: string;
-  first_seen?: string;
   rank?: number;
-  domain_rank?: number;
   platform_type?: string;
-  page_authority_score?: number;
-  domain_authority_score?: number;
+  domain_authority?: number;
   text_pre?: string;
   text_post?: string;
-  dominant_platform_type?: string;
+  external_link_attributes?: string[];
   firstly_found?: string;
   lost?: string;
   status_code?: number;
@@ -546,7 +568,14 @@ export interface DataForSeoBundle {
       source_domain: string;
       anchor: string;
       domain_rating: number;
+      page_authority: number;
       first_seen: string;
+      is_dofollow: boolean;
+      is_lost: boolean;
+      text_pre: string;
+      text_post: string;
+      platform_type: string;
+      target_url: string;
     }>;
   };
   pageSpeed?: {

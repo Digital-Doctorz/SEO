@@ -2,6 +2,7 @@
  * Canonical normalizer for /api/analyze payloads.
  * Single place so every UI tab gets a stable shape — no partial AI objects.
  */
+import { KOLKATA_CITY } from "./geo";
 import type {
   AnalysisResult,
   BacklinkOpportunity,
@@ -20,6 +21,27 @@ import type {
 } from "../types";
 import { sanitizeDeep } from "./text";
 import { ensureOptimizedGapTitle, keywordHasGeo } from "./contentGapTitles";
+import type {
+  RawPageData,
+  RawDomainMetricsData,
+  RawKeywordData,
+  RawContentGapData,
+  RawSerpFeatureData,
+  RawBacklinkSourceData,
+  RawBacklinkOpportunityData,
+  RawDiscoveredCompetitorData,
+  RawLocalCompetitorData,
+  RawPrimaryLocalCompetitorData,
+  RawLocalKeywordData,
+  RawPriorityActionData,
+  RawBuyerSegmentData,
+  RawChannelData,
+  RawNinetyDayPlayData,
+  RawMarketResearchData,
+  RawTargetAnalysisData,
+  RawLocalLocationData,
+  RawRecord,
+} from "./raw-types";
 
 function num(v: unknown, fallback = 0): number {
   const n = Number(v);
@@ -32,31 +54,33 @@ function str(v: unknown, fallback = ""): string {
   return s || fallback;
 }
 
-function normalizePage(p: any, domain: string, i: number): PageMetric {
+function normalizePage(p: unknown, domain: string, i: number): PageMetric {
+  const pg = (p && typeof p === "object" ? p : {}) as RawPageData;
   return {
-    url: str(p?.url, `https://${domain}/page-${i + 1}`),
-    title: str(p?.title, `Page ${i + 1}`),
-    estTraffic: Math.max(0, Math.round(num(p?.estTraffic, 100))),
-    keywordsCount: Math.max(0, Math.round(num(p?.keywordsCount, 5))),
+    url: str(pg.url, `https://${domain}/page-${i + 1}`),
+    title: str(pg.title, `Page ${i + 1}`),
+    estTraffic: Math.max(0, Math.round(num(pg.estTraffic, 100))),
+    keywordsCount: Math.max(0, Math.round(num(pg.keywordsCount, 5))),
   };
 }
 
 export function normalizeDomainMetrics(
-  raw: any,
+  raw: unknown,
   fallbackDomain = "example.com"
 ): DomainMetrics {
-  const domain = str(raw?.domain, fallbackDomain).replace(/^www\./, "");
-  const topPages = Array.isArray(raw?.topPages)
-    ? raw.topPages.map((p: any, i: number) => normalizePage(p, domain, i))
+  const dm = (raw && typeof raw === "object" ? raw : {}) as RawDomainMetricsData;
+  const domain = str(dm.domain, fallbackDomain).replace(/^www\./, "");
+  const topPages = Array.isArray(dm.topPages)
+    ? dm.topPages.map((p, i) => normalizePage(p, domain, i))
     : [];
   return {
     domain,
-    domainRating: Math.max(0, Math.min(100, Math.round(num(raw?.domainRating, 40)))),
-    backlinksCount: Math.max(0, Math.round(num(raw?.backlinksCount, 0))),
-    referringDomains: Math.max(0, Math.round(num(raw?.referringDomains, 0))),
-    organicTraffic: Math.max(0, Math.round(num(raw?.organicTraffic, 0))),
-    organicKeywords: Math.max(0, Math.round(num(raw?.organicKeywords, 0))),
-    publishingFrequency: str(raw?.publishingFrequency, "1-2 articles / week"),
+    domainRating: Math.max(0, Math.min(100, Math.round(num(dm.domainRating, 40)))),
+    backlinksCount: Math.max(0, Math.round(num(dm.backlinksCount, 0))),
+    referringDomains: Math.max(0, Math.round(num(dm.referringDomains, 0))),
+    organicTraffic: Math.max(0, Math.round(num(dm.organicTraffic, 0))),
+    organicKeywords: Math.max(0, Math.round(num(dm.organicKeywords, 0))),
+    publishingFrequency: str(dm.publishingFrequency, "1-2 articles / week"),
     topPages,
   };
 }
@@ -99,14 +123,15 @@ function normalizeIntent(raw: unknown): Keyword["intent"] {
 export function normalizeKeywords(raw: unknown): Keyword[] {
   if (!Array.isArray(raw)) return [];
   return raw
-    .map((k: any, i: number): Keyword | null => {
-      const keyword = str(k?.keyword, "");
+    .map((k, i): Keyword | null => {
+      const kw = (k && typeof k === "object" ? k : {}) as RawKeywordData;
+      const keyword = str(kw.keyword, "");
       if (!keyword) return null;
-      const difficulty = Math.max(0, Math.min(100, Math.round(num(k?.difficulty, 40))));
-      const volume = Math.max(0, Math.round(num(k?.volume, 100)));
-      const intent = normalizeIntent(k?.intent);
+      const difficulty = Math.max(0, Math.min(100, Math.round(num(kw.difficulty, 40))));
+      const volume = Math.max(0, Math.round(num(kw.volume, 100)));
+      const intent = normalizeIntent(kw.intent);
       const typeRaw = str(
-        k?.type,
+        kw.type,
         keyword.includes("?") ? "Question" : keyword.split(/\s+/).length > 2 ? "Long-tail" : "Short-tail"
       );
       // Map invalid types like "organic" to real taxonomy
@@ -119,21 +144,21 @@ export function normalizeKeywords(raw: unknown): Keyword[] {
               ? "Long-tail"
               : "Short-tail"
       ) as Keyword["type"];
-      const competitionRaw = str(k?.competition, difficulty < 30 ? "Low" : difficulty < 60 ? "Medium" : "High");
+      const competitionRaw = str(kw.competition, difficulty < 30 ? "Low" : difficulty < 60 ? "Medium" : "High");
       const competitionCap =
         competitionRaw.charAt(0).toUpperCase() + competitionRaw.slice(1).toLowerCase();
       const competition = (
         ["Low", "Medium", "High"].includes(competitionCap) ? competitionCap : "Medium"
       ) as Keyword["competition"];
-      const trend = normalizeTrend(k?.trend);
-      const stageRaw = str(k?.buyerJourneyStage, i < 2 ? "Awareness" : i < 4 ? "Consideration" : "Decision");
+      const trend = normalizeTrend(kw.trend);
+      const stageRaw = str(kw.buyerJourneyStage, i < 2 ? "Awareness" : i < 4 ? "Consideration" : "Decision");
       const buyerJourneyStage = (
         ["Awareness", "Consideration", "Decision"].includes(stageRaw) ? stageRaw : "Awareness"
       ) as Keyword["buyerJourneyStage"];
 
       // Ensure clusters always have a parent topic (never blank → "Unassigned" junk pile)
       const parentTopic = str(
-        k?.parentTopic,
+        kw.parentTopic,
         keyword.split(/\s+/).slice(0, 2).join(" ") || keyword.split(/\s+/)[0] || "General"
       );
 
@@ -141,25 +166,25 @@ export function normalizeKeywords(raw: unknown): Keyword[] {
         keyword,
         volume,
         difficulty,
-        cpc: Math.max(0, num(k?.cpc, 1.2)),
+        cpc: Math.max(0, num(kw.cpc, 1.2)),
         intent,
         type,
         competition,
         trend,
-        serpRankings: Array.isArray(k?.serpRankings)
-          ? k.serpRankings.map((r: any, ri: number) => ({
+        serpRankings: Array.isArray(kw.serpRankings)
+          ? kw.serpRankings.map((r, ri) => ({
               rank: Math.max(1, Math.round(num(r?.rank, ri + 1))),
               title: str(r?.title, keyword),
               url: str(r?.url, "https://example.com"),
             }))
           : [],
-        relatedKeywords: Array.isArray(k?.relatedKeywords)
-          ? k.relatedKeywords.map((x: unknown) => str(x)).filter(Boolean)
+        relatedKeywords: Array.isArray(kw.relatedKeywords)
+          ? kw.relatedKeywords.map((x) => str(x)).filter(Boolean)
           : [],
         parentTopic,
         buyerJourneyStage,
-        opportunityScore: Math.max(0, Math.min(100, Math.round(num(k?.opportunityScore, 70 - i * 5)))),
-        isPillarOpportunity: Boolean(k?.isPillarOpportunity ?? i < 3),
+        opportunityScore: Math.max(0, Math.min(100, Math.round(num(kw.opportunityScore, 70 - i * 5)))),
+        isPillarOpportunity: Boolean(kw.isPillarOpportunity ?? i < 3),
       };
     })
     .filter((k): k is Keyword => k != null);
@@ -170,31 +195,32 @@ export function normalizeContentGaps(
   opts: { city?: string; brand?: string } = {}
 ): ContentGap[] {
   if (!Array.isArray(raw)) return [];
-  const defaultCity = str(opts.city, "Kolkata");
+  const defaultCity = str(opts.city, KOLKATA_CITY);
   const brand = str(opts.brand, "");
   return raw
-    .map((g: any, i: number): ContentGap | null => {
-      const competitorKeyword = str(g?.competitorKeyword || g?.keyword || g?.query, "");
+    .map((g, i): ContentGap | null => {
+      const gap = (g && typeof g === "object" ? g : {}) as RawContentGapData;
+      const competitorKeyword = str(gap.competitorKeyword || gap.keyword || gap.query, "");
       if (!competitorKeyword) return null;
       const difficulty = Math.max(
         1,
-        Math.min(100, Math.round(num(g?.competitorDifficulty ?? g?.difficulty, 30)))
+        Math.min(100, Math.round(num(gap.competitorDifficulty ?? gap.difficulty, 30)))
       );
-      let difficultyCategory = str(g?.difficultyCategory, "") as ContentGap["difficultyCategory"];
+      let difficultyCategory = str(gap.difficultyCategory, "") as ContentGap["difficultyCategory"];
       if (difficultyCategory !== "Easy" && difficultyCategory !== "Medium" && difficultyCategory !== "Hard") {
         difficultyCategory = difficulty < 30 ? "Easy" : difficulty < 55 ? "Medium" : "Hard";
       }
       let targetRank: number | "Not Ranking" = "Not Ranking";
-      if (g?.targetRank === "Not Ranking" || String(g?.targetRank).toLowerCase() === "unranked") {
+      if (gap.targetRank === "Not Ranking" || String(gap.targetRank).toLowerCase() === "unranked") {
         targetRank = "Not Ranking";
-      } else if (g?.targetRank != null && g?.targetRank !== "") {
-        const tr = Number(g.targetRank);
+      } else if (gap.targetRank != null && gap.targetRank !== "") {
+        const tr = Number(gap.targetRank);
         targetRank = Number.isFinite(tr) ? Math.round(tr) : "Not Ranking";
       }
 
-      const volume = Math.max(0, Math.round(num(g?.competitorVolume ?? g?.volume, 500)));
-      const cityMention = str(g?.cityMention, defaultCity) || defaultCity;
-      const optimized = ensureOptimizedGapTitle(competitorKeyword, str(g?.recommendedTopic || g?.topic, ""), {
+      const volume = Math.max(0, Math.round(num(gap.competitorVolume ?? gap.volume, 500)));
+      const cityMention = str(gap.cityMention, defaultCity) || defaultCity;
+      const optimized = ensureOptimizedGapTitle(competitorKeyword, str(gap.recommendedTopic || gap.topic, ""), {
         city: cityMention,
         brand,
         volume,
@@ -204,8 +230,8 @@ export function normalizeContentGaps(
 
       const hasGeo = keywordHasGeo(competitorKeyword, cityMention);
       let localIntent = (
-        ["local_direct", "local_aware", "national", "mixed"].includes(g?.localIntent)
-          ? g?.localIntent
+        ["local_direct", "local_aware", "national", "mixed"].includes(gap.localIntent ?? "")
+          ? gap.localIntent
           : undefined
       ) as ContentGap["localIntent"];
       if (!localIntent) {
@@ -216,35 +242,35 @@ export function normalizeContentGaps(
 
       return {
         competitorKeyword,
-        competitorRank: Math.max(1, Math.round(num(g?.competitorRank ?? g?.rank, 5))),
+        competitorRank: Math.max(1, Math.round(num(gap.competitorRank ?? gap.rank, 5))),
         competitorVolume: volume,
         competitorDifficulty: difficulty,
         targetRank,
         recommendedTopic: optimized.title,
         recommendedType: str(
-          g?.recommendedType || g?.contentType,
+          gap.recommendedType || gap.contentType,
           localIntent === "local_direct" ? "Local Pillar / Service Page" : "Pillar Blog Post"
         ),
         difficultyCategory,
-        isQuickWin: Boolean(g?.isQuickWin ?? g?.quickWin ?? difficulty < 35),
+        isQuickWin: Boolean(gap.isQuickWin ?? gap.quickWin ?? difficulty < 35),
         cityMention,
         localIntent,
-        neighborhoods: Array.isArray(g?.neighborhoods)
-          ? g.neighborhoods.filter(Boolean).slice(0, 10)
+        neighborhoods: Array.isArray(gap.neighborhoods)
+          ? gap.neighborhoods.map((n) => str(n)).filter(Boolean).slice(0, 10)
           : [],
         localSearchVolume: Boolean(
-          g?.localSearchVolume ?? (hasGeo || localIntent === "local_direct" || localIntent === "local_aware")
+          gap.localSearchVolume ?? (hasGeo || localIntent === "local_direct" || localIntent === "local_aware")
         ),
         localDirectoryRelevant: Boolean(
-          g?.localDirectoryRelevant ?? (/\bnear me\b|doctor|clinic|hospital|dentist|lawyer/i.test(competitorKeyword))
+          gap.localDirectoryRelevant ?? (/\bnear me\b|doctor|clinic|hospital|dentist|lawyer/i.test(competitorKeyword))
         ),
-        gbpCategory: str(g?.gbpCategory, ""),
-        serpTitlePreview: str(g?.serpTitlePreview, optimized.serpTitle),
-        titleAngle: str(g?.titleAngle, optimized.angle),
-        titleFormula: str(g?.titleFormula, optimized.formula),
+        gbpCategory: str(gap.gbpCategory, ""),
+        serpTitlePreview: str(gap.serpTitlePreview, optimized.serpTitle),
+        titleAngle: str(gap.titleAngle, optimized.angle),
+        titleFormula: str(gap.titleFormula, optimized.formula),
         trafficPotentialScore: Math.max(
           1,
-          Math.min(100, Math.round(num(g?.trafficPotentialScore, optimized.trafficPotentialScore)))
+          Math.min(100, Math.round(num(gap.trafficPotentialScore, optimized.trafficPotentialScore)))
         ),
       };
     })
@@ -258,19 +284,20 @@ const SERP_TYPES = new Set(["Featured Snippet", "People Also Ask", "Video Carous
 export function normalizeSerpFeatures(raw: unknown): SerpFeature[] {
   if (!Array.isArray(raw)) return [];
   return raw
-    .map((f: any): SerpFeature | null => {
-      const type = str(f?.type, "Featured Snippet");
+    .map((f): SerpFeature | null => {
+      const feat = (f && typeof f === "object" ? f : {}) as RawSerpFeatureData;
+      const type = str(feat.type, "Featured Snippet");
       if (!SERP_TYPES.has(type)) {
         // Drop organic SERP rows that are not feature opportunities
         return null;
       }
-      const query = str(f?.query || f?.title, "");
+      const query = str(feat.query || feat.title, "");
       if (!query) return null;
       return {
         type: type as SerpFeature["type"],
         query,
-        opportunity: str(f?.opportunity, "Optimize this SERP feature with clear answer blocks."),
-        actionability: str(f?.actionability, "Add structured content and FAQ schema."),
+        opportunity: str(feat.opportunity, "Optimize this SERP feature with clear answer blocks."),
+        actionability: str(feat.actionability, "Add structured content and FAQ schema."),
       };
     })
     .filter((f): f is SerpFeature => f != null);
@@ -279,15 +306,32 @@ export function normalizeSerpFeatures(raw: unknown): SerpFeature[] {
 export function normalizeBacklinkSources(raw: unknown, domain = "example.com"): BacklinkSource[] {
   if (!Array.isArray(raw)) return [];
   return raw
-    .map((b: any): BacklinkSource | null => {
-      const sourceUrl = str(b?.sourceUrl || b?.url || b?.source_url, "");
-      if (!sourceUrl && !b?.source_domain && !b?.domain) return null;
+    .map((b): BacklinkSource | null => {
+      const bl = (b && typeof b === "object" ? b : {}) as RawBacklinkSourceData;
+      const sourceUrl = str(bl.sourceUrl || bl.url || bl.source_url, "");
+      if (!sourceUrl && !bl.source_domain && !bl.domain) return null;
+      const sourceDomain = str(bl.sourceDomain || bl.source_domain || bl.domain, "");
+      const dr = Math.max(0, Math.min(100, Math.round(num(bl.domainRating ?? bl.dr ?? bl.domain_rank ?? bl.domain_rating, 40))));
+      const isFollow = str(bl.linkType, "Follow") === "Nofollow" ? "Nofollow" : "Follow";
       return {
-        sourceUrl: sourceUrl || `https://${str(b?.source_domain || b?.domain, "referrer.com")}/`,
-        domainRating: Math.max(0, Math.min(100, Math.round(num(b?.domainRating ?? b?.dr ?? b?.domain_rating, 40)))),
-        targetUrl: str(b?.targetUrl || b?.target_url, `https://${domain}/`),
-        anchorText: str(b?.anchorText || b?.anchor || b?.anchor_text, domain),
-        linkType: (str(b?.linkType, "Follow") === "Nofollow" ? "Nofollow" : "Follow") as "Follow" | "Nofollow",
+        sourceUrl: sourceUrl || `https://${sourceDomain}/`,
+        sourceDomain,
+        domainRating: dr,
+        pageAuthority: bl.pageAuthority ?? bl.page_authority ?? dr,
+        targetUrl: str(bl.targetUrl || bl.target_url, `https://${domain}/`),
+        anchorText: str(bl.anchorText || bl.anchor || bl.anchor_text, domain),
+        linkType: isFollow as "Follow" | "Nofollow",
+        relevanceScore: num(bl.relevanceScore, undefined),
+        trafficPotential: num(bl.trafficPotential, undefined),
+        qualityGrade: str(bl.qualityGrade, undefined) as BacklinkSource["qualityGrade"],
+        recommendation: str(bl.recommendation, undefined) as BacklinkSource["recommendation"],
+        contextMatch: str(bl.contextMatch, undefined),
+        firstSeen: str(bl.firstSeen || bl.first_seen, undefined),
+        isLost: bl.isLost ?? bl.is_lost ?? undefined,
+        spamScore: num(bl.spamScore, undefined),
+        textPre: str(bl.textPre || bl.text_pre, undefined),
+        textPost: str(bl.textPost || bl.text_post, undefined),
+        platformType: str(bl.platformType || bl.platform_type, undefined),
       };
     })
     .filter((b): b is BacklinkSource => b != null);
@@ -296,21 +340,22 @@ export function normalizeBacklinkSources(raw: unknown, domain = "example.com"): 
 export function normalizeBacklinkOpportunities(raw: unknown): BacklinkOpportunity[] {
   if (!Array.isArray(raw)) return [];
   return raw
-    .map((o: any): BacklinkOpportunity | null => {
-      const typeRaw = str(o?.type, "Guest Posting");
+    .map((o): BacklinkOpportunity | null => {
+      const opp = (o && typeof o === "object" ? o : {}) as RawBacklinkOpportunityData;
+      const typeRaw = str(opp.type, "Guest Posting");
       const type = (
         ["Guest Posting", "Unlinked Mention", "Broken Link"].includes(typeRaw)
           ? typeRaw
           : "Guest Posting"
       ) as BacklinkOpportunity["type"];
-      const sourceDomain = str(o?.sourceDomain || o?.domain, "");
-      if (!sourceDomain && !o?.opportunityUrl) return null;
+      const sourceDomain = str(opp.sourceDomain || opp.domain, "");
+      if (!sourceDomain && !opp.opportunityUrl) return null;
       return {
         type,
         sourceDomain: sourceDomain || "opportunity.com",
-        opportunityUrl: str(o?.opportunityUrl || o?.url, "https://example.com/write-for-us"),
-        description: str(o?.description, "Link opportunity identified for outreach."),
-        actionPlan: str(o?.actionPlan, "Draft outreach and pitch a resource replacement."),
+        opportunityUrl: str(opp.opportunityUrl || opp.url, "https://example.com/write-for-us"),
+        description: str(opp.description, "Link opportunity identified for outreach."),
+        actionPlan: str(opp.actionPlan, "Draft outreach and pitch a resource replacement."),
       };
     })
     .filter((o): o is BacklinkOpportunity => o != null);
@@ -328,8 +373,9 @@ export function normalizeDiscoveredCompetitors(
 ): DiscoveredCompetitor[] {
   if (!Array.isArray(raw)) return [];
   return raw
-    .map((c: any, i: number): DiscoveredCompetitor | null => {
-      const domain = str(c?.domain || c?.url || c?.host, "")
+    .map((c, i): DiscoveredCompetitor | null => {
+      const comp = (c && typeof c === "object" ? c : {}) as RawDiscoveredCompetitorData;
+      const domain = str(comp.domain || comp.url || comp.host, "")
         .replace(/^https?:\/\//, "")
         .replace(/^www\./, "")
         .replace(/\/.*$/, "")
@@ -338,24 +384,24 @@ export function normalizeDiscoveredCompetitors(
 
       const sim = Math.max(
         1,
-        Math.min(100, Math.round(num(c?.nicheSimilarity ?? c?.overlapScore ?? c?.similarity, 70 - (i % 20))))
+        Math.min(100, Math.round(num(comp.nicheSimilarity ?? comp.overlapScore ?? comp.similarity, 70 - (i % 20))))
       );
-      const threatRaw = str(c?.threatLevel || c?.threat, sim >= 85 ? "High" : sim >= 70 ? "Medium" : "Low");
+      const threatRaw = str(comp.threatLevel || comp.threat, sim >= 85 ? "High" : sim >= 70 ? "Medium" : "Low");
       const threatLevel = (
         ["High", "Medium", "Low"].includes(threatRaw) ? threatRaw : "Medium"
       ) as DiscoveredCompetitor["threatLevel"];
 
-      const focus = str(c?.nicheFocus || c?.focus || c?.positioning, `Competitor in ${niche}`);
+      const focus = str(comp.nicheFocus || comp.focus || comp.positioning, `Competitor in ${niche}`);
       const traffic = Math.max(
         100,
-        Math.round(num(c?.estimatedMonthlyTraffic ?? c?.traffic ?? c?.organicTraffic, 8000 + i * 1500))
+        Math.round(num(comp.estimatedMonthlyTraffic ?? comp.traffic ?? comp.organicTraffic, 8000 + i * 1500))
       );
       const takeaway = str(
-        c?.analyzedTakeaway || c?.takeaway || c?.summary,
+        comp.analyzedTakeaway || comp.takeaway || comp.summary,
         `${domain} competes in ${niche}. Study their content clusters and outrank them with deeper FAQs, comparison pages, and clearer proof points for ${brand}.`
       );
 
-      const kws = strList(c?.targetKeywords || c?.keywords, 8);
+      const kws = strList(comp.targetKeywords || comp.keywords, 8);
       if (kws.length < 2) {
         kws.push(`${niche.split(/[&,]/)[0]?.trim() || "services"} guide`, `best ${domain.split(".")[0]} alternative`);
       }
@@ -365,47 +411,47 @@ export function normalizeDiscoveredCompetitors(
         nicheSimilarity: sim,
         nicheFocus: focus,
         estimatedMonthlyTraffic: traffic,
-        popularBlogUrl: str(c?.popularBlogUrl || c?.blogUrl, `https://${domain}/blog`),
+        popularBlogUrl: str(comp.popularBlogUrl || comp.blogUrl, `https://${domain}/blog`),
         latestArticleTitle: str(
-          c?.latestArticleTitle || c?.articleTitle,
+          comp.latestArticleTitle || comp.articleTitle,
           `How ${focus.split(",")[0]} teams are winning in 2026`
         ),
         latestArticleUrl: str(
-          c?.latestArticleUrl || c?.articleUrl,
+          comp.latestArticleUrl || comp.articleUrl,
           `https://${domain}/blog/strategy-${i + 1}`
         ),
         analyzedTakeaway: takeaway,
         targetKeywords: kws.slice(0, 6),
         seoStrategy: str(
-          c?.seoStrategy,
+          comp.seoStrategy,
           "Topical authority clusters, commercial comparison pages, FAQ schema, and consistent internal linking from money pages."
         ),
         aiRankStrategy: str(
-          c?.aiRankStrategy,
+          comp.aiRankStrategy,
           "Answer-first H2s, entity-rich definitions, cited sources, and clear step lists so AI Overviews and chat engines can cite the page."
         ),
         schemaRecommendation: str(
-          c?.schemaRecommendation,
+          comp.schemaRecommendation,
           "Article + FAQPage + Organization (and Service/Product where relevant) JSON-LD on hub and service templates."
         ),
         threatLevel,
-        domainRating: Math.max(1, Math.min(100, Math.round(num(c?.domainRating ?? c?.dr, 45 + ((sim / 2) | 0) - i)))),
-        backlinksCount: Math.max(0, Math.round(num(c?.backlinksCount, 0))),
-        referringDomains: Math.max(0, Math.round(num(c?.referringDomains, 0))),
-        organicKeywords: Math.max(0, Math.round(num(c?.organicKeywords, 0))),
-        isSerpDiscovered: Boolean(c?.isSerpDiscovered),
-        contentCadence: str(c?.contentCadence || c?.publishingFrequency, i % 2 === 0 ? "2–4 posts / week" : "1–2 posts / week"),
-        strengths: strList(c?.strengths, 4).length
-          ? strList(c?.strengths, 4)
+        domainRating: Math.max(1, Math.min(100, Math.round(num(comp.domainRating ?? comp.dr, 45 + ((sim / 2) | 0) - i)))),
+        backlinksCount: Math.max(0, Math.round(num(comp.backlinksCount, 0))),
+        referringDomains: Math.max(0, Math.round(num(comp.referringDomains, 0))),
+        organicKeywords: Math.max(0, Math.round(num(comp.organicKeywords, 0))),
+        isSerpDiscovered: Boolean(comp.isSerpDiscovered),
+        contentCadence: str(comp.contentCadence || comp.publishingFrequency, i % 2 === 0 ? "2–4 posts / week" : "1–2 posts / week"),
+        strengths: strList(comp.strengths, 4).length
+          ? strList(comp.strengths, 4)
           : ["Strong category presence", "Established content footprint", "Clear commercial intent coverage"],
-        weaknesses: strList(c?.weaknesses, 4).length
-          ? strList(c?.weaknesses, 4)
+        weaknesses: strList(comp.weaknesses, 4).length
+          ? strList(comp.weaknesses, 4)
           : ["Generic long-tail depth", "Thin local/niche proof", "Weak comparison content"],
-        contentAngles: strList(c?.contentAngles, 4).length
-          ? strList(c?.contentAngles, 4)
+        contentAngles: strList(comp.contentAngles, 4).length
+          ? strList(comp.contentAngles, 4)
           : ["How-to guides", "Comparison pages", "Use-case stories"],
         counterMove: str(
-          c?.counterMove,
+          comp.counterMove,
           `Publish a deeper "${kws[0]}" pillar with tables, FAQs, and brand-specific proof that ${domain} does not cover.`
         ),
       };
@@ -425,7 +471,7 @@ export function normalizeMarketResearch(
     competitors?: DiscoveredCompetitor[];
   } = {}
 ): MarketResearchReport {
-  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, any>;
+  const r = (raw && typeof raw === "object" ? raw : {}) as RawMarketResearchData;
   const niche = str(opts.niche, "this market");
   const brand = str(opts.brand, "Your brand");
   const domain = str(opts.domain, "your site");
@@ -436,7 +482,7 @@ export function normalizeMarketResearch(
     ["Low", "Moderate", "High", "Very High"].includes(intensityRaw) ? intensityRaw : "Moderate"
   ) as MarketResearchReport["competitiveIntensity"];
 
-  const swotIn = r.swot && typeof r.swot === "object" ? r.swot : {};
+  const swotIn = (r.swot && typeof r.swot === "object" ? r.swot : {}) as Record<string, unknown>;
   const buyerIn = Array.isArray(r.buyerSegments) ? r.buyerSegments : [];
   const channelIn = Array.isArray(r.channelMix) ? r.channelMix : [];
   const playsIn = Array.isArray(r.ninetyDayPlays) ? r.ninetyDayPlays : [];
@@ -460,17 +506,20 @@ export function normalizeMarketResearch(
         ],
     buyerSegments:
       buyerIn.length > 0
-        ? buyerIn.slice(0, 5).map((b: any, i: number) => ({
-            segment: str(b?.segment || b?.name, `Segment ${i + 1}`),
-            intent: str(b?.intent || b?.need, "Research and evaluate options"),
-            priority: (["Primary", "Secondary", "Emerging"].includes(str(b?.priority))
-              ? str(b?.priority)
-              : i === 0
-                ? "Primary"
-                : i === 1
-                  ? "Secondary"
-                  : "Emerging") as "Primary" | "Secondary" | "Emerging",
-          }))
+        ? buyerIn.slice(0, 5).map((b, i) => {
+            const seg = (b && typeof b === "object" ? b : {}) as RawBuyerSegmentData;
+            return {
+              segment: str(seg.segment || seg.name, `Segment ${i + 1}`),
+              intent: str(seg.intent || seg.need, "Research and evaluate options"),
+              priority: (["Primary", "Secondary", "Emerging"].includes(str(seg.priority))
+                ? str(seg.priority)
+                : i === 0
+                  ? "Primary"
+                  : i === 1
+                    ? "Secondary"
+                    : "Emerging") as "Primary" | "Secondary" | "Emerging",
+            };
+          })
         : [
             {
               segment: "Problem-aware researchers",
@@ -514,13 +563,16 @@ export function normalizeMarketResearch(
     ),
     channelMix:
       channelIn.length > 0
-        ? channelIn.slice(0, 6).map((ch: any) => ({
-            channel: str(ch?.channel || ch?.name, "Organic search"),
-            role: str(ch?.role || ch?.purpose, "Demand capture"),
-            priority: (["High", "Medium", "Low"].includes(str(ch?.priority))
-              ? str(ch?.priority)
-              : "High") as "High" | "Medium" | "Low",
-          }))
+        ? channelIn.slice(0, 6).map((ch) => {
+            const chData = (ch && typeof ch === "object" ? ch : {}) as RawChannelData;
+            return {
+              channel: str(chData.channel || chData.name, "Organic search"),
+              role: str(chData.role || chData.purpose, "Demand capture"),
+              priority: (["High", "Medium", "Low"].includes(str(chData.priority))
+                ? str(chData.priority)
+                : "High") as "High" | "Medium" | "Low",
+            };
+          })
         : [
             { channel: "Organic search (SEO)", role: "Primary demand capture & trust", priority: "High" as const },
             { channel: "Content / blog clusters", role: "Topical authority & nurture", priority: "High" as const },
@@ -530,13 +582,16 @@ export function normalizeMarketResearch(
           ],
     ninetyDayPlays:
       playsIn.length > 0
-        ? playsIn.slice(0, 6).map((p: any) => ({
-            play: str(p?.play || p?.action, "Publish a pillar + cluster set"),
-            why: str(p?.why || p?.reason, "Closes a visible content gap"),
-            effort: (["Low", "Medium", "High"].includes(str(p?.effort))
-              ? str(p?.effort)
-              : "Medium") as "Low" | "Medium" | "High",
-          }))
+        ? playsIn.slice(0, 6).map((p) => {
+            const play = (p && typeof p === "object" ? p : {}) as RawNinetyDayPlayData;
+            return {
+              play: str(play.play || play.action, "Publish a pillar + cluster set"),
+              why: str(play.why || play.reason, "Closes a visible content gap"),
+              effort: (["Low", "Medium", "High"].includes(str(play.effort))
+                ? str(play.effort)
+                : "Medium") as "Low" | "Medium" | "High",
+            };
+          })
         : [
             {
               play: "Ship 1 pillar + 3 cluster articles on top content gaps",
@@ -555,25 +610,25 @@ export function normalizeMarketResearch(
             },
           ],
     swot: {
-      strengths: strList(swotIn.strengths, 5).length
-        ? strList(swotIn.strengths, 5)
+      strengths: strList((swotIn as Record<string, unknown>).strengths as unknown, 5).length
+        ? strList((swotIn as Record<string, unknown>).strengths as unknown, 5)
         : strList(opts.strengths, 5).length
           ? strList(opts.strengths, 5)
           : [`Live brand presence on ${domain}`, `On-niche focus in ${niche}`, "Room to own long-tail depth"],
-      weaknesses: strList(swotIn.weaknesses, 5).length
-        ? strList(swotIn.weaknesses, 5)
+      weaknesses: strList((swotIn as Record<string, unknown>).weaknesses as unknown, 5).length
+        ? strList((swotIn as Record<string, unknown>).weaknesses as unknown, 5)
         : strList(opts.weaknesses, 5).length
           ? strList(opts.weaknesses, 5)
           : ["Incomplete long-tail coverage", "Fewer comparison assets than peers", "Limited SERP feature ownership"],
-      opportunities: strList(swotIn.opportunities, 5).length
-        ? strList(swotIn.opportunities, 5)
+      opportunities: strList((swotIn as Record<string, unknown>).opportunities as unknown, 5).length
+        ? strList((swotIn as Record<string, unknown>).opportunities as unknown, 5)
         : [
             "Content gap keywords with Easy/Medium difficulty",
             "AI Overview / GEO answer formatting",
             "Internal linking from services → education hubs",
           ],
-      threats: strList(swotIn.threats, 5).length
-        ? strList(swotIn.threats, 5)
+      threats: strList((swotIn as Record<string, unknown>).threats as unknown, 5).length
+        ? strList((swotIn as Record<string, unknown>).threats as unknown, 5)
         : [
             topComps[0] ? `${topComps[0]} and peers publishing faster` : "Authority publishers outranking thin pages",
             "Generic AI content flooding the SERP",
@@ -592,7 +647,7 @@ export function normalizeTargetAnalysis(
     competitors?: DiscoveredCompetitor[];
   } = {}
 ): TargetAnalysis {
-  const t = (raw && typeof raw === "object" ? raw : {}) as Record<string, any>;
+  const t = (raw && typeof raw === "object" ? raw : {}) as RawTargetAnalysisData;
   const domain = str(opts.domain, "your-site.com");
   const brand = str(opts.brand, domain.split(".")[0] || "Brand");
   const niche = str(t.coreNiche || opts.niche, "Core business services");
@@ -660,44 +715,50 @@ export function normalizeLocalLocation(
   raw: unknown,
   opts: { domain?: string; niche?: string; brand?: string } = {}
 ): LocalLocation {
-  const l = (raw && typeof raw === "object" ? raw : {}) as Record<string, any>;
+  const l = (raw && typeof raw === "object" ? raw : {}) as RawLocalLocationData;
   const domain = str(opts.domain, "example.com");
   const brand = str(opts.brand, domain.split(".")[0] || "Brand");
   const niche = str(opts.niche, "local services");
- const city = str(l.city, "Kolkata");
+ const city = str(l.city, KOLKATA_CITY);
  const state = str(l.state, "");
  const country = str(l.country, "India");
   const primaryService = niche.split(/[&,|·]/)[0]?.trim() || "services";
 
   const localCompetitors: LocalCompetitor[] = Array.isArray(l.localCompetitors)
-    ? l.localCompetitors.slice(0, 8).map((c: any, i: number) => ({
-        name: str(c?.name, `${city} ${primaryService} #${i + 1}`),
-        domain: str(c?.domain, `local-competitor-${i + 1}.com`),
-        address: str(c?.address, `${city}${state ? `, ${state}` : ""}`),
-        distance: str(c?.distance, `${(i + 1) * 1.1} mi`),
-        phone: str(c?.phone, ""),
-        rating: Math.min(5, Math.max(1, num(c?.rating, 4.2))),
-        reviewCount: Math.max(0, Math.round(num(c?.reviewCount, 40 + i * 20))),
-        localRank: Math.max(1, Math.round(num(c?.localRank, i + 2))),
-        services: strList(c?.services, 4).length
-          ? strList(c?.services, 4)
-          : [primaryService],
-        domainRating: Math.max(1, Math.min(100, Math.round(num(c?.domainRating, 35 + i * 3)))),
-        estimatedMonthlyTraffic: Math.max(100, Math.round(num(c?.estimatedMonthlyTraffic, 1200 + i * 400))),
-        googleMapsUrl: str(
-          c?.googleMapsUrl,
-          `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(primaryService + " " + city)}`
-        ),
-      }))
+    ? l.localCompetitors.slice(0, 8).map((c, i) => {
+        const lc = (c && typeof c === "object" ? c : {}) as RawLocalCompetitorData;
+        return {
+          name: str(lc.name, `${city} ${primaryService} #${i + 1}`),
+          domain: str(lc.domain, `local-competitor-${i + 1}.com`),
+          address: str(lc.address, `${city}${state ? `, ${state}` : ""}`),
+          distance: str(lc.distance, `${(i + 1) * 1.1} mi`),
+          phone: str(lc.phone, ""),
+          rating: Math.min(5, Math.max(1, num(lc.rating, 4.2))),
+          reviewCount: Math.max(0, Math.round(num(lc.reviewCount, 40 + i * 20))),
+          localRank: Math.max(1, Math.round(num(lc.localRank, i + 2))),
+          services: strList(lc.services, 4).length
+            ? strList(lc.services, 4)
+            : [primaryService],
+          domainRating: Math.max(1, Math.min(100, Math.round(num(lc.domainRating, 35 + i * 3)))),
+          estimatedMonthlyTraffic: Math.max(100, Math.round(num(lc.estimatedMonthlyTraffic, 1200 + i * 400))),
+          googleMapsUrl: str(
+            lc.googleMapsUrl,
+            `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(primaryService + " " + city)}`
+          ),
+        };
+      })
     : [];
 
   const primaryLocalCompetitors = Array.isArray(l.primaryLocalCompetitors)
-    ? l.primaryLocalCompetitors.slice(0, 5).map((c: any, i: number) => ({
-        name: str(c?.name, localCompetitors[i]?.name || `Local peer ${i + 1}`),
-        domain: str(c?.domain, localCompetitors[i]?.domain || `peer${i + 1}.com`),
-        localRank: Math.max(1, Math.round(num(c?.localRank, i + 2))),
-        mapDistance: str(c?.mapDistance || c?.distance, `${i + 1}.2 mi`),
-      }))
+    ? l.primaryLocalCompetitors.slice(0, 5).map((c, i) => {
+        const pc = (c && typeof c === "object" ? c : {}) as RawPrimaryLocalCompetitorData;
+        return {
+          name: str(pc.name, localCompetitors[i]?.name || `Local peer ${i + 1}`),
+          domain: str(pc.domain, localCompetitors[i]?.domain || `peer${i + 1}.com`),
+          localRank: Math.max(1, Math.round(num(pc.localRank, i + 2))),
+          mapDistance: str(pc.mapDistance || pc.distance, `${i + 1}.2 mi`),
+        };
+      })
     : localCompetitors.slice(0, 3).map((c) => ({
         name: c.name,
         domain: c.domain,
@@ -706,18 +767,21 @@ export function normalizeLocalLocation(
       }));
 
   const localKeywordOpportunities = Array.isArray(l.localKeywordOpportunities)
-    ? l.localKeywordOpportunities.slice(0, 12).map((k: any) => ({
-        keyword: str(k?.keyword, `${primaryService} near me`),
-        searchVolume: Math.max(10, Math.round(num(k?.searchVolume, 200))),
-        intent: str(k?.intent, "Transactional"),
-      }))
+    ? l.localKeywordOpportunities.slice(0, 12).map((k) => {
+        const lk = (k && typeof k === "object" ? k : {}) as RawLocalKeywordData;
+        return {
+          keyword: str(lk.keyword, `${primaryService} near me`),
+          searchVolume: Math.max(10, Math.round(num(lk.searchVolume, 200))),
+          intent: str(lk.intent, "Transactional"),
+        };
+      })
     : [
         { keyword: `${primaryService} near me`, searchVolume: 720, intent: "Transactional" },
         { keyword: `${primaryService} in ${city}`, searchVolume: 540, intent: "Commercial" },
         { keyword: `best ${primaryService} ${city}`, searchVolume: 310, intent: "Commercial" },
       ];
 
-  const rbIn = l.rankingBlueprint && typeof l.rankingBlueprint === "object" ? l.rankingBlueprint : {};
+  const rbIn = (l.rankingBlueprint && typeof l.rankingBlueprint === "object" ? l.rankingBlueprint : {}) as Record<string, unknown>;
   const rankingBlueprint: RankingBlueprint = {
     currentPosition: str(rbIn.currentPosition, "Not consistently in local pack"),
     targetPosition: str(
@@ -746,16 +810,19 @@ export function normalizeLocalLocation(
       : ["Local directories", "Chamber / community pages", "Partner local businesses"],
     timelineEstimate: str(rbIn.timelineEstimate, "6–12 weeks for Map Pack gains"),
     priorityActions: Array.isArray(rbIn.priorityActions)
-      ? rbIn.priorityActions.slice(0, 8).map((a: any) => ({
-          action: str(a?.action, "Improve local signals"),
-          impact: (["High", "Medium", "Low"].includes(str(a?.impact))
-            ? str(a?.impact)
-            : "High") as "High" | "Medium" | "Low",
-          effort: (["High", "Medium", "Low"].includes(str(a?.effort))
-            ? str(a?.effort)
-            : "Medium") as "High" | "Medium" | "Low",
-          timeframe: str(a?.timeframe, "2–4 weeks"),
-        }))
+      ? rbIn.priorityActions.slice(0, 8).map((a) => {
+          const act = (a && typeof a === "object" ? a : {}) as RawPriorityActionData;
+          return {
+            action: str(act.action, "Improve local signals"),
+            impact: (["High", "Medium", "Low"].includes(str(act.impact))
+              ? str(act.impact)
+              : "High") as "High" | "Medium" | "Low",
+            effort: (["High", "Medium", "Low"].includes(str(act.effort))
+              ? str(act.effort)
+              : "Medium") as "High" | "Medium" | "Low",
+            timeframe: str(act.timeframe, "2–4 weeks"),
+          };
+        })
       : [
           {
             action: `Optimize GBP for ${primaryService} in ${city}`,
@@ -765,11 +832,14 @@ export function normalizeLocalLocation(
           },
         ],
     localKeywordsToTarget: Array.isArray(rbIn.localKeywordsToTarget)
-      ? rbIn.localKeywordsToTarget.slice(0, 8).map((k: any) => ({
-          keyword: str(k?.keyword, `${primaryService} near me`),
-          searchVolume: Math.max(10, Math.round(num(k?.searchVolume, 200))),
-          currentRank: str(k?.currentRank, "Not ranking / untracked"),
-        }))
+      ? rbIn.localKeywordsToTarget.slice(0, 8).map((k) => {
+          const lk = (k && typeof k === "object" ? k : {}) as RawLocalKeywordData;
+          return {
+            keyword: str(lk.keyword, `${primaryService} near me`),
+            searchVolume: Math.max(10, Math.round(num(lk.searchVolume, 200))),
+            currentRank: str((lk as Record<string, unknown>).currentRank, "Not ranking / untracked"),
+          };
+        })
       : localKeywordOpportunities.slice(0, 5).map((k) => ({
           keyword: k.keyword,
           searchVolume: k.searchVolume,
@@ -807,21 +877,28 @@ export function normalizeLocalLocation(
 /** Full AnalysisResult normalizer — use on every successful /api/analyze response. */
 export function normalizeAnalysisResult(raw: unknown, fallbackTarget = "example.com"): AnalysisResult {
   const data = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-  const sanitized = sanitizeDeep(data) as Record<string, any>;
+  const sanitized = sanitizeDeep(data) as Record<string, unknown>;
 
   const target = normalizeDomainMetrics(sanitized.target, fallbackTarget);
   const competitor =
     sanitized.competitor && typeof sanitized.competitor === "object"
-      ? normalizeDomainMetrics(sanitized.competitor, str((sanitized.competitor as any).domain, "competitor.com"))
+      ? normalizeDomainMetrics(sanitized.competitor, str((sanitized.competitor as Record<string, unknown>).domain, "competitor.com"))
       : null;
 
+  const siteProfile = (sanitized.siteProfile && typeof sanitized.siteProfile === "object"
+    ? sanitized.siteProfile
+    : {}) as Record<string, unknown>;
+  const targetAnalysisRaw = (sanitized.targetAnalysis && typeof sanitized.targetAnalysis === "object"
+    ? sanitized.targetAnalysis
+    : {}) as Record<string, unknown>;
+
   const brandHint =
-    str(sanitized?.siteProfile?.brand, "") ||
-    str(sanitized?.targetAnalysis?.coreNiche, "").split(" ")[0] ||
+    str(siteProfile.brand, "") ||
+    str(targetAnalysisRaw.coreNiche, "").split(" ")[0] ||
     target.domain.split(".")[0] ||
     "Brand";
   const nicheHint = str(
-    sanitized?.targetAnalysis?.coreNiche || sanitized?.siteProfile?.niche,
+    targetAnalysisRaw.coreNiche || siteProfile.niche,
     "business services"
   );
 
@@ -849,16 +926,17 @@ export function normalizeAnalysisResult(raw: unknown, fallbackTarget = "example.
     });
   targetAnalysis.marketResearch = marketResearch;
 
+  const localLocationRaw = (sanitized.localLocation && typeof sanitized.localLocation === "object"
+    ? sanitized.localLocation
+    : {}) as Record<string, unknown>;
+
   return {
     ...sanitized,
     target,
     competitor,
     keywords: normalizeKeywords(sanitized.keywords).slice(0, 15),
     contentGaps: normalizeContentGaps(sanitized.contentGaps, {
-      city: str(
-        (sanitized.localLocation as { city?: string } | undefined)?.city,
-        "Kolkata"
-      ),
+      city: str(localLocationRaw.city, KOLKATA_CITY),
       brand: brandHint,
     }),
     serpFeatures: normalizeSerpFeatures(sanitized.serpFeatures),
@@ -873,7 +951,7 @@ export function normalizeAnalysisResult(raw: unknown, fallbackTarget = "example.
       niche: nicheHint,
       brand: brandHint,
     }),
-    rankingBlueprint: sanitized.rankingBlueprint || sanitized.localLocation?.rankingBlueprint,
+    rankingBlueprint: sanitized.rankingBlueprint || localLocationRaw.rankingBlueprint,
     dataSource: str(sanitized.dataSource, "simulated"),
     estimatedCost: sanitized.estimatedCost as AnalysisResult["estimatedCost"],
     pageSpeed: sanitized.pageSpeed,

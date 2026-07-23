@@ -9,7 +9,8 @@ export function formatMarkdownToHtml(markdown?: string | null): string {
   html = html
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 
   // Bold
   html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");

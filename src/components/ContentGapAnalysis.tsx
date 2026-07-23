@@ -3,6 +3,7 @@ import type { ContentGap } from "../types";
 import { normalizeContentGaps } from "../lib/normalizeAnalysis";
 import { formulaLabel, trafficLabel } from "../lib/contentGapTitles";
 import type { GapTitleIntent } from "../lib/contentGapTitles";
+import { KOLKATA_CITY } from "../lib/geo";
 import {
   AlertCircle,
   Zap,
@@ -47,7 +48,7 @@ export default function ContentGapAnalysis({
   gaps: rawGaps,
   targetDomain,
   competitorDomain = "Competitor",
-  city = "Kolkata",
+  city = KOLKATA_CITY,
   brandName,
   onSelectTopic,
 }: ContentGapAnalysisProps) {

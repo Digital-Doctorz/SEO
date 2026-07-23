@@ -48,6 +48,15 @@ export interface BlogAnalysisContext {
   audience?: string;
   strengths?: string[];
   weaknesses?: string[];
+  backlinkSummary?: {
+    totalBacklinks?: number;
+    avgDomainRating?: number;
+    avgRelevance?: number;
+    avgTrafficPotential?: number;
+    topPlatforms?: string[];
+    spamSummary?: string;
+    recommendation?: string;
+  };
   /** Local SEO location from analyze (city, NAP, service areas) */
   localLocation?: {
     city?: string;

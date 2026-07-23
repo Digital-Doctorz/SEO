@@ -28,7 +28,9 @@ export interface OptimizedGapTitle {
   city: string;
 }
 
-const DEFAULT_CITY = "Kolkata";
+import { KOLKATA_CITY } from "./geo";
+
+const DEFAULT_CITY = KOLKATA_CITY;
 const YEAR = new Date().getFullYear();
 
 const WEAK_TITLE_RE =
