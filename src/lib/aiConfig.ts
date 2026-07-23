@@ -287,6 +287,42 @@ export function loadAiConfigFromStorage(): AiProviderConfig {
   }
 }
 
+export function loadAllAiConfigsFromStorage(): AiProviderConfig[] {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return [];
+  }
+  const allConfigs: AiProviderConfig[] = [];
+  try {
+    for (const provider of PROVIDERS) {
+      let apiKey =
+        localStorage.getItem(`seo_api_key_${provider}`) ||
+        (provider === "gemini" ? localStorage.getItem("seo_api_key") : "");
+      
+      if (!apiKey) continue;
+
+      const defaults = AI_PROVIDER_DEFAULTS[provider];
+      let apiModel = localStorage.getItem(`seo_api_model_${provider}`) || defaults.model;
+      let apiEndpoint = localStorage.getItem(`seo_api_endpoint_${provider}`) || defaults.endpoint;
+      
+      let customFormat = "openai";
+      if (provider === "custom") {
+        customFormat = localStorage.getItem("seo_api_custom_format") || "openai";
+      }
+
+      allConfigs.push(normalizeAiConfig({
+        apiKey,
+        provider,
+        apiModel,
+        apiEndpoint,
+        customFormat: normalizeCustomFormat(customFormat),
+      }));
+    }
+    return allConfigs.filter(c => c.apiKey && isValidApiKeyShape(c.apiKey));
+  } catch {
+    return [];
+  }
+}
+
 export function saveAiConfigToStorage(config: AiProviderConfig): AiProviderConfig {
   const normalized = normalizeAiConfig(config);
   if (typeof window === "undefined" || !window.localStorage) return normalized;

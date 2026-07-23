@@ -2843,6 +2843,27 @@ async function callAI(
  throw new Error(`Unknown provider: ${provider}`);
 }
 
+async function callAiWithFallback(
+ configs: ProviderConfig[],
+ prompt: string,
+ systemPrompt?: string,
+ options?: { responseMimeType?: string; temperature?: number; tools?: any[]; maxOutputTokens?: number }
+): Promise<any> {
+ if (!configs || configs.length === 0) {
+  throw new Error("No valid AI provider configurations available.");
+ }
+ let lastErr: any;
+ for (const config of configs) {
+  try {
+   return await callAI(config, prompt, systemPrompt, options);
+  } catch (err: any) {
+   console.warn(`[AI] Provider ${config.provider} failed. Error:`, err?.message || err);
+   lastErr = err;
+  }
+ }
+ throw lastErr;
+}
+
 /** OpenAI / Anthropic / Gemini / NVIDIA-compatible custom endpoints (user's own key + base URL). */
 async function callCustomProvider(
  apiKey: string,
@@ -3090,6 +3111,18 @@ function getProviderConfig(req: { body?: { aiConfig?: Partial<ProviderConfig> & 
   apiModel,
   customFormat,
  };
+}
+
+function getFallbackConfigs(req: any): ProviderConfig[] {
+ const fallbacks = req.body?.fallbackConfigs;
+ if (!Array.isArray(fallbacks)) return [];
+ const parsed: ProviderConfig[] = [];
+ for (const f of fallbacks) {
+  // Use a pseudo-request to parse each fallback config through the same normalization logic
+  const p = getProviderConfig({ body: { aiConfig: f } });
+  if (p) parsed.push(p);
+ }
+ return parsed;
 }
 
 /** Strip secrets from error strings before logging or returning to clients. */
@@ -6567,6 +6600,8 @@ app.post("/api/generate-blog", async (req, res) => {
  (Date.now() ^ Math.floor(Math.random() * 1e9));
  const strategy = pickStrategy(seed);
  const providerConfig = getProviderConfig(req);
+ const fallbackConfigs = getFallbackConfigs(req);
+ const activeConfigs = [providerConfig, ...fallbackConfigs].filter(Boolean) as ProviderConfig[];
  const isEnhance =
  Boolean(enhanceMode) ||
  (typeof previousContent === "string" && previousContent.trim().length > 200);
@@ -6827,7 +6862,7 @@ ${analysisBlock}
 
 Rules: Stay on-niche for ${brandName}. No article body. Escape any quotes inside strings. ASCII only.`;
   const researchResult = await withTimeout(
-   callAI(providerConfig, researchPrompt, buildBlogResearchSystemPrompt(), {
+   callAiWithFallback(activeConfigs, researchPrompt, buildBlogResearchSystemPrompt(), {
     responseMimeType: "application/json",
     temperature: 0.3,
     maxOutputTokens: 2500,
@@ -6951,7 +6986,7 @@ OUTPUT: ONLY the full article as Markdown. Start with # Title. No JSON. No pream
 
  try {
   const writeResult = await withTimeout(
-   callAI(providerConfig, masterWritePrompt, masterWriteSystem, {
+   callAiWithFallback(activeConfigs, masterWritePrompt, masterWriteSystem, {
     temperature: isEnhance ? 0.55 : 0.5,
     maxOutputTokens: 8192,
    }),
@@ -7053,7 +7088,7 @@ Include 6-8 article.sections. Place 2-3 [IMAGE: scene. Alt Text: \\"alt\\"] insi
 Return ONLY raw JSON. No markdown fences.`;
 
    const strictResult = await withTimeout(
-    callAI(providerConfig, strictUserPrompt, STRICT_SEO_ARTICLE_SYSTEM_PROMPT, {
+    callAiWithFallback(activeConfigs, strictUserPrompt, STRICT_SEO_ARTICLE_SYSTEM_PROMPT, {
      responseMimeType: "application/json",
      temperature: 0.45,
      maxOutputTokens: 8192,
@@ -7169,7 +7204,7 @@ Prior thin draft excerpt (do not copy structure weaknesses — upgrade depth):
 Mandatory: Key Takeaways, 6-8 H2s (≥220 words each), comparison table, common mistakes, 4-6 FAQ, Conclusion+CTA, 2-3 IMAGE tags, 1 CHART tag.
 Return ONLY full Markdown starting with # Title. No JSON. No fences.`;
    const repairResult = await withTimeout(
-    callAI(providerConfig, repairPrompt, repairSystem, {
+    callAiWithFallback(activeConfigs, repairPrompt, repairSystem, {
      temperature: 0.5,
      maxOutputTokens: 8192,
     }),

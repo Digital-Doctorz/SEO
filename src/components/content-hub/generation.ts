@@ -1,7 +1,7 @@
 import type { AiProviderConfig, BlogPost, SocialPost } from "../../types";
 import { postApi } from "../../lib/api";
 import { sanitizeDeep, sanitizeText } from "../../lib/text";
-import { resolveAiConfig } from "../../lib/aiConfig";
+import { resolveAiConfig, loadAllAiConfigsFromStorage } from "../../lib/aiConfig";
 
 export interface MetaSnippet {
   type: string;
@@ -197,6 +197,7 @@ export async function generateBlogPost(params: {
     competitorUrl: params.competitorUrl || "",
     // Always send the key currently saved for the active provider (OpenRouter/Gemini/Custom)
     aiConfig: resolveAiConfig(params.aiConfig),
+    fallbackConfigs: loadAllAiConfigsFromStorage(),
     variationSeed,
     regenerateToken: variationSeed,
     previousTitle: params.previousTitle || "",
