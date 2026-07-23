@@ -26,7 +26,7 @@ import BlogLinksPanel from "./content-hub/BlogLinksPanel";
 import BlogTechnicalPanel from "./content-hub/BlogTechnicalPanel";
 import ErrorBoundary from "./ErrorBoundary";
 import ToastHost, { makeToast, type AppToast } from "./ToastHost";
-import { resolveAiConfig } from "../lib/aiConfig";
+import { resolveAiConfig, loadAllAiConfigsFromStorage } from "../lib/aiConfig";
 
 export type { LinkSuggestion } from "./content-hub/types";
 
@@ -117,6 +117,8 @@ export default function ContentHub({
     [blogPost?.content, blogKeyword, secondaryKeywords]
   );
 
+  const DRAFT_KEY = "seo_blog_draft_autosave";
+
   useEffect(() => {
     try {
       const saved = localStorage.getItem("seo_saved_articles");
@@ -129,7 +131,64 @@ export default function ContentHub({
     } catch (e) {
       console.error("Failed to load saved articles from localStorage:", e);
     }
+    // Restore in-progress blog form + last draft (hard disk via browser storage)
+    try {
+      const draftRaw = localStorage.getItem(DRAFT_KEY);
+      if (draftRaw) {
+        const draft = JSON.parse(draftRaw);
+        if (draft && typeof draft === "object") {
+          if (typeof draft.blogTopic === "string" && draft.blogTopic && !autonomousBlog?.title) {
+            setBlogTopic(draft.blogTopic);
+          }
+          if (typeof draft.blogKeyword === "string" && draft.blogKeyword && !autonomousBlog?.slugSuggestion) {
+            setBlogKeyword(draft.blogKeyword);
+          }
+          if (Array.isArray(draft.secondaryKeywords)) setSecondaryKeywords(draft.secondaryKeywords);
+          if (typeof draft.wordCount === "number") setWordCount(draft.wordCount);
+          if (typeof draft.targetAudience === "string" && draft.targetAudience) setTargetAudience(draft.targetAudience);
+          if (typeof draft.toneOfVoice === "string" && draft.toneOfVoice) setToneOfVoice(draft.toneOfVoice);
+          if (typeof draft.competitorForBlog === "string") setCompetitorForBlog(draft.competitorForBlog);
+          if (draft.blogPost?.content && !autonomousBlog) {
+            setBlogPost(draft.blogPost);
+            setShowConfigForm(false);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load blog draft auto-save:", e);
+    }
   }, []);
+
+  // Live auto-save of blog config + current draft to browser storage
+  useEffect(() => {
+    try {
+      const payload = {
+        blogTopic,
+        blogKeyword,
+        secondaryKeywords,
+        wordCount,
+        targetAudience,
+        toneOfVoice,
+        competitorForBlog,
+        blogPost,
+        updatedAt: Date.now(),
+        targetDomain,
+      };
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(payload));
+    } catch (e) {
+      console.warn("Blog draft auto-save failed (storage full?):", e);
+    }
+  }, [
+    blogTopic,
+    blogKeyword,
+    secondaryKeywords,
+    wordCount,
+    targetAudience,
+    toneOfVoice,
+    competitorForBlog,
+    blogPost,
+    targetDomain,
+  ]);
 
   const saveArticlesToStorage = (updatedList: SavedArticle[]) => {
     try {
@@ -638,16 +697,19 @@ export default function ContentHub({
     }, 14000);
 
     try {
-      // Require live AI key for full articles (postApi also injects storage key)
+      // Require any saved AI key (active or other providers for auto-fallback)
       const liveKey = resolveAiConfig(aiConfig) || resolveAiConfig(null);
-      if (!liveKey?.apiKey) {
+      const anyKey =
+        liveKey?.apiKey ||
+        loadAllAiConfigsFromStorage().some((c) => c.apiKey && c.apiKey.length >= 12);
+      if (!anyKey) {
         window.clearInterval(stageTimer);
         setIsBlogGenerating(false);
         setGenerationStage(null);
         setGenerationError(
-          "Add your AI API key in Settings (OpenRouter or Gemini) to write live blogs from analysis."
+          "Add your AI API key in Settings (OpenRouter, Gemini, NVIDIA, or Custom) to write live blogs from analysis."
         );
-        pushToast("warning", "API key required", "Open Settings and save your OpenRouter or Gemini key.");
+        pushToast("warning", "API key required", "Open Settings and save at least one provider key.");
         return;
       }
 

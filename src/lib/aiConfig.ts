@@ -293,31 +293,60 @@ export function loadAllAiConfigsFromStorage(): AiProviderConfig[] {
   }
   const allConfigs: AiProviderConfig[] = [];
   try {
-    for (const provider of PROVIDERS) {
-      let apiKey =
+    const dfsLogin = localStorage.getItem("seo_dataforseo_login") || undefined;
+    const dfsPassword = localStorage.getItem("seo_dataforseo_password") || undefined;
+    // Active provider first so fallback order prefers the user's current selection
+    const activeProvider = normalizeProvider(
+      localStorage.getItem("seo_api_provider") || "gemini"
+    );
+    const ordered = [
+      activeProvider,
+      ...PROVIDERS.filter((p) => p !== activeProvider),
+    ];
+
+    for (const provider of ordered) {
+      const apiKey =
         localStorage.getItem(`seo_api_key_${provider}`) ||
-        (provider === "gemini" ? localStorage.getItem("seo_api_key") : "");
-      
-      if (!apiKey) continue;
+        (provider === "gemini" || provider === activeProvider
+          ? localStorage.getItem("seo_api_key")
+          : "") ||
+        "";
+
+      if (!apiKey || !isValidApiKeyShape(apiKey)) continue;
 
       const defaults = AI_PROVIDER_DEFAULTS[provider];
-      let apiModel = localStorage.getItem(`seo_api_model_${provider}`) || defaults.model;
-      let apiEndpoint = localStorage.getItem(`seo_api_endpoint_${provider}`) || defaults.endpoint;
-      
+      const apiModel =
+        localStorage.getItem(`seo_api_model_${provider}`) || defaults.model;
+      const apiEndpoint =
+        localStorage.getItem(`seo_api_endpoint_${provider}`) || defaults.endpoint;
+
       let customFormat = "openai";
       if (provider === "custom") {
         customFormat = localStorage.getItem("seo_api_custom_format") || "openai";
+      } else if (provider === "nvidia") {
+        customFormat = "nvidia";
       }
 
-      allConfigs.push(normalizeAiConfig({
-        apiKey,
-        provider,
-        apiModel,
-        apiEndpoint,
-        customFormat: normalizeCustomFormat(customFormat),
-      }));
+      allConfigs.push(
+        normalizeAiConfig({
+          apiKey,
+          provider,
+          apiModel,
+          apiEndpoint,
+          customFormat: normalizeCustomFormat(customFormat),
+          dataforseoLogin: dfsLogin,
+          dataforseoPassword: dfsPassword,
+        })
+      );
     }
-    return allConfigs.filter(c => c.apiKey && isValidApiKeyShape(c.apiKey));
+    // Dedupe by key prefix + provider
+    const seen = new Set<string>();
+    return allConfigs.filter((c) => {
+      const fp = `${c.provider}::${c.apiKey.slice(0, 12)}`;
+      if (seen.has(fp)) return false;
+      seen.add(fp);
+      return true;
+    });
   } catch {
     return [];
   }

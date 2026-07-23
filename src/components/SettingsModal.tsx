@@ -318,8 +318,11 @@ export default function SettingsModal({ open, onClose, onSave, currentConfig }: 
                   <strong className="text-slate-800 block mb-1">Bring your own key (required)</strong>
                   Choose <strong>Gemini</strong>, <strong>OpenRouter</strong>, <strong>NVIDIA</strong> (NIM), or{" "}
                   <strong>Custom</strong> (OpenAI / Anthropic / NVIDIA / proxy). Paste that provider&apos;s API key
-                  (and Base URL when needed), then <strong>Save</strong>. The active key is sent with every analysis
-                  and blog request — never stored on our server.
+                  (and Base URL when needed), then <strong>Save</strong>. Keys stay in your browser only.
+                  <span className="block mt-1.5 text-slate-500">
+                    <strong className="text-slate-700">Auto-fallback:</strong> save keys for multiple providers —
+                    if the active one fails (quota, timeout, invalid), the engine tries your other saved keys automatically.
+                  </span>
                 </div>
               </div>
 

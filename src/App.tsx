@@ -15,6 +15,7 @@ import { normalizeAnalysisResult } from "./lib/normalizeAnalysis";
 import { detectLocationFromDomain, KOLKATA_CITY } from "./lib/geo";
 import {
   loadAiConfigFromStorage,
+  loadAllAiConfigsFromStorage,
   saveAiConfigToStorage,
   resolveAiConfig,
   AI_PROVIDER_DEFAULTS,
@@ -37,6 +38,119 @@ const NAV_ITEMS: Array<{ id: AppTab; label: string; icon: typeof BarChart2 }> = 
   { id: "hub", label: "AI Content Hub", icon: Sparkles },
 ];
 
+/** Browser auto-save keys — analysis + form restore on reload */
+const LS_ANALYSIS = "seo_last_analysis";
+const LS_FORM = "seo_form_state";
+const LS_ANALYSIS_META = "seo_last_analysis_meta";
+
+function persistAnalysisToDisk(result: AnalysisResult | null, target: string, competitor: string) {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    if (!result) {
+      localStorage.removeItem(LS_ANALYSIS);
+      localStorage.removeItem(LS_ANALYSIS_META);
+      return;
+    }
+    const payload = JSON.stringify(result);
+    localStorage.setItem(LS_ANALYSIS, payload);
+    localStorage.setItem(
+      LS_ANALYSIS_META,
+      JSON.stringify({
+        savedAt: Date.now(),
+        target,
+        competitor,
+        domain: result.target?.domain || target,
+        dataSource: (result as AnalysisResult & { dataSource?: string }).dataSource || "unknown",
+      })
+    );
+  } catch (e) {
+    // Quota exceeded — try a slimmer snapshot so something still restores
+    console.warn("[Auto-save] Full analysis too large; saving compact snapshot", e);
+    try {
+      const slim = {
+        target: result?.target,
+        competitor: result?.competitor,
+        keywords: (result?.keywords || []).slice(0, 20),
+        contentGaps: (result?.contentGaps || []).slice(0, 12),
+        serpFeatures: (result?.serpFeatures || []).slice(0, 10),
+        backlinkSources: (result?.backlinkSources || []).slice(0, 20),
+        discoveredCompetitors: (result?.discoveredCompetitors || []).slice(0, 12),
+        targetAnalysis: result?.targetAnalysis,
+        marketResearch: result?.marketResearch,
+        rankingBlueprint: result?.rankingBlueprint,
+        localLocation: result?.localLocation,
+        siteProfile: result?.siteProfile
+          ? {
+              brand: (result.siteProfile as { brand?: string }).brand,
+              niche: (result.siteProfile as { niche?: string }).niche,
+              city: (result.siteProfile as { city?: string }).city,
+            }
+          : undefined,
+        dataSource: (result as AnalysisResult & { dataSource?: string })?.dataSource,
+        isFallback: (result as AnalysisResult & { isFallback?: boolean })?.isFallback,
+      };
+      localStorage.setItem(LS_ANALYSIS, JSON.stringify(slim));
+      localStorage.setItem(
+        LS_ANALYSIS_META,
+        JSON.stringify({ savedAt: Date.now(), target, competitor, compact: true })
+      );
+    } catch {
+      /* ignore secondary failure */
+    }
+  }
+}
+
+function loadAnalysisFromDisk(): {
+  result: AnalysisResult | null;
+  target: string;
+  competitor: string;
+  activeTab?: AppTab;
+} {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return { result: null, target: "", competitor: "" };
+  }
+  try {
+    let form: { targetUrl?: string; competitorUrl?: string; activeTab?: AppTab } = {};
+    try {
+      form = JSON.parse(localStorage.getItem(LS_FORM) || "{}");
+    } catch {
+      form = {};
+    }
+    const raw = localStorage.getItem(LS_ANALYSIS);
+    if (!raw) {
+      return {
+        result: null,
+        target: form.targetUrl || "",
+        competitor: form.competitorUrl || "",
+        activeTab: form.activeTab,
+      };
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || !parsed.target) {
+      return {
+        result: null,
+        target: form.targetUrl || "",
+        competitor: form.competitorUrl || "",
+        activeTab: form.activeTab,
+      };
+    }
+    const domain =
+      parsed.target?.domain ||
+      form.targetUrl ||
+      "restored-site.com";
+    const result = normalizeAnalysisResult(parsed, domain);
+    return {
+      result,
+      target: form.targetUrl || domain,
+      competitor: form.competitorUrl || "",
+      activeTab: form.activeTab,
+    };
+  } catch (e) {
+    console.warn("[Auto-save] Failed to restore analysis", e);
+    return { result: null, target: "", competitor: "" };
+  }
+}
+
 export default function App() {
   // Domain Inputs
   const [targetUrl, setTargetUrl] = useState("");
@@ -48,6 +162,7 @@ export default function App() {
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<ErrorInfo>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [restoredFromDisk, setRestoredFromDisk] = useState(false);
 
   // Settings / API Key state (persisted to localStorage — provider-specific keys)
   const STATIC_DEFAULT_CONFIG: AiProviderConfig = normalizeAiConfig({
@@ -64,7 +179,45 @@ export default function App() {
     const loaded = loadAiConfigFromStorage();
     setAiConfig(loaded);
     setAiConfigLoaded(true);
+    // Restore last analysis + form from browser storage (auto-save)
+    const restored = loadAnalysisFromDisk();
+    if (restored.target) setTargetUrl(restored.target);
+    if (restored.competitor) setCompetitorUrl(restored.competitor);
+    if (restored.result) {
+      setAnalysisResult(restored.result);
+      setRestoredFromDisk(true);
+      if (restored.activeTab && NAV_ITEMS.some((n) => n.id === restored.activeTab)) {
+        setActiveTab(restored.activeTab!);
+      }
+    } else if (restored.activeTab && NAV_ITEMS.some((n) => n.id === restored.activeTab)) {
+      setActiveTab(restored.activeTab!);
+    }
   }, []);
+
+  // Persist form fields live as user types
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.localStorage) return;
+    try {
+      localStorage.setItem(
+        LS_FORM,
+        JSON.stringify({
+          targetUrl,
+          competitorUrl,
+          activeTab,
+          updatedAt: Date.now(),
+        })
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [targetUrl, competitorUrl, activeTab]);
+
+  // Persist full analysis whenever it changes (real-time auto-save)
+  useEffect(() => {
+    if (!aiConfigLoaded) return;
+    persistAnalysisToDisk(analysisResult, targetUrl, competitorUrl);
+  }, [analysisResult, targetUrl, competitorUrl, aiConfigLoaded]);
+
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
 
   const handleSaveAiConfig = (config: AiProviderConfig) => {
@@ -97,16 +250,20 @@ export default function App() {
       // Always resolve latest key from storage so OpenRouter/Gemini match what user saved
       const geo = detectLocationFromDomain(target);
       const liveConfig = resolveAiConfig(aiConfig) || resolveAiConfig(null);
-      if (!liveConfig?.apiKey) {
+      // Allow analysis if active key OR any other provider key was saved (auto-fallback)
+      const allKeys = loadAllAiConfigsFromStorage();
+      const primaryOrFallback = liveConfig || allKeys[0];
+      if (!primaryOrFallback?.apiKey) {
         setErrorMsg({
-          message: "Add your AI API key in Settings (OpenRouter or Gemini) to run live analysis and blog generation. Demo mode is disabled for full real-time data.",
+          message: "Add your AI API key in Settings (OpenRouter, Gemini, NVIDIA, or Custom) to run live analysis and blog generation.",
           severity: "warning",
         });
         setSettingsModalOpen(true);
         return;
       }
+      const effectiveConfig = liveConfig || primaryOrFallback;
       const configWithGeo: AiProviderConfig = {
-        ...liveConfig,
+        ...effectiveConfig,
         locationCode: geo.locationCode,
         languageCode: geo.languageCode,
       };
@@ -177,9 +334,14 @@ export default function App() {
 
       if (meta.error) throw new Error(String(meta.error));
       if (meta.errorMsg) setErrorMsg({ message: String(meta.errorMsg), severity: "warning" });
-      else setErrorMsg(null);
+      else if ((meta as any).dfsAuthFailed) {
+        /* already set above */
+      } else setErrorMsg(null);
 
       setAnalysisResult(safeResult);
+      setRestoredFromDisk(false);
+      // Immediate disk write so a crash mid-session still keeps results
+      persistAnalysisToDisk(safeResult, target, competitor);
       setActiveTab("overview");
     } catch (err: unknown) {
       console.error("Analysis request failed:", err);
@@ -623,6 +785,23 @@ export default function App() {
 
                 {/* Component Workspace Switchboard */}
                 <div className="min-h-[500px]">
+                  {restoredFromDisk && (
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
+                      <span className="font-semibold">
+                        Restored last analysis from browser auto-save. Re-run analysis for fresh live data.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRestoredFromDisk(false);
+                          if (targetUrl.trim()) runAnalysis(targetUrl, competitorUrl);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 font-bold text-amber-900 transition-all cursor-pointer"
+                      >
+                        Refresh live
+                      </button>
+                    </div>
+                  )}
                   {/* Data source indicator */}
                   {analysisResult.dataSource && (
                     <div className="mb-3 flex items-center gap-2 text-xs">

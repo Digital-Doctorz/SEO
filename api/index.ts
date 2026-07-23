@@ -2853,15 +2853,35 @@ async function callAiWithFallback(
   throw new Error("No valid AI provider configurations available.");
  }
  let lastErr: any;
- for (const config of configs) {
+ const tried: string[] = [];
+ for (let i = 0; i < configs.length; i++) {
+  const config = configs[i];
+  tried.push(`${config.provider}/${config.apiModel || "default"}`);
   try {
-   return await callAI(config, prompt, systemPrompt, options);
+   const result = await callAI(config, prompt, systemPrompt, options);
+   if (i > 0) {
+    console.info(
+     `[AI] Auto-fallback succeeded with ${config.provider} after trying: ${tried.slice(0, i).join(" → ")}`
+    );
+   }
+   // Tag result so callers can log which provider won (non-enumerable to avoid JSON bloat)
+   if (result && typeof result === "object") {
+    (result as any)._usedProvider = config.provider;
+    (result as any)._usedModel = config.apiModel;
+    (result as any)._providersTried = tried;
+   }
+   return result;
   } catch (err: any) {
-   console.warn(`[AI] Provider ${config.provider} failed. Error:`, err?.message || err);
+   const msg = redactSecrets(String(err?.message || err));
+   console.warn(`[AI] Provider ${config.provider} failed (${i + 1}/${configs.length}):`, msg);
    lastErr = err;
+   // Continue to next saved key
   }
  }
- throw lastErr;
+ const errMsg = lastErr instanceof Error ? lastErr.message : String(lastErr || "All AI providers failed");
+ throw new Error(
+  `All AI providers failed (${tried.join(" → ")}): ${redactSecrets(errMsg)}`
+ );
 }
 
 /** OpenAI / Anthropic / Gemini / NVIDIA-compatible custom endpoints (user's own key + base URL). */
@@ -3123,6 +3143,24 @@ function getFallbackConfigs(req: any): ProviderConfig[] {
   if (p) parsed.push(p);
  }
  return parsed;
+}
+
+/**
+ * Primary + fallback provider configs, deduped by key fingerprint.
+ * Order: user's active Settings provider first, then every other saved key.
+ */
+function getActiveAiConfigs(req: any): ProviderConfig[] {
+  const primary = getProviderConfig(req);
+  const fallbacks = getFallbackConfigs(req);
+  const seen = new Set<string>();
+  const out: ProviderConfig[] = [];
+  for (const c of [primary, ...fallbacks].filter(Boolean) as ProviderConfig[]) {
+    const fp = `${c.provider}::${(c.apiKey || "").slice(0, 12)}::${c.apiModel || ""}`;
+    if (seen.has(fp)) continue;
+    seen.add(fp);
+    out.push(c);
+  }
+  return out;
 }
 
 /** Strip secrets from error strings before logging or returning to clients. */
@@ -6045,6 +6083,8 @@ app.post("/api/analyze", async (req, res) => {
 
   // ΓöÇΓöÇ DataForSEO real data enrichment (BYOK from user or server-side env) ΓöÇΓöÇ
   let dfseoData: DataForSeoBundle | null = null;
+  let dfsAuthFailed = false;
+  let dfsAuthHint = "";
   const aiCfg = req.body.aiConfig as { dataforseoLogin?: string; dataforseoPassword?: string; locationCode?: number; languageCode?: string } | undefined;
   const byokCreds: DfsCredentials | undefined =
     aiCfg?.dataforseoLogin && aiCfg?.dataforseoPassword
@@ -6066,12 +6106,22 @@ app.post("/api/analyze", async (req, res) => {
       );
        console.debug(`[DataForSEO] Fetched real data for ${domain}: ${dfseoData.rawSerpItems.length} SERP items, ${dfseoData.keywordLandscape.length} keywords, ${dfseoData.backlinks.total_backlinks} backlinks`);
     } catch (err: unknown) {
-      console.error("[DataForSEO] Bundle fetch failed, falling back to AI/simulated data:", err instanceof Error ? err.message : err);
+      const dfsMsg = err instanceof Error ? err.message : String(err);
+      console.error("[DataForSEO] Bundle fetch failed, falling back to AI/simulated data:", dfsMsg);
       dfseoData = null;
+      if (/401|403|unauthorized|forbidden|invalid.*credential|authentication/i.test(dfsMsg)) {
+        dfsAuthFailed = true;
+        dfsAuthHint =
+          "DataForSEO credentials rejected. Update login/password in Settings for live search volumes and backlinks.";
+      } else if (/timeout/i.test(dfsMsg)) {
+        dfsAuthHint = "DataForSEO timed out. Showing AI/crawl data — retry for live SEO metrics.";
+      }
     }
   }
 
-  const providerConfig = getProviderConfig(req);
+  // Multi-provider: primary Settings key + any other saved keys (auto-fallback)
+  const activeConfigs = getActiveAiConfigs(req);
+  const providerConfig = activeConfigs[0] || null;
   const requireAi = Boolean(req.body?.requireAi);
 
   // ΓöÇΓöÇ No AI key AND no DataForSEO ΓåÆ demo fallback (blocked when client requires live AI) ΓöÇΓöÇ
@@ -6083,6 +6133,8 @@ app.post("/api/analyze", async (req, res) => {
         isFallback: true,
         needsApiKey: true,
         dataSource: "simulated",
+        dfsAuthFailed: dfsAuthFailed || undefined,
+        dfsAuthHint: dfsAuthHint || undefined,
         fallbackReason:
           "Live analysis requires your AI API key. Open Settings, add OpenRouter or Gemini, Save, then run analysis again.",
       })
@@ -6201,14 +6253,14 @@ CRITICAL for recommendedTopic: catchy high-CTR H1s, keyword in first 40 chars, l
 discoveredCompetitors: 8-12 real industry peer domains (no fake TLDs), nicheSimilarity 1-100, threatLevel High|Medium|Low.
 ASCII only. JSON only.`;
 
-        // Use the user's configured model (Settings) — fallbacks handled inside callAI
+        // User's Settings model first, then other saved provider keys
         const result = await withTimeout(
-          callAI(providerConfig, prompt, "Valid compact JSON only. No fences.", {
+          callAiWithFallback(activeConfigs, prompt, "Valid compact JSON only. No fences.", {
             responseMimeType: "application/json",
             temperature: 0.15,
             maxOutputTokens: 2500,
           }),
-          25000,
+          45000,
           "AI enrichment"
         );
         const enrichRaw = extractAiText(result);
@@ -6299,15 +6351,22 @@ ASCII only. JSON only.`;
         enriched.isFallback = false;
         enriched.aiProvider = providerConfig.provider;
         enriched.aiModel = providerConfig.apiModel;
+        enriched.aiProvidersTried = activeConfigs.map((c) => c.provider);
       } catch (enrichErr) {
         console.warn("[Analyze] AI enrichment failed:", enrichErr);
         enriched.contentGaps = normalizeContentGaps(base.contentGaps);
-        enriched.aiWarning = "DataForSEO data shown; AI enrichment failed (retry or check quota).";
+        enriched.aiWarning = "DataForSEO data shown; AI enrichment failed (retry or check quota / other provider keys).";
       }
     } else {
       enriched.contentGaps = normalizeContentGaps(base.contentGaps || enriched.contentGaps);
     }
 
+    if (dfsAuthFailed) {
+      (enriched as any).dfsAuthFailed = true;
+      (enriched as any).dfsAuthHint = dfsAuthHint;
+    } else if (dfsAuthHint) {
+      (enriched as any).dfsAuthHint = dfsAuthHint;
+    }
     return res.json(sanitizeDeep(enriched));
   }
 
@@ -6320,6 +6379,8 @@ ASCII only. JSON only.`;
         isFallback: true,
         needsApiKey: true,
         dataSource: "crawl-only",
+        dfsAuthFailed: dfsAuthFailed || undefined,
+        dfsAuthHint: dfsAuthHint || undefined,
         fallbackReason: "Add your AI API key in Settings for full live keyword/gap/competitor analysis.",
       })
     );
@@ -6378,10 +6439,10 @@ Return ONLY valid compact JSON (no markdown fences) with:
 - backlinkOpportunities: 3 items
 Keep numbers realistic. ASCII only. No off-topic keywords.`;
 
-    // Use the user's Settings model (Gemini / OpenRouter) for real-time analysis
+    // Settings provider first, then auto-fallback across other saved API keys
     const result = await withTimeout(
-      callAI(
-        providerConfig,
+      callAiWithFallback(
+        activeConfigs,
         prompt,
         "You are an expert LOCAL SEO analyst. Output ONLY valid JSON. No markdown fences. Prioritize location, Map Pack, geo keywords, and local competitors. Escape quotes inside strings. Stay on-niche for the crawled site.",
         {
@@ -6390,7 +6451,7 @@ Keep numbers realistic. ASCII only. No off-topic keywords.`;
           maxOutputTokens: 6000,
         }
       ),
-      45000,
+      90000,
       "SEO analysis"
     );
     const rawAi = extractAiText(result);
@@ -6502,8 +6563,11 @@ Keep numbers realistic. ASCII only. No off-topic keywords.`;
         isFallback: false,
         aiProvider: providerConfig.provider,
         aiModel: providerConfig.apiModel,
+        aiProvidersTried: activeConfigs.map((c) => c.provider),
         liveCrawl: Boolean(base.siteProfile?.source === "live-crawl" || base.siteProfile?.scrapedPages),
         seoFocus: "local",
+        dfsAuthFailed: dfsAuthFailed || undefined,
+        dfsAuthHint: dfsAuthHint || undefined,
       })
     );
   } catch (err: unknown) {
@@ -6516,13 +6580,16 @@ Keep numbers realistic. ASCII only. No off-topic keywords.`;
         contentGaps: normalizeContentGaps(base.contentGaps),
         isFallback: true,
         dataSource: "crawl+ai-failed",
-        aiProvider: providerConfig.provider,
-        aiModel: providerConfig.apiModel,
+        aiProvider: providerConfig?.provider,
+        aiModel: providerConfig?.apiModel,
+        aiProvidersTried: activeConfigs.map((c) => c.provider),
+        dfsAuthFailed: dfsAuthFailed || undefined,
+        dfsAuthHint: dfsAuthHint || undefined,
         errorMsg: message.includes("timed out")
-          ? "Live AI timed out. Showing live-crawl baseline — retry analysis or switch model in Settings."
+          ? "Live AI timed out on all providers. Showing live-crawl baseline — retry or add another key in Settings."
           : message.includes("quota") || message.includes("429")
-            ? "AI quota/rate limit hit. Showing crawl baseline. Wait, switch model, or add OpenRouter credits, then retry."
-            : `AI analysis failed: ${message}. Showing live-crawl baseline. Fix key/model in Settings and retry.`,
+            ? "AI quota/rate limit hit on all keys. Showing crawl baseline. Wait, switch model, or add credits, then retry."
+            : `AI analysis failed on all providers: ${message}. Showing live-crawl baseline. Fix keys in Settings and retry.`,
       })
     );
   }
@@ -6599,9 +6666,8 @@ app.post("/api/generate-blog", async (req, res) => {
  Number(regenerateToken) ||
  (Date.now() ^ Math.floor(Math.random() * 1e9));
  const strategy = pickStrategy(seed);
- const providerConfig = getProviderConfig(req);
- const fallbackConfigs = getFallbackConfigs(req);
- const activeConfigs = [providerConfig, ...fallbackConfigs].filter(Boolean) as ProviderConfig[];
+ const activeConfigs = getActiveAiConfigs(req);
+ const providerConfig = activeConfigs[0] || null;
  const isEnhance =
  Boolean(enhanceMode) ||
  (typeof previousContent === "string" && previousContent.trim().length > 200);
@@ -6648,8 +6714,8 @@ app.post("/api/generate-blog", async (req, res) => {
   analysisAudience ||
   `buyers researching ${siteBrief?.niche || analysisNiche || "solutions"} related to ${brandName}`;
 
- // No API key → offline draft only (client should prompt Settings for live AI blogs)
- if (!providerConfig) {
+ // No API key on any saved provider → offline draft only
+ if (!activeConfigs.length || !providerConfig) {
  const unique = buildUniqueArticle({
  domain,
  kw,
@@ -6672,13 +6738,13 @@ app.post("/api/generate-blog", async (req, res) => {
  masterPromptApplied: true,
  aiGenerated: false,
  fallbackReason:
-  "Live AI blog writing requires your API key. Open Settings → add OpenRouter or Gemini → Save → Generate again for a full AI research article.",
+  "Live AI blog writing requires your API key. Open Settings → add OpenRouter, Gemini, NVIDIA, or Custom → Save → Generate again for a full AI research article.",
  });
  }
 
- // Log which provider will write (never log the key)
+ // Log which provider will try first (never log the key); others auto-fallback
  console.debug(
-  `[Blog] Live AI write via ${providerConfig.provider} model=${providerConfig.apiModel || "(default)"} domain=${domain} kw=${kw}`
+  `[Blog] Live AI write via ${providerConfig.provider} model=${providerConfig.apiModel || "(default)"} (+${Math.max(0, activeConfigs.length - 1)} fallbacks) domain=${domain} kw=${kw}`
  );
  try {
  const secondaryList = Array.isArray(secondaryKeywords)
@@ -7136,9 +7202,45 @@ Return ONLY raw JSON. No markdown fences.`;
   }
  }
 
+ // True offline when every provider failed to yield usable prose
  if (!parsed || !parsed.content || countContentWords(String(parsed.content)) < 80) {
-  console.warn("[Blog] AI article output could not be recovered as publishable content (parse/structure). Falling back to offline generation.");
-  parsed = parsed || {};
+  console.warn(
+   "[Blog] AI article output could not be recovered as publishable content (parse/structure). Falling back to offline generation."
+  );
+  const unique = buildUniqueArticle({
+   domain,
+   kw,
+   topic: topicResolved,
+   seed: seed + 19,
+   audience: resolvedAudience,
+   tone,
+   siteBrief,
+   enhance: isEnhance,
+   previousTitle: String(previousTitle || ""),
+  });
+  const offline = {
+   ...normalizeBlogPayload(unique, domain, kw, seed + 19),
+   isFallback: true,
+   needsApiKey: false,
+   strategyId: unique.strategyId || strategy.id,
+   variationSeed: seed + 19,
+   enhanceMode: isEnhance,
+   masterPromptApplied: true,
+   aiGenerated: false,
+   researchUsed: Boolean(researchBrief),
+   generationMode: "offline-fallback",
+   fallbackReason:
+    "All AI providers failed or returned unusable content. Showing analysis-grounded structured draft — check API keys/models in Settings and regenerate.",
+   pipeline: {
+    crawlSource: siteBrief?.source || "none",
+    scrapedPages: siteBrief?.scrapedPages || 0,
+    researchUsed: Boolean(researchBrief),
+    generationMode: "offline-fallback",
+    masterPromptApplied: true,
+    providersTried: activeConfigs.map((c) => c.provider),
+   },
+  };
+  return res.json(offline);
  }
 
  if ((!parsed.outline || !parsed.outline.length) && researchBrief?.outline) {
@@ -7287,13 +7389,14 @@ Return ONLY full Markdown starting with # Title. No JSON. No fences.`;
   ].filter(Boolean);
  }
 
+ // Offline / failed-AI paths return earlier with isFallback: true
  res.json({
   ...normalized,
   strategyId: strategy.id,
   variationSeed: seed,
   masterPromptApplied: true,
   enhanceMode: isEnhance,
-  researchUsed: true,
+  researchUsed: Boolean(researchBrief),
   aiGenerated: true,
   generationMode,
   qualityScore: {
@@ -7309,11 +7412,12 @@ Return ONLY full Markdown starting with # Title. No JSON. No fences.`;
    crawlSource: siteBrief?.source || "heuristic",
    scrapedPages: siteBrief?.scrapedPages || 0,
    niche: siteContext.niche || analysisNiche || "",
-   researchUsed: true,
+   researchUsed: Boolean(researchBrief),
    generationMode,
    masterPromptApplied: true,
    wordCount: quality.words,
    h2Count: quality.h2,
+   providersTried: activeConfigs.map((c) => c.provider),
   },
   isFallback: false,
  });
@@ -7385,10 +7489,11 @@ app.post("/api/generate-social", async (req, res) => {
   targetPlatforms = [normalizeSocialPlatform(platform)];
  }
 
- const providerConfig = getProviderConfig(req);
+ const activeConfigs = getActiveAiConfigs(req);
+ const providerConfig = activeConfigs[0] || null;
 
  async function generateOne(plat: SocialPlatformName): Promise<any> {
-  if (!providerConfig) {
+  if (!activeConfigs.length || !providerConfig) {
    return socialFallback(
     plat,
     topicStr,
@@ -7411,12 +7516,12 @@ app.post("/api/generate-social", async (req, res) => {
    const system =
     "You are an expert multi-platform social copywriter. Return ONLY valid JSON for the requested platform. No markdown fences.";
    const result = await withTimeout(
-    callAI(providerConfig, prompt, system, {
+    callAiWithFallback(activeConfigs, prompt, system, {
      responseMimeType: "application/json",
      temperature: 0.55,
      maxOutputTokens: 2500,
     }),
-    45000,
+    60000,
     `Social ${plat}`
    );
    const rawText =
@@ -7502,8 +7607,9 @@ app.post("/api/analyze-keyword-deep", async (req, res) => {
  if (!keyword || !domain || domain === "target-website.com") {
  return res.status(400).json({ error: "Keyword and Target URL are required." });
  }
- const providerConfig = getProviderConfig(req);
- if (!providerConfig) {
+ const activeConfigs = getActiveAiConfigs(req);
+ const providerConfig = activeConfigs[0] || null;
+ if (!activeConfigs.length || !providerConfig) {
  // Demo-only synthetic SERP audit ΓÇö never uses a server-owned key
  const data = await generateDeepKeywordFallback(keyword, domain);
  return res.json({
@@ -7529,20 +7635,19 @@ Return compact JSON only (ASCII text):
  "freshnessRequirements": { "level": "Low|Medium|High", "explanation": string, "recommendedUpdateFrequency": string }
 }
 Use realistic SERP-style data for the niche. JSON only.`;
- const fastConfig = {
- ...providerConfig,
- apiModel:
- providerConfig.provider === "gemini"
- ? "gemini-2.5-flash-lite"
- : providerConfig.apiModel,
- };
+ // Prefer lite model on Gemini primary; still fall back across all saved keys
+ const orderedConfigs = activeConfigs.map((c, i) =>
+  i === 0 && c.provider === "gemini"
+   ? { ...c, apiModel: "gemini-2.5-flash-lite" }
+   : c
+ );
  const result = await withTimeout(
- callAI(fastConfig, prompt, "Valid compact JSON only. No fences. ASCII only.", {
+ callAiWithFallback(orderedConfigs, prompt, "Valid compact JSON only. No fences. ASCII only.", {
  responseMimeType: "application/json",
  temperature: 0.15,
  maxOutputTokens: 3000,
  }),
- 15000,
+ 30000,
  "Deep keyword analysis"
  );
  res.json(sanitizeDeep(cleanAndParseJSON(result.text)));
@@ -7613,8 +7718,8 @@ app.post("/api/generate-meta-snippets", async (req, res) => {
   if (!domain || domain === "target-website.com") {
     return res.status(400).json({ error: "Target URL / domain is required." });
   }
-  const providerConfig = getProviderConfig(req);
-  if (!providerConfig) {
+  const activeConfigs = getActiveAiConfigs(req);
+  if (!activeConfigs.length) {
     return res.status(200).json({
       isFallback: true,
       needsApiKey: true,
@@ -7633,7 +7738,7 @@ Local market: Kolkata, West Bengal, India (use geo modifiers where natural).
 
 Rules: titles max 60 chars with keyword near start; descriptions 140-155 chars with benefit + soft CTA; no clickbait.
 Return ONLY JSON: { "snippets": [ { "type": "default|question|benefit|how-to|list", "title": "...", "description": "..." } ] }`;
-    const result = await callAI(providerConfig, prompt, "", {
+    const result = await callAiWithFallback(activeConfigs, prompt, "", {
       responseMimeType: "application/json",
       temperature: 0.3,
     });
